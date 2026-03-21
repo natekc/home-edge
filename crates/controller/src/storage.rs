@@ -39,6 +39,24 @@ impl Storage {
         })
     }
 
+    /// Create an in-memory storage backed by a unique temp directory.
+    /// Intended for tests only — avoids async setup in unit tests.
+    pub fn new_in_memory() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "ha-compat-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        ));
+        // We create the dir synchronously via std::fs for test convenience.
+        let _ = std::fs::create_dir_all(&root);
+        Self {
+            root,
+            lock: Mutex::new(()),
+        }
+    }
+
     pub async fn load_onboarding(&self) -> Result<OnboardingState> {
         let path = self.onboarding_path();
         match tokio::fs::read_to_string(&path).await {

@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod ha_api;
 mod http;
 mod logging;
 mod storage;

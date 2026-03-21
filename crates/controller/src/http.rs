@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Json;
 use serde::Serialize;
 
 use crate::app::AppState;
+use crate::ha_api;
 use crate::storage::OnboardingState;
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
+        // HA-compatible REST API surface
+        .merge(ha_api::router())
+        // Original shell routes
         .route("/", get(index))
         .route("/onboarding", get(onboarding_page))
         .route("/api/health", get(health))
