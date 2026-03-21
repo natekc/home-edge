@@ -10,12 +10,15 @@ use serde::Serialize;
 
 use crate::app::AppState;
 use crate::ha_api;
+use crate::ha_auth;
 use crate::storage::OnboardingState;
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         // HA-compatible REST API surface
         .merge(ha_api::router())
+        // HA-compatible auth surface
+        .merge(ha_auth::router())
         // Original shell routes
         .route("/", get(index))
         .route("/onboarding", get(onboarding_page))

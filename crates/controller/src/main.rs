@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod ha_api;
+mod ha_auth;
 mod http;
 mod logging;
 mod state_store;

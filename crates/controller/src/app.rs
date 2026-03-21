@@ -5,6 +5,7 @@ use tokio::signal;
 use tracing::info;
 
 use crate::config::AppConfig;
+use crate::ha_auth::{LoginFlowStore, TokenStore};
 use crate::http;
 use crate::state_store::StateStore;
 use crate::storage::Storage;
@@ -13,6 +14,8 @@ pub struct AppState {
     pub config: AppConfig,
     pub storage: Storage,
     pub states: StateStore,
+    pub tokens: TokenStore,
+    pub flows: LoginFlowStore,
 }
 
 pub async fn run(config: AppConfig) -> Result<()> {
@@ -22,6 +25,8 @@ pub async fn run(config: AppConfig) -> Result<()> {
         config,
         storage,
         states: StateStore::new(),
+        tokens: TokenStore::new(),
+        flows: LoginFlowStore::new(),
     });
 
     let listener = tokio::net::TcpListener::bind(listen_addr)
