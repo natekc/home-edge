@@ -6,18 +6,23 @@ use tracing::info;
 
 use crate::config::AppConfig;
 use crate::http;
+use crate::state_store::StateStore;
 use crate::storage::Storage;
 
-#[derive(Debug)]
 pub struct AppState {
     pub config: AppConfig,
     pub storage: Storage,
+    pub states: StateStore,
 }
 
 pub async fn run(config: AppConfig) -> Result<()> {
     let listen_addr = config.listen_addr();
     let storage = Storage::new(config.storage.data_dir.clone()).await?;
-    let state = Arc::new(AppState { config, storage });
+    let state = Arc::new(AppState {
+        config,
+        storage,
+        states: StateStore::new(),
+    });
 
     let listener = tokio::net::TcpListener::bind(listen_addr)
         .await

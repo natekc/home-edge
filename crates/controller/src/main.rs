@@ -3,6 +3,7 @@ mod config;
 mod ha_api;
 mod http;
 mod logging;
+mod state_store;
 mod storage;
 
 use anyhow::Result;
