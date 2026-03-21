@@ -1,0 +1,8 @@
+[build]
+target-dir = "target"
+
+[target.arm-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+
+[env]
+RUSTFLAGS = "-C debuginfo=0"
