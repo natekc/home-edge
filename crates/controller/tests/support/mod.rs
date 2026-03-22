@@ -14,13 +14,18 @@ use home_edge::state_store::StateStore;
 use home_edge::storage::{OnboardingState, Storage};
 
 pub async fn test_server(onboarded: bool) -> TestServer {
+    test_server_with_onboarding(OnboardingState {
+        onboarded,
+        ..OnboardingState::default()
+    })
+    .await
+}
+
+pub async fn test_server_with_onboarding(onboarding: OnboardingState) -> TestServer {
     let storage_root = temp_dir("storage");
     let storage = Storage::new(storage_root.clone()).await.expect("storage init");
     storage
-        .save_onboarding(&OnboardingState {
-            onboarded,
-            ..OnboardingState::default()
-        })
+        .save_onboarding(&onboarding)
         .await
         .expect("save onboarding state");
 

@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Json;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::app::AppState;
 use crate::ha_api;
@@ -14,7 +16,11 @@ use crate::ha_auth;
 use crate::ha_mobile;
 use crate::ha_webhook;
 use crate::ha_ws;
-use crate::storage::OnboardingState;
+use crate::storage::StoredUser;
+
+const STEP_USER: &str = "user";
+const STEP_CORE_CONFIG: &str = "core_config";
+const ONBOARDING_STEPS: [&str; 2] = [STEP_USER, STEP_CORE_CONFIG];
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -33,6 +39,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/onboarding", get(onboarding_page))
         .route("/api/health", get(health))
         .route("/api/onboarding", get(onboarding_status))
+        .route("/api/onboarding/installation_type", get(onboarding_installation_type))
+        .route("/api/onboarding/users", post(create_onboarding_user))
+        .route("/api/onboarding/core_config", post(complete_core_config))
         .route("/api/onboarding/complete", post(complete_onboarding))
         .with_state(state)
 }
@@ -77,7 +86,13 @@ async fn onboarding_page(State(state): State<Arc<AppState>>) -> impl IntoRespons
 
 async fn onboarding_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.storage.load_onboarding().await {
-        Ok(status) => Json(status).into_response(),
+        Ok(status) => Json(
+            ONBOARDING_STEPS
+                .into_iter()
+                .map(|step| json!({"step": step, "done": status.step_done(step)}))
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse::new(format!("failed to load state: {err:#}"))),
@@ -86,29 +101,147 @@ async fn onboarding_status(State(state): State<Arc<AppState>>) -> impl IntoRespo
     }
 }
 
-async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let current = match state.storage.load_onboarding().await {
-        Ok(status) => status,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(format!("failed to load state: {err:#}"))),
-            )
-                .into_response();
+async fn onboarding_installation_type(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.storage.load_onboarding().await {
+        Ok(status) if status.onboarded => StatusCode::UNAUTHORIZED.into_response(),
+        Ok(_) => Json(json!({"installation_type": "Home Edge"})).into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(format!("failed to load state: {err:#}"))),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OnboardingUserRequest {
+    client_id: String,
+    name: String,
+    username: String,
+    password: String,
+    language: String,
+}
+
+async fn create_onboarding_user(
+    State(state): State<Arc<AppState>>,
+    body: Json<OnboardingUserRequest>,
+) -> impl IntoResponse {
+    if [
+        body.client_id.as_str(),
+        body.name.as_str(),
+        body.username.as_str(),
+        body.password.as_str(),
+        body.language.as_str(),
+    ]
+    .iter()
+    .any(|value| value.is_empty())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("missing required onboarding user fields".into())),
+        )
+            .into_response();
+    }
+
+    match state
+        .storage
+        .update_onboarding(|current| {
+            if current.step_done(STEP_USER) || current.user.is_some() {
+                return Err(anyhow!("user step already done"));
+            }
+            current.user = Some(StoredUser {
+                name: body.name.clone(),
+                username: body.username.clone(),
+                password: body.password.clone(),
+                language: body.language.clone(),
+            });
+            current.language = Some(body.language.clone());
+            current.done.push(STEP_USER.into());
+            Ok(())
+        })
+        .await
+    {
+        Ok(_) => {
+            let auth_code = state.tokens.issue_auth_code(&body.client_id).await;
+            (StatusCode::OK, Json(json!({"auth_code": auth_code}))).into_response()
         }
-    };
+        Err(err) if err.to_string() == "user step already done" => (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse::new("User step already done".into())),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(format!("failed to persist user: {err:#}"))),
+        )
+            .into_response(),
+    }
+}
 
-    let next = OnboardingState {
-        onboarded: true,
-        updated_at_unix_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-        ..current
-    };
+#[derive(Debug, Default, Deserialize)]
+struct CoreConfigRequest {
+    location_name: Option<String>,
+    country: Option<String>,
+    language: Option<String>,
+    time_zone: Option<String>,
+    unit_system: Option<String>,
+}
 
-    match state.storage.save_onboarding(&next).await {
-        Ok(()) => Json(next).into_response(),
+async fn complete_core_config(
+    State(state): State<Arc<AppState>>,
+    body: Option<Json<CoreConfigRequest>>,
+) -> impl IntoResponse {
+    let request = body.map(|json| json.0).unwrap_or_default();
+    match state
+        .storage
+        .update_onboarding(|current| {
+            if current.step_done(STEP_CORE_CONFIG) {
+                return Err(anyhow!("core config step already done"));
+            }
+            if !current.step_done(STEP_USER) {
+                return Err(anyhow!("user step required"));
+            }
+            current.location_name = request.location_name.clone();
+            current.country = request.country.clone();
+            current.language = request.language.clone().or_else(|| current.language.clone());
+            current.time_zone = request.time_zone.clone();
+            current.unit_system = request.unit_system.clone();
+            current.done.push(STEP_CORE_CONFIG.into());
+            current.onboarded = ONBOARDING_STEPS.iter().all(|step| current.step_done(step));
+            Ok(())
+        })
+        .await
+    {
+        Ok(_) => (StatusCode::OK, Json(json!({}))).into_response(),
+        Err(err) if err.to_string() == "core config step already done" => (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse::new("Core config step already done".into())),
+        )
+            .into_response(),
+        Err(err) if err.to_string() == "user step required" => (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse::new("User step must be completed first".into())),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(format!("failed to persist core config: {err:#}"))),
+        )
+            .into_response(),
+    }
+}
+
+async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state
+        .storage
+        .update_onboarding(|current| {
+            current.onboarded = true;
+            current.done = ONBOARDING_STEPS.iter().map(|step| step.to_string()).collect();
+            Ok(())
+        })
+        .await
+    {
+        Ok(next) => Json(next).into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse::new(format!(

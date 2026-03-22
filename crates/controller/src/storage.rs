@@ -5,6 +5,14 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredUser {
+    pub name: String,
+    pub username: String,
+    pub password: String,
+    pub language: String,
+}
+
 #[derive(Debug)]
 pub struct Storage {
     root: PathBuf,
@@ -16,6 +24,20 @@ pub struct OnboardingState {
     pub version: u32,
     pub onboarded: bool,
     pub updated_at_unix_ms: u128,
+    #[serde(default)]
+    pub done: Vec<String>,
+    #[serde(default)]
+    pub user: Option<StoredUser>,
+    #[serde(default)]
+    pub location_name: Option<String>,
+    #[serde(default)]
+    pub country: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub time_zone: Option<String>,
+    #[serde(default)]
+    pub unit_system: Option<String>,
 }
 
 impl Default for OnboardingState {
@@ -24,7 +46,20 @@ impl Default for OnboardingState {
             version: 1,
             onboarded: false,
             updated_at_unix_ms: now_unix_ms(),
+            done: Vec::new(),
+            user: None,
+            location_name: None,
+            country: None,
+            language: None,
+            time_zone: None,
+            unit_system: None,
         }
+    }
+}
+
+impl OnboardingState {
+    pub fn step_done(&self, step: &str) -> bool {
+        self.done.iter().any(|done| done == step)
     }
 }
 
@@ -77,6 +112,25 @@ impl Storage {
         let _guard = self.lock.lock().await;
         let path = self.onboarding_path();
         save_json_atomic(&path, state).await
+    }
+
+    pub async fn update_onboarding<F>(&self, update: F) -> Result<OnboardingState>
+    where
+        F: FnOnce(&mut OnboardingState) -> Result<()>,
+    {
+        let _guard = self.lock.lock().await;
+        let path = self.onboarding_path();
+        let mut state = match tokio::fs::read_to_string(&path).await {
+            Ok(contents) => serde_json::from_str(&contents)
+                .with_context(|| format!("failed to parse {}", path.display()))?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => OnboardingState::default(),
+            Err(err) => return Err(err).with_context(|| format!("failed to read {}", path.display())),
+        };
+
+        update(&mut state)?;
+        state.updated_at_unix_ms = now_unix_ms();
+        save_json_atomic(&path, &state).await?;
+        Ok(state)
     }
 
     fn onboarding_path(&self) -> PathBuf {
@@ -147,6 +201,18 @@ mod tests {
             version: 1,
             onboarded: true,
             updated_at_unix_ms: now_unix_ms(),
+            done: vec!["user".into(), "core_config".into()],
+            user: Some(StoredUser {
+                name: "Test User".into(),
+                username: "test-user".into(),
+                password: "test-pass".into(),
+                language: "en".into(),
+            }),
+            location_name: Some("Test Home".into()),
+            country: Some("US".into()),
+            language: Some("en".into()),
+            time_zone: Some("UTC".into()),
+            unit_system: Some("metric".into()),
         };
 
         storage.save_onboarding(&state).await.expect("save state");

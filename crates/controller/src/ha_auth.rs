@@ -412,12 +412,21 @@ async fn login_flow_step(
             .into_response();
     }
 
-    // --- Credential validation ---
-    // Source: auth/providers/homeassistant.py — validate username + password.
-    // For the embedded single-user device we accept any non-empty credentials
-    // (actual credential management is out of scope for protocol compatibility).
-    let valid = body.username.as_deref().map(|u| !u.is_empty()).unwrap_or(false)
-        && body.password.as_deref().map(|p| !p.is_empty()).unwrap_or(false);
+    let onboarding = match state.storage.load_onboarding().await {
+        Ok(status) => status,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to load onboarding state: {err:#}")})),
+            )
+                .into_response();
+        }
+    };
+
+    let valid = onboarding.user.as_ref().is_some_and(|user| {
+        body.username.as_deref() == Some(user.username.as_str())
+            && body.password.as_deref() == Some(user.password.as_str())
+    });
 
     if !valid {
         // Source: DataEntryFlow.async_configure — invalid_auth error
