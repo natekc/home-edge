@@ -274,7 +274,7 @@ fn render_shell(product_name: &str, onboarded: bool) -> String {
     let body = if onboarded {
         "Milestone 0 runtime shell is online. Onboarding has been marked complete, and the system is ready for the next slice of implementation."
     } else {
-        "Milestone 0 onboarding shell is online. This page is intentionally small and server-rendered to keep first-load cost low on Pi Zero W class devices."
+        "Milestone 0 onboarding shell is online. This page is intentionally small and server-rendered to keep first-load cost low on low-power embedded Linux devices, with Raspberry Pi Zero W as the benchmark baseline."
     };
     let action = if onboarded {
         "<a href=\"/\" style=\"display:inline-block;background:#204030;color:#fff;text-decoration:none;border-radius:10px;padding:.9rem 1.1rem;font-weight:700\">Go to home</a>"

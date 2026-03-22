@@ -2,7 +2,7 @@
 
 ## Goal
 
-The onboarding and shell experience must feel responsive on Raspberry Pi Zero W class hardware.
+The onboarding and shell experience must feel responsive on the minimum embedded Linux baseline, benchmarked explicitly on Raspberry Pi Zero W class hardware.
 
 ## Milestone 0 assumptions
 
@@ -15,7 +15,7 @@ The onboarding and shell experience must feel responsive on Raspberry Pi Zero W 
 
 - first HTML response target: under 200 ms server time on warm runtime
 - initial document plus inline styling: under 32 KB
-- time to first interactive onboarding screen: under 2 seconds on Pi Zero W class hardware in a typical local network setup
+- time to first interactive onboarding screen: under 2 seconds on the Raspberry Pi Zero W benchmark in a typical local network setup
 - form-submit round trip target: under 500 ms for local bootstrap actions
 
 ## Design implications

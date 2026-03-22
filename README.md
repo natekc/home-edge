@@ -2,7 +2,7 @@
 
 Home Edge is an embedded, low-power Linux runtime for local-first automation deployments.
 
-This repository contains the Milestone 0 foundation for a standalone runtime targeting Raspberry Pi Zero W class devices first, with an eye toward other embedded Linux systems.
+This repository contains the Milestone 0 foundation for a standalone runtime targeting low-power embedded Linux systems, benchmarked explicitly against Raspberry Pi Zero W class constraints.
 
 ## Goals
 

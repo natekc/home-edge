@@ -6,7 +6,7 @@ Milestone 0 is the foundation spike for a native low-power Linux control-plane r
 
 Included:
 - reproducible Rust workspace
-- native boot path on Raspberry Pi Zero W class Linux
+- native boot path for the Milestone 0 embedded baseline, validated on Raspberry Pi Zero W class Linux
 - Docker cross-build path for `arm-unknown-linux-gnueabihf`
 - minimal HTTP shell and health endpoint
 - atomic JSON persistence shell with directory fsync
