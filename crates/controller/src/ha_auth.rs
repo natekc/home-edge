@@ -28,6 +28,17 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 
+fn onboarding_required_response() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "message": "Onboarding not finished",
+            "code": "onboarding_required"
+        })),
+    )
+        .into_response()
+}
+
 // ---------------------------------------------------------------------------
 // Token store — holds short-lived access tokens and refresh tokens
 // ---------------------------------------------------------------------------
@@ -279,7 +290,19 @@ pub fn router() -> Router<Arc<AppState>> {
 /// The official app uses this to decide which login form to show.
 ///
 /// We expose a single "homeassistant" (username/password) provider.
-async fn auth_providers(State(_state): State<Arc<AppState>>) -> Response {
+async fn auth_providers(State(state): State<Arc<AppState>>) -> Response {
+    match state.storage.load_onboarding().await {
+        Ok(status) if !status.onboarded => return onboarding_required_response(),
+        Ok(_) => {}
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to load onboarding state: {err:#}")})),
+            )
+                .into_response();
+        }
+    }
+
     let resp = ProvidersResponse {
         providers: vec![ProviderEntry {
             name: "Home Assistant Local".into(),
@@ -311,6 +334,18 @@ async fn login_flow_init(
     State(state): State<Arc<AppState>>,
     body: axum::extract::Json<LoginFlowRequest>,
 ) -> Response {
+    match state.storage.load_onboarding().await {
+        Ok(status) if !status.onboarded => return onboarding_required_response(),
+        Ok(_) => {}
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to load onboarding state: {err:#}")})),
+            )
+                .into_response();
+        }
+    }
+
     // Source: indieauth.verify_client_id(client_id) — must be a URL
     // We accept any non-empty string for embedded use.
     if body.client_id.is_empty() {

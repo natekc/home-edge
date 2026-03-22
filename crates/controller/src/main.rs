@@ -1,17 +1,6 @@
-mod app;
-mod config;
-mod ha_api;
-mod ha_auth;
-mod ha_mobile;
-mod ha_webhook;
-mod ha_ws;
-mod http;
-mod logging;
-mod state_store;
-mod storage;
-
 use anyhow::Result;
 use clap::Parser;
+use home_edge::{app, config, logging};
 
 #[derive(Debug, Parser)]
 #[command(about = "Milestone 0 edge runtime for low-power Linux targets")]
