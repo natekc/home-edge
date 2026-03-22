@@ -197,7 +197,6 @@ mod tests {
 
         use crate::app::AppState;
         use crate::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
-        use crate::ha_webhook::WebhookStore;
         use crate::storage::Storage;
 
         let config = AppConfig {

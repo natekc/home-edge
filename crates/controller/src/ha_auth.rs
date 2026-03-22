@@ -611,7 +611,26 @@ mod tests {
     use axum_test::TestServer;
     use serde_json::Value;
 
-    fn make_server() -> TestServer {
+    fn completed_onboarding() -> crate::storage::OnboardingState {
+        crate::storage::OnboardingState {
+            onboarded: true,
+            done: vec!["user".into(), "core_config".into()],
+            user: Some(crate::storage::StoredUser {
+                name: "Admin".into(),
+                username: "admin".into(),
+                password: "secret".into(),
+                language: "en".into(),
+            }),
+            location_name: Some("Test Home".into()),
+            country: Some("US".into()),
+            language: Some("en".into()),
+            time_zone: Some("UTC".into()),
+            unit_system: Some("metric".into()),
+            ..Default::default()
+        }
+    }
+
+    async fn make_server() -> TestServer {
         use std::net::{IpAddr, Ipv4Addr};
         use std::path::PathBuf;
         use std::sync::Arc;
@@ -633,6 +652,10 @@ mod tests {
             },
         };
         let storage = Storage::new_in_memory();
+        storage
+            .save_onboarding(&completed_onboarding())
+            .await
+            .expect("save onboarding state");
         let state = Arc::new(AppState::new(config, storage));
         let app = super::router().with_state(state);
         TestServer::new(app).unwrap()
@@ -643,7 +666,7 @@ mod tests {
     ///   Returns {"providers": [...], "preselect_remember_me": bool}
     #[tokio::test]
     async fn get_providers_returns_200_with_provider_list() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server.get("/auth/providers").await;
         resp.assert_status_ok();
         let json: Value = resp.json();
@@ -668,7 +691,7 @@ mod tests {
     /// Source: LoginFlowIndexView.post — returns flow_id and form step on success.
     #[tokio::test]
     async fn post_login_flow_init_returns_form_step() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .post("/auth/login_flow")
             .json(&serde_json::json!({
@@ -693,7 +716,7 @@ mod tests {
     /// Source: indieauth.verify_client_id(client_id) check.
     #[tokio::test]
     async fn post_login_flow_empty_client_id_returns_400() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .post("/auth/login_flow")
             .json(&serde_json::json!({
@@ -730,7 +753,7 @@ mod tests {
     ///   result["type"] == "create_entry"  and  result["result"] == auth_code
     #[tokio::test]
     async fn post_login_flow_step_valid_creds_returns_create_entry() {
-        let server = make_server();
+        let server = make_server().await;
         let flow_id = init_flow(&server).await;
         let resp = server
             .post(&format!("/auth/login_flow/{flow_id}"))
@@ -757,7 +780,7 @@ mod tests {
     /// Source: LoginFlowResourceView when DataEntryFlow returns form with errors.
     #[tokio::test]
     async fn post_login_flow_step_bad_creds_returns_invalid_auth() {
-        let server = make_server();
+        let server = make_server().await;
         let flow_id = init_flow(&server).await;
         let resp = server
             .post(&format!("/auth/login_flow/{flow_id}"))
@@ -778,7 +801,7 @@ mod tests {
     /// Source: LoginFlowResourceView.post — UnknownFlow → 404
     #[tokio::test]
     async fn post_login_flow_step_unknown_flow_returns_404() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .post("/auth/login_flow/nonexistent-flow-id")
             .json(&serde_json::json!({
@@ -816,7 +839,7 @@ mod tests {
     ///    "expires_in": int, "ha_auth_provider": ...}
     #[tokio::test]
     async fn post_token_auth_code_grant_returns_tokens() {
-        let server = make_server();
+        let server = make_server().await;
         let (code, client_id) = get_auth_code(&server).await;
 
         let resp = server
@@ -839,7 +862,7 @@ mod tests {
     /// Invalid auth code → HTTP 400 invalid_request.
     #[tokio::test]
     async fn post_token_invalid_code_returns_400() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .post("/auth/token")
             .form(&[
@@ -859,7 +882,7 @@ mod tests {
     ///   {"access_token": ..., "token_type": "Bearer", "expires_in": int}
     #[tokio::test]
     async fn post_token_refresh_grant_returns_new_access_token() {
-        let server = make_server();
+        let server = make_server().await;
         let (code, client_id) = get_auth_code(&server).await;
 
         // First exchange for refresh token.
@@ -899,7 +922,7 @@ mod tests {
     ///       return self.json({"error": "invalid_request"}, status_code=400)
     #[tokio::test]
     async fn post_token_refresh_missing_token_returns_400() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .post("/auth/token")
             .form(&[("grant_type", "refresh_token"), ("client_id", "test")])
@@ -915,7 +938,7 @@ mod tests {
     ///   if refresh_token is None: return {"error": "invalid_grant"}
     #[tokio::test]
     async fn post_token_refresh_bad_token_returns_invalid_grant() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .post("/auth/token")
             .form(&[
@@ -933,7 +956,7 @@ mod tests {
     /// Source: TokenView.post — fallthrough case.
     #[tokio::test]
     async fn post_token_unsupported_grant_returns_400() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .post("/auth/token")
             .form(&[("grant_type", "client_credentials")])
@@ -952,7 +975,7 @@ mod tests {
     /// Source: RevokeTokenView.post — "response code ALWAYS 200"
     #[tokio::test]
     async fn post_revoke_returns_200_always() {
-        let server = make_server();
+        let server = make_server().await;
         // Revoke a non-existent token — must still return 200
         let resp = server
             .post("/auth/revoke")
@@ -964,7 +987,7 @@ mod tests {
     /// Revoke a real refresh token, then try to use it → invalid_grant.
     #[tokio::test]
     async fn post_revoke_invalidates_refresh_token() {
-        let server = make_server();
+        let server = make_server().await;
         let (code, client_id) = get_auth_code(&server).await;
 
         let resp = server

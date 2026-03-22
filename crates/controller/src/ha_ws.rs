@@ -330,7 +330,26 @@ mod tests {
     use axum_test::{TestServer, TestServerConfig, Transport};
     use serde_json::Value;
 
-    fn make_server() -> TestServer {
+    fn completed_onboarding() -> crate::storage::OnboardingState {
+        crate::storage::OnboardingState {
+            onboarded: true,
+            done: vec!["user".into(), "core_config".into()],
+            user: Some(crate::storage::StoredUser {
+                name: "Admin".into(),
+                username: "admin".into(),
+                password: "secret".into(),
+                language: "en".into(),
+            }),
+            location_name: Some("Test Home".into()),
+            country: Some("US".into()),
+            language: Some("en".into()),
+            time_zone: Some("UTC".into()),
+            unit_system: Some("metric".into()),
+            ..Default::default()
+        }
+    }
+
+    async fn make_server() -> TestServer {
         use std::net::{IpAddr, Ipv4Addr};
         use std::path::PathBuf;
         use std::sync::Arc;
@@ -352,6 +371,10 @@ mod tests {
             },
         };
         let storage = Storage::new_in_memory();
+        storage
+            .save_onboarding(&completed_onboarding())
+            .await
+            .expect("save onboarding state");
         let state = Arc::new(AppState::new(config, storage));
 
         let app = super::router()
@@ -373,7 +396,7 @@ mod tests {
     /// GET /api/websocket without Upgrade header -> 400.
     #[tokio::test]
     async fn get_ws_endpoint_without_upgrade_returns_400() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server.get("/api/websocket").await;
         resp.assert_status(StatusCode::BAD_REQUEST);
     }
@@ -418,7 +441,7 @@ mod tests {
     /// Source: auth.py AUTH_REQUIRED_MESSAGE
     #[tokio::test]
     async fn ws_connect_receives_auth_required_with_version() {
-        let server = make_server();
+        let server = make_server().await;
         let mut ws = server
             .get_websocket("/api/websocket")
             .await
@@ -435,7 +458,7 @@ mod tests {
     /// Source: auth.py AUTH_OK_MESSAGE
     #[tokio::test]
     async fn ws_auth_handshake_valid_token() {
-        let server = make_server();
+        let server = make_server().await;
         let token = get_access_token(&server).await;
 
         let mut ws = server
@@ -464,7 +487,7 @@ mod tests {
     /// Source: auth.py auth_invalid_message
     #[tokio::test]
     async fn ws_auth_invalid_token_receives_auth_invalid() {
-        let server = make_server();
+        let server = make_server().await;
         let mut ws = server
             .get_websocket("/api/websocket")
             .await
@@ -488,7 +511,7 @@ mod tests {
     /// Source: commands.py handle_ping
     #[tokio::test]
     async fn ws_ping_returns_pong_result() {
-        let server = make_server();
+        let server = make_server().await;
         let token = get_access_token(&server).await;
         let mut ws = server
             .get_websocket("/api/websocket")
@@ -513,7 +536,7 @@ mod tests {
     /// Source: commands.py handle_get_states
     #[tokio::test]
     async fn ws_get_states_returns_array() {
-        let server = make_server();
+        let server = make_server().await;
         let token = get_access_token(&server).await;
         let mut ws = server
             .get_websocket("/api/websocket")
@@ -539,7 +562,7 @@ mod tests {
     /// Source: commands.py handle_get_config
     #[tokio::test]
     async fn ws_get_config_returns_config() {
-        let server = make_server();
+        let server = make_server().await;
         let token = get_access_token(&server).await;
         let mut ws = server
             .get_websocket("/api/websocket")
@@ -566,7 +589,7 @@ mod tests {
     /// Source: const.py ERR_UNKNOWN_COMMAND
     #[tokio::test]
     async fn ws_unknown_command_returns_error() {
-        let server = make_server();
+        let server = make_server().await;
         let token = get_access_token(&server).await;
         let mut ws = server
             .get_websocket("/api/websocket")
@@ -591,7 +614,7 @@ mod tests {
     /// Source: messages.py result_message
     #[tokio::test]
     async fn ws_result_message_has_required_fields() {
-        let server = make_server();
+        let server = make_server().await;
         let token = get_access_token(&server).await;
         let mut ws = server
             .get_websocket("/api/websocket")

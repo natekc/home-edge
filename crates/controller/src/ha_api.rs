@@ -15,11 +15,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{Path, State};
+use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
-use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use ha_types::api::{ApiConfigResponse, ApiStatusResponse, UnitSystem};
@@ -52,11 +51,6 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/services/{domain}/{service}",
             axum::routing::post(api_service_call),
         )
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ServiceQuery {
-    return_response: Option<String>,
 }
 
 /// GET /api/
@@ -208,7 +202,7 @@ async fn api_services_list(State(app): State<Arc<AppState>>) -> Response {
 async fn api_service_call(
     State(app): State<Arc<AppState>>,
     Path((domain, service)): Path<(String, String)>,
-    query: Query<ServiceQuery>,
+    uri: Uri,
     body: Option<Json<Value>>,
 ) -> Response {
     let data = match body.map(|json| json.0) {
@@ -223,7 +217,10 @@ async fn api_service_call(
         None => Map::new(),
     };
 
-    let return_response = query.return_response.is_some();
+    let return_response = uri
+        .query()
+        .map(query_has_return_response)
+        .unwrap_or(false);
     match app
         .services
         .call(&app, &domain, &service, data, None, return_response)
@@ -257,6 +254,13 @@ async fn api_service_call(
         )
             .into_response(),
     }
+}
+
+fn query_has_return_response(query: &str) -> bool {
+    query.split('&').any(|part| {
+        let key = part.split_once('=').map(|(key, _)| key).unwrap_or(part);
+        key == "return_response"
+    })
 }
 
 // ---------------------------------------------------------------------------
