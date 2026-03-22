@@ -161,7 +161,11 @@ async fn mobile_app_register(
     // Source: if data[ATTR_SUPPORTS_ENCRYPTION]: data[CONF_SECRET] = secrets.token_hex(SecretBox.KEY_SIZE)
     //   SecretBox.KEY_SIZE == 32  → 32 bytes → 64 hex chars
     let secret = if req.supports_encryption {
-        Some(format!("{}{}", Uuid::new_v4().to_string().replace('-', ""), Uuid::new_v4().to_string().replace('-', "")))
+        Some(format!(
+            "{}{}",
+            Uuid::new_v4().to_string().replace('-', ""),
+            Uuid::new_v4().to_string().replace('-', "")
+        ))
     } else {
         None
     };
@@ -194,8 +198,6 @@ mod tests {
 
         use crate::app::AppState;
         use crate::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
-        use crate::ha_auth::{LoginFlowStore, TokenStore};
-        use crate::state_store::StateStore;
         use crate::storage::Storage;
 
         let config = AppConfig {
@@ -211,14 +213,7 @@ mod tests {
             },
         };
         let storage = Storage::new_in_memory();
-        let state = Arc::new(AppState {
-            config,
-            storage,
-            states: StateStore::new(),
-            tokens: TokenStore::new(),
-            flows: LoginFlowStore::new(),
-            webhooks: crate::ha_webhook::WebhookStore::new(),
-        });
+        let state = Arc::new(AppState::new(config, storage));
         let app = super::router().with_state(state);
         TestServer::new(app).unwrap()
     }
@@ -367,8 +362,14 @@ mod tests {
             .post("/api/mobile_app/registrations")
             .json(&valid_registration())
             .await;
-        let id1 = resp1.json::<Value>()["webhook_id"].as_str().unwrap().to_string();
-        let id2 = resp2.json::<Value>()["webhook_id"].as_str().unwrap().to_string();
+        let id1 = resp1.json::<Value>()["webhook_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id2 = resp2.json::<Value>()["webhook_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_ne!(id1, id2, "webhook_ids must be unique per registration");
     }
 

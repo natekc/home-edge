@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ha_types::entity::State;
 use ha_types::context::Context;
+use ha_types::entity::State;
 
 /// Thread-safe in-memory entity state store.
 pub struct StateStore {
@@ -111,7 +111,20 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     }
 
     let leap = is_leap(y);
-    let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let months = [
+        31u64,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 1u64;
     for &days_in_month in &months {
         if remaining < days_in_month {
@@ -134,6 +147,20 @@ pub fn make_state(
     state_value: impl Into<String>,
     attributes: std::collections::HashMap<String, serde_json::Value>,
 ) -> State {
+    make_state_with_context(
+        entity_id,
+        state_value,
+        attributes,
+        Context::new(new_context_id()),
+    )
+}
+
+pub fn make_state_with_context(
+    entity_id: impl Into<String>,
+    state_value: impl Into<String>,
+    attributes: std::collections::HashMap<String, serde_json::Value>,
+    context: Context,
+) -> State {
     let ts = now_iso8601();
     State {
         entity_id: entity_id.into(),
@@ -142,7 +169,7 @@ pub fn make_state(
         last_changed: ts.clone(),
         last_reported: ts.clone(),
         last_updated: ts,
-        context: Context::new(new_context_id()),
+        context,
     }
 }
 

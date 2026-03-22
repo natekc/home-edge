@@ -80,7 +80,6 @@ impl WebhookStore {
             .or_default()
             .push(payload);
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -198,10 +197,8 @@ mod tests {
 
         use crate::app::AppState;
         use crate::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
-        use crate::ha_auth::{LoginFlowStore, TokenStore};
-        use crate::state_store::StateStore;
-        use crate::storage::Storage;
         use crate::ha_webhook::WebhookStore;
+        use crate::storage::Storage;
 
         let config = AppConfig {
             server: ServerConfig {
@@ -216,14 +213,7 @@ mod tests {
             },
         };
         let storage = Storage::new_in_memory();
-        let state = Arc::new(AppState {
-            config,
-            storage,
-            states: StateStore::new(),
-            tokens: TokenStore::new(),
-            flows: LoginFlowStore::new(),
-            webhooks: WebhookStore::new(),
-        });
+        let state = Arc::new(AppState::new(config, storage));
         let app = super::router().with_state(state);
         TestServer::new(app).unwrap()
     }
@@ -286,35 +276,39 @@ mod tests {
     /// Payload is stored for registered webhooks.
     #[tokio::test]
     async fn webhook_stores_payload_for_registered_id() {
-        use std::sync::Arc;
         use std::net::{IpAddr, Ipv4Addr};
         use std::path::PathBuf;
+        use std::sync::Arc;
 
         use crate::app::AppState;
         use crate::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
-        use crate::ha_auth::{LoginFlowStore, TokenStore};
-        use crate::state_store::StateStore;
-        use crate::storage::Storage;
         use crate::ha_webhook::WebhookStore;
+        use crate::storage::Storage;
 
         let config = AppConfig {
-            server: ServerConfig { host: IpAddr::V4(Ipv4Addr::LOCALHOST), port: 0 },
-            storage: StorageConfig { data_dir: PathBuf::from("/tmp") },
-            ui: UiConfig { product_name: "T".into() },
+            server: ServerConfig {
+                host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: 0,
+            },
+            storage: StorageConfig {
+                data_dir: PathBuf::from("/tmp"),
+            },
+            ui: UiConfig {
+                product_name: "T".into(),
+            },
         };
         let webhooks = WebhookStore::new();
-        let state = Arc::new(AppState {
-            config,
-            storage: Storage::new_in_memory(),
-            states: StateStore::new(),
-            tokens: TokenStore::new(),
-            flows: LoginFlowStore::new(),
-            webhooks,
-        });
+        let mut base = AppState::new(config, Storage::new_in_memory());
+        base.webhooks = webhooks;
+        let state = Arc::new(base);
         // Pre-register a webhook
         state
             .webhooks
-            .register("test-hook-123".to_string(), "mobile_app".to_string(), "My Phone".to_string())
+            .register(
+                "test-hook-123".to_string(),
+                "mobile_app".to_string(),
+                "My Phone".to_string(),
+            )
             .await;
 
         let app = super::router().with_state(Arc::clone(&state));
@@ -327,7 +321,9 @@ mod tests {
 
         // Verify payload was stored
         let received = state.webhooks.received.read().await;
-        let payloads = received.get("test-hook-123").expect("should have stored payload");
+        let payloads = received
+            .get("test-hook-123")
+            .expect("should have stored payload");
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0]["type"], "fire_event");
     }

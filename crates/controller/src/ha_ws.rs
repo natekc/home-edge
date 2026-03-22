@@ -18,15 +18,16 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{State, WebSocketUpgrade};
 use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tracing::debug;
 
 use crate::app::AppState;
+use crate::service::ServiceError;
 
 /// Version string sent in auth handshake messages.
 /// Source: homeassistant/const.py  __version__ (we mimic a recent HA version).
@@ -103,6 +104,28 @@ fn result_err(id: u64, code: &str, message: &str) -> String {
     .to_string()
 }
 
+fn result_err_value(id: u64, error: Value) -> String {
+    json!({
+        "id": id,
+        "type": "result",
+        "success": false,
+        "error": error
+    })
+    .to_string()
+}
+
+#[derive(Deserialize)]
+struct CallServiceRequest {
+    domain: String,
+    service: String,
+    #[serde(default)]
+    service_data: Map<String, Value>,
+    #[serde(default)]
+    target: Option<Value>,
+    #[serde(default)]
+    return_response: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -119,10 +142,7 @@ pub fn router() -> Router<Arc<AppState>> {
 /// HTTP upgrade handler for `GET /api/websocket`.
 ///
 /// Source: homeassistant/components/websocket_api/http.py  WebsocketAPIView.get
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -140,7 +160,11 @@ enum Phase {
 async fn handle_socket(mut ws: WebSocket, state: Arc<AppState>) {
     // Step 1: send auth_required
     // Source: auth.py — server sends AUTH_REQUIRED_MESSAGE immediately on connect
-    if ws.send(Message::Text(auth_required_msg().into())).await.is_err() {
+    if ws
+        .send(Message::Text(auth_required_msg().into()))
+        .await
+        .is_err()
+    {
         return;
     }
 
@@ -169,16 +193,14 @@ async fn handle_socket(mut ws: WebSocket, state: Arc<AppState>) {
 /// Handle a message during the auth phase.
 ///
 /// Source: auth.py  AuthPhase.async_handle
-async fn handle_auth_phase(
-    text: &str,
-    state: &Arc<AppState>,
-    phase: &mut Phase,
-) -> Option<String> {
+async fn handle_auth_phase(text: &str, state: &Arc<AppState>, phase: &mut Phase) -> Option<String> {
     let parsed: Value = serde_json::from_str(text).ok()?;
 
     // Source: AUTH_MESSAGE_SCHEMA — type must be "auth"
     if parsed.get("type").and_then(|v| v.as_str()) != Some("auth") {
-        return Some(auth_invalid_msg("Auth message incorrectly formatted: expected type auth"));
+        return Some(auth_invalid_msg(
+            "Auth message incorrectly formatted: expected type auth",
+        ));
     }
 
     let auth_msg: AuthMessage = serde_json::from_value(parsed).ok()?;
@@ -221,7 +243,7 @@ async fn handle_command_phase(text: &str, state: &Arc<AppState>) -> Option<Strin
 }
 
 /// Dispatch a command to the appropriate handler.
-async fn dispatch_command(id: u64, msg_type: &str, _extra: &Value, state: &Arc<AppState>) -> String {
+async fn dispatch_command(id: u64, msg_type: &str, extra: &Value, state: &Arc<AppState>) -> String {
     match msg_type {
         // Source: commands.py  handle_ping
         //   {"id": iden, "type": "pong"}   — returned as a result message
@@ -254,8 +276,45 @@ async fn dispatch_command(id: u64, msg_type: &str, _extra: &Value, state: &Arc<A
             result_ok(id, serde_json::to_value(cfg).unwrap_or(json!(null)))
         }
 
+        "get_services" => result_ok(id, state.services.describe()),
+
+        "call_service" => {
+            let request: CallServiceRequest = match serde_json::from_value(extra.clone()) {
+                Ok(request) => request,
+                Err(err) => {
+                    return result_err_value(
+                        id,
+                        ServiceError::InvalidFormat(format!("Invalid call_service payload: {err}"))
+                            .as_json(),
+                    );
+                }
+            };
+
+            match state.services.call(
+                state,
+                &request.domain,
+                &request.service,
+                request.service_data,
+                request.target.as_ref(),
+                request.return_response,
+            ) {
+                Ok(outcome) => {
+                    let mut result = json!({"context": outcome.context});
+                    if request.return_response {
+                        result["response"] = outcome.response.unwrap_or(json!(null));
+                    }
+                    result_ok(id, result)
+                }
+                Err(error) => result_err_value(id, error.as_json()),
+            }
+        }
+
         // Source: const.py  ERR_UNKNOWN_COMMAND = "unknown_command"
-        _ => result_err(id, "unknown_command", &format!("Unknown command: {msg_type}")),
+        _ => result_err(
+            id,
+            "unknown_command",
+            &format!("Unknown command: {msg_type}"),
+        ),
     }
 }
 
@@ -278,8 +337,6 @@ mod tests {
 
         use crate::app::AppState;
         use crate::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
-        use crate::ha_auth::{LoginFlowStore, TokenStore};
-        use crate::state_store::StateStore;
         use crate::storage::Storage;
 
         let config = AppConfig {
@@ -295,14 +352,7 @@ mod tests {
             },
         };
         let storage = Storage::new_in_memory();
-        let state = Arc::new(AppState {
-            config,
-            storage,
-            states: StateStore::new(),
-            tokens: TokenStore::new(),
-            flows: LoginFlowStore::new(),
-            webhooks: crate::ha_webhook::WebhookStore::new(),
-        });
+        let state = Arc::new(AppState::new(config, storage));
 
         let app = super::router()
             .merge(crate::ha_auth::router())
@@ -403,7 +453,10 @@ mod tests {
 
         let msg: Value = ws.receive_json().await;
         assert_eq!(msg["type"], "auth_ok");
-        assert!(msg.get("ha_version").is_some(), "auth_ok must include ha_version");
+        assert!(
+            msg.get("ha_version").is_some(),
+            "auth_ok must include ha_version"
+        );
     }
 
     /// Invalid token -> auth_invalid.
@@ -447,7 +500,8 @@ mod tests {
             .await;
         let _ = ws.receive_json::<Value>().await;
 
-        ws.send_json(&serde_json::json!({"id": 1, "type": "ping"})).await;
+        ws.send_json(&serde_json::json!({"id": 1, "type": "ping"}))
+            .await;
         let resp: Value = ws.receive_json().await;
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["type"], "result");
@@ -471,7 +525,8 @@ mod tests {
             .await;
         let _ = ws.receive_json::<Value>().await;
 
-        ws.send_json(&serde_json::json!({"id": 2, "type": "get_states"})).await;
+        ws.send_json(&serde_json::json!({"id": 2, "type": "get_states"}))
+            .await;
         let resp: Value = ws.receive_json().await;
         assert_eq!(resp["id"], 2);
         assert_eq!(resp["type"], "result");
@@ -496,7 +551,8 @@ mod tests {
             .await;
         let _ = ws.receive_json::<Value>().await;
 
-        ws.send_json(&serde_json::json!({"id": 3, "type": "get_config"})).await;
+        ws.send_json(&serde_json::json!({"id": 3, "type": "get_config"}))
+            .await;
         let resp: Value = ws.receive_json().await;
         assert_eq!(resp["id"], 3);
         assert_eq!(resp["success"], true);
@@ -522,7 +578,8 @@ mod tests {
             .await;
         let _ = ws.receive_json::<Value>().await;
 
-        ws.send_json(&serde_json::json!({"id": 99, "type": "render_template"})).await;
+        ws.send_json(&serde_json::json!({"id": 99, "type": "render_template"}))
+            .await;
         let resp: Value = ws.receive_json().await;
         assert_eq!(resp["id"], 99);
         assert_eq!(resp["success"], false);
@@ -546,7 +603,8 @@ mod tests {
             .await;
         let _ = ws.receive_json::<Value>().await;
 
-        ws.send_json(&serde_json::json!({"id": 5, "type": "ping"})).await;
+        ws.send_json(&serde_json::json!({"id": 5, "type": "ping"}))
+            .await;
         let resp: Value = ws.receive_json().await;
         assert!(resp.get("id").is_some());
         assert_eq!(resp["type"], "result");

@@ -7,5 +7,6 @@ pub mod ha_webhook;
 pub mod ha_ws;
 pub mod http;
 pub mod logging;
+pub mod service;
 pub mod state_store;
 pub mod storage;

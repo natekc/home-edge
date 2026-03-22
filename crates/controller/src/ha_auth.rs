@@ -78,11 +78,7 @@ impl TokenStore {
 
     /// Consume an auth code and, if valid, issue refresh + access tokens.
     /// Returns (access_token, refresh_token) or None if code is invalid.
-    pub async fn exchange_code(
-        &self,
-        client_id: &str,
-        code: &str,
-    ) -> Option<(String, String)> {
+    pub async fn exchange_code(&self, client_id: &str, code: &str) -> Option<(String, String)> {
         let mut inner = self.inner.write().await;
         let stored_client_id = inner.auth_codes.remove(code)?;
         if stored_client_id != client_id {
@@ -553,7 +549,11 @@ async fn auth_token(
 
             let client_id = body.client_id.as_deref();
 
-            match state.tokens.refresh_access_token(client_id, refresh_token).await {
+            match state
+                .tokens
+                .refresh_access_token(client_id, refresh_token)
+                .await
+            {
                 Some(access_token) => {
                     // Source: TokenView._async_handle_refresh_token return value
                     (
@@ -618,9 +618,6 @@ mod tests {
 
         use crate::app::AppState;
         use crate::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
-        use crate::ha_auth::TokenStore;
-        use crate::ha_auth::LoginFlowStore;
-        use crate::state_store::StateStore;
         use crate::storage::Storage;
 
         let config = AppConfig {
@@ -636,14 +633,7 @@ mod tests {
             },
         };
         let storage = Storage::new_in_memory();
-        let state = Arc::new(AppState {
-            config,
-            storage,
-            states: StateStore::new(),
-            tokens: TokenStore::new(),
-            flows: LoginFlowStore::new(),
-            webhooks: crate::ha_webhook::WebhookStore::new(),
-        });
+        let state = Arc::new(AppState::new(config, storage));
         let app = super::router().with_state(state);
         TestServer::new(app).unwrap()
     }
@@ -728,7 +718,10 @@ mod tests {
                 "redirect_uri": "homeassistant://auth-callback"
             }))
             .await;
-        resp.json::<Value>()["flow_id"].as_str().unwrap().to_string()
+        resp.json::<Value>()["flow_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
     }
 
     /// Valid credentials → create_entry result with auth code.
@@ -749,7 +742,10 @@ mod tests {
             .await;
         resp.assert_status_ok();
         let json: Value = resp.json();
-        assert_eq!(json["type"], "create_entry", "must be create_entry on success");
+        assert_eq!(
+            json["type"], "create_entry",
+            "must be create_entry on success"
+        );
         assert!(
             json.get("result").is_some(),
             "create_entry must contain result (auth code)"

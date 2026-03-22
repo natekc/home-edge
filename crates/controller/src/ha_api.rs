@@ -15,15 +15,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
+use serde::Deserialize;
+use serde_json::{Map, Value, json};
 
 use ha_types::api::{ApiConfigResponse, ApiStatusResponse, UnitSystem};
 use ha_types::core_state::{CoreState, CoreStateResponse, RecorderState};
 
 use crate::app::AppState;
+use crate::service::ServiceError;
 use crate::state_store::make_state;
 
 /// Return a router for all HA-compatible API endpoints.
@@ -40,7 +43,20 @@ pub fn router() -> Router<Arc<AppState>> {
         //   URL_API_STATES        = "/api/states"
         //   URL_API_STATES_ENTITY = "/api/states/{}"
         .route("/api/states", get(api_states_list))
-        .route("/api/states/{entity_id}", get(api_state_get).post(api_state_set))
+        .route(
+            "/api/states/{entity_id}",
+            get(api_state_get).post(api_state_set),
+        )
+        .route("/api/services", get(api_services_list))
+        .route(
+            "/api/services/{domain}/{service}",
+            axum::routing::post(api_service_call),
+        )
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ServiceQuery {
+    return_response: Option<String>,
 }
 
 /// GET /api/
@@ -176,6 +192,73 @@ async fn api_state_set(
     (status, Json(saved)).into_response()
 }
 
+async fn api_services_list(State(app): State<Arc<AppState>>) -> Response {
+    let services = app
+        .services
+        .describe()
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(domain, services)| json!({"domain": domain, "services": services}))
+        .collect::<Vec<_>>();
+    (StatusCode::OK, Json(services)).into_response()
+}
+
+async fn api_service_call(
+    State(app): State<Arc<AppState>>,
+    Path((domain, service)): Path<(String, String)>,
+    query: Query<ServiceQuery>,
+    body: Option<Json<Value>>,
+) -> Response {
+    let data = match body.map(|json| json.0) {
+        Some(Value::Object(map)) => map,
+        Some(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"message": "Service data should be a JSON object."})),
+            )
+                .into_response();
+        }
+        None => Map::new(),
+    };
+
+    let return_response = query.return_response.is_some();
+    match app
+        .services
+        .call(&app, &domain, &service, data, None, return_response)
+    {
+        Ok(outcome) => {
+            if return_response {
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "changed_states": outcome.changed_states,
+                        "service_response": outcome.response.unwrap_or(json!(null))
+                    })),
+                )
+                    .into_response()
+            } else {
+                (StatusCode::OK, Json(outcome.changed_states)).into_response()
+            }
+        }
+        Err(ServiceError::NotFound { .. }) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"message": "Service not found."})),
+        )
+            .into_response(),
+        Err(ServiceError::InvalidFormat(message))
+        | Err(ServiceError::ServiceValidation(message)) => {
+            (StatusCode::BAD_REQUEST, Json(json!({"message": message}))).into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"message": error.message()})),
+        )
+            .into_response(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Integration tests
 // ---------------------------------------------------------------------------
@@ -185,13 +268,12 @@ mod tests {
     use serde_json::{Value, json};
 
     fn make_server() -> TestServer {
-        use std::sync::Arc;
         use crate::app::AppState;
         use crate::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
-        use crate::state_store::StateStore;
         use crate::storage::Storage;
         use std::net::{IpAddr, Ipv4Addr};
         use std::path::PathBuf;
+        use std::sync::Arc;
 
         let config = AppConfig {
             server: ServerConfig {
@@ -206,14 +288,7 @@ mod tests {
             },
         };
         let storage = Storage::new_in_memory();
-        let state = Arc::new(AppState {
-            config,
-            storage,
-            states: StateStore::new(),
-            tokens: crate::ha_auth::TokenStore::new(),
-            flows: crate::ha_auth::LoginFlowStore::new(),
-            webhooks: crate::ha_webhook::WebhookStore::new(),
-        });
+        let state = Arc::new(AppState::new(config, storage));
         let app = super::router().with_state(state);
         TestServer::new(app).unwrap()
     }
@@ -260,10 +335,22 @@ mod tests {
         let resp = server.get("/api/config").await;
         resp.assert_status_ok();
         let json: Value = resp.json();
-        for field in ["version", "location_name", "time_zone", "language",
-                      "latitude", "longitude", "elevation", "unit_system",
-                      "state", "components"] {
-            assert!(json.get(field).is_some(), "missing /api/config field: {field}");
+        for field in [
+            "version",
+            "location_name",
+            "time_zone",
+            "language",
+            "latitude",
+            "longitude",
+            "elevation",
+            "unit_system",
+            "state",
+            "components",
+        ] {
+            assert!(
+                json.get(field).is_some(),
+                "missing /api/config field: {field}"
+            );
         }
     }
 
@@ -276,7 +363,10 @@ mod tests {
         let server = make_server();
         for path in ["/api/", "/api/core/state", "/api/config", "/api/states"] {
             let resp = server.get(path).await;
-            let ct = resp.headers().get("content-type").expect("content-type missing");
+            let ct = resp
+                .headers()
+                .get("content-type")
+                .expect("content-type missing");
             assert!(
                 ct.to_str().unwrap().contains("application/json"),
                 "{path} must return application/json"
@@ -332,8 +422,15 @@ mod tests {
         let resp = server.get("/api/states").await;
         let json: Value = resp.json();
         let entry = &json.as_array().unwrap()[0];
-        for field in ["entity_id", "state", "attributes", "last_changed",
-                      "last_reported", "last_updated", "context"] {
+        for field in [
+            "entity_id",
+            "state",
+            "attributes",
+            "last_changed",
+            "last_reported",
+            "last_updated",
+            "context",
+        ] {
             assert!(entry.get(field).is_some(), "missing state field: {field}");
         }
         // context must have id, parent_id, user_id
@@ -357,7 +454,10 @@ mod tests {
         let resp = server.get("/api/states/light.nonexistent").await;
         resp.assert_status(StatusCode::NOT_FOUND);
         let json: Value = resp.json();
-        assert_eq!(json["message"], "Entity not found.", "404 message must match HA exactly");
+        assert_eq!(
+            json["message"], "Entity not found.",
+            "404 message must match HA exactly"
+        );
     }
 
     /// Returns 200 + state object for a known entity.
