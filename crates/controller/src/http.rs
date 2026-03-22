@@ -11,6 +11,7 @@ use serde::Serialize;
 use crate::app::AppState;
 use crate::ha_api;
 use crate::ha_auth;
+use crate::ha_mobile;
 use crate::ha_ws;
 use crate::storage::OnboardingState;
 
@@ -22,6 +23,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .merge(ha_auth::router())
         // HA-compatible WebSocket surface
         .merge(ha_ws::router())
+        // HA mobile app registration
+        .merge(ha_mobile::router())
         // Original shell routes
         .route("/", get(index))
         .route("/onboarding", get(onboarding_page))
