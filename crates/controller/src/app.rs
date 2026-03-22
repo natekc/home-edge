@@ -11,6 +11,7 @@ use crate::http;
 use crate::service::ServiceRegistry;
 use crate::state_store::StateStore;
 use crate::storage::Storage;
+use crate::zeroconf;
 
 pub struct AppState {
     pub config: AppConfig,
@@ -40,6 +41,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
     let listen_addr = config.listen_addr();
     let storage = Storage::new(config.storage.data_dir.clone()).await?;
     let state = Arc::new(AppState::new(config, storage));
+    let _zeroconf = zeroconf::announce(&state).await?;
 
     let listener = tokio::net::TcpListener::bind(listen_addr)
         .await

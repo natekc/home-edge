@@ -21,4 +21,6 @@ toml = "0.9.2"
 tower = { version = "0.5.2", default-features = false, features = ["util"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
+local-ip-address = "0.6.3"
+mdns-sd = "0.18.2"
 uuid = { version = "1", features = ["v4"] }

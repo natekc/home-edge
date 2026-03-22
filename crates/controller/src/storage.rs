@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredUser {
@@ -133,8 +134,26 @@ impl Storage {
         Ok(state)
     }
 
+    pub async fn load_or_create_instance_id(&self) -> Result<String> {
+        let _guard = self.lock.lock().await;
+        let path = self.instance_id_path();
+        match tokio::fs::read_to_string(&path).await {
+            Ok(contents) => Ok(contents.trim().to_string()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let instance_id = Uuid::new_v4().to_string();
+                save_text_atomic(&path, &instance_id).await?;
+                Ok(instance_id)
+            }
+            Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
     fn onboarding_path(&self) -> PathBuf {
         self.root.join("onboarding.json")
+    }
+
+    fn instance_id_path(&self) -> PathBuf {
+        self.root.join("instance_id")
     }
 }
 
@@ -148,6 +167,50 @@ async fn save_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 
     let tmp_path = path.with_extension("tmp");
     let serialized = serde_json::to_vec_pretty(value).context("failed to serialize state")?;
+    let final_parent = parent.to_path_buf();
+    let final_path = path.to_path_buf();
+    let final_tmp = tmp_path.clone();
+
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        use std::fs::{self, File};
+        use std::io::Write;
+
+        let mut file = File::create(&final_tmp)
+            .with_context(|| format!("failed to create {}", final_tmp.display()))?;
+        file.write_all(&serialized)
+            .with_context(|| format!("failed to write {}", final_tmp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("failed to sync {}", final_tmp.display()))?;
+        fs::rename(&final_tmp, &final_path).with_context(|| {
+            format!(
+                "failed to rename {} to {}",
+                final_tmp.display(),
+                final_path.display()
+            )
+        })?;
+
+        File::open(&final_parent)
+            .with_context(|| format!("failed to open {}", final_parent.display()))?
+            .sync_all()
+            .with_context(|| format!("failed to sync dir {}", final_parent.display()))?;
+        Ok(())
+    })
+    .await
+    .context("atomic write task failed")??;
+
+    Ok(())
+}
+
+async fn save_text_atomic(path: &Path, value: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("missing parent dir for {}", path.display()))?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("failed to create {}", parent.display()))?;
+
+    let tmp_path = path.with_extension("tmp");
+    let serialized = value.as_bytes().to_vec();
     let final_parent = parent.to_path_buf();
     let final_path = path.to_path_buf();
     let final_tmp = tmp_path.clone();
@@ -219,5 +282,22 @@ mod tests {
         let loaded = storage.load_onboarding().await.expect("load state");
 
         assert_eq!(loaded.onboarded, state.onboarded);
+    }
+
+    #[tokio::test]
+    async fn persists_instance_id() {
+        let root = std::env::temp_dir().join(format!("home-edge-test-{}", now_unix_ms()));
+        let storage = Storage::new(root.clone()).await.expect("storage init");
+
+        let first = storage
+            .load_or_create_instance_id()
+            .await
+            .expect("create instance id");
+        let second = storage
+            .load_or_create_instance_id()
+            .await
+            .expect("load instance id");
+
+        assert_eq!(first, second);
     }
 }

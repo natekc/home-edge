@@ -10,3 +10,4 @@ pub mod logging;
 pub mod service;
 pub mod state_store;
 pub mod storage;
+pub mod zeroconf;
