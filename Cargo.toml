@@ -10,7 +10,7 @@ version = "0.1.0"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
-axum = { version = "0.8.4", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+axum = { version = "0.8.4", default-features = false, features = ["form", "http1", "json", "tokio", "ws"] }
 axum-test = { version = "17", features = ["ws"] }
 clap = { version = "4.5.40", features = ["derive", "env"] }
 ha-types = { path = "crates/ha-types" }

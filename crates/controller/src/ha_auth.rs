@@ -598,6 +598,7 @@ mod tests {
             states: StateStore::new(),
             tokens: TokenStore::new(),
             flows: LoginFlowStore::new(),
+            webhooks: crate::ha_webhook::WebhookStore::new(),
         });
         let app = super::router().with_state(state);
         TestServer::new(app).unwrap()
@@ -605,9 +606,6 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // GET /auth/providers
-    // -----------------------------------------------------------------------
-
-    /// Source: AuthProvidersView.get
     ///   Returns {"providers": [...], "preselect_remember_me": bool}
     #[tokio::test]
     async fn get_providers_returns_200_with_provider_list() {

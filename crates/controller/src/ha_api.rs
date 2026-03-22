@@ -212,6 +212,7 @@ mod tests {
             states: StateStore::new(),
             tokens: crate::ha_auth::TokenStore::new(),
             flows: crate::ha_auth::LoginFlowStore::new(),
+            webhooks: crate::ha_webhook::WebhookStore::new(),
         });
         let app = super::router().with_state(state);
         TestServer::new(app).unwrap()

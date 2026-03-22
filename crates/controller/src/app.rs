@@ -6,6 +6,7 @@ use tracing::info;
 
 use crate::config::AppConfig;
 use crate::ha_auth::{LoginFlowStore, TokenStore};
+use crate::ha_webhook::WebhookStore;
 use crate::http;
 use crate::state_store::StateStore;
 use crate::storage::Storage;
@@ -16,6 +17,7 @@ pub struct AppState {
     pub states: StateStore,
     pub tokens: TokenStore,
     pub flows: LoginFlowStore,
+    pub webhooks: WebhookStore,
 }
 
 pub async fn run(config: AppConfig) -> Result<()> {
@@ -27,6 +29,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
         states: StateStore::new(),
         tokens: TokenStore::new(),
         flows: LoginFlowStore::new(),
+        webhooks: WebhookStore::new(),
     });
 
     let listener = tokio::net::TcpListener::bind(listen_addr)
