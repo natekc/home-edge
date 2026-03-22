@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-binary="${1:-/opt/pi-control-plane/pi-control-plane}"
-config="${2:-/opt/pi-control-plane/default.toml}"
+binary="${1:-/opt/home-edge/home-edge}"
+config="${2:-/opt/home-edge/default.toml}"
 
 "$binary" --config "$config" &
 pid="$!"

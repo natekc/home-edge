@@ -140,7 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn persists_onboarding_state() {
-        let root = std::env::temp_dir().join(format!("pi-control-plane-test-{}", now_unix_ms()));
+        let root = std::env::temp_dir().join(format!("home-edge-test-{}", now_unix_ms()));
         let storage = Storage::new(root.clone()).await.expect("storage init");
         let state = OnboardingState {
             version: 1,

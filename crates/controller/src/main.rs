@@ -14,9 +14,9 @@ use anyhow::Result;
 use clap::Parser;
 
 #[derive(Debug, Parser)]
-#[command(about = "Milestone 0 control plane for low-power Linux targets")]
+#[command(about = "Milestone 0 edge runtime for low-power Linux targets")]
 struct Args {
-    #[arg(long, env = "PI_CTRL_CONFIG", default_value = "config/default.toml")]
+    #[arg(long, env = "HOME_EDGE_CONFIG", default_value = "config/default.toml")]
     config: std::path::PathBuf,
 }
 

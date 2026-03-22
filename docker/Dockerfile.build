@@ -12,11 +12,11 @@ WORKDIR /workspace
 FROM chef AS build
 COPY . .
 WORKDIR /workspace
-RUN cargo build --release --manifest-path Cargo.toml --target arm-unknown-linux-gnueabihf -p pi-control-plane
+RUN cargo build --release --manifest-path Cargo.toml --target arm-unknown-linux-gnueabihf -p home-edge
 RUN mkdir -p /out \
-    && cp target/arm-unknown-linux-gnueabihf/release/pi-control-plane /out/pi-control-plane \
+    && cp target/arm-unknown-linux-gnueabihf/release/home-edge /out/home-edge \
     && cp config/default.toml /out/default.toml \
-    && cp systemd/pi-control-plane.service /out/pi-control-plane.service \
+    && cp systemd/home-edge.service /out/home-edge.service \
     && cp scripts/install.sh /out/install.sh
 
 FROM debian:bookworm-slim AS runtime
@@ -24,8 +24,8 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /out /opt/pi-control-plane
-ENTRYPOINT ["/opt/pi-control-plane/pi-control-plane", "--config", "/opt/pi-control-plane/default.toml"]
+COPY --from=build /out /opt/home-edge
+ENTRYPOINT ["/opt/home-edge/home-edge", "--config", "/opt/home-edge/default.toml"]
 
 FROM runtime AS smoke
 RUN apt-get update \

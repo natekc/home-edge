@@ -3,7 +3,7 @@ host = "0.0.0.0"
 port = 8124
 
 [storage]
-data_dir = "./var/lib/pi-control-plane"
+data_dir = "./var/lib/home-edge"
 
 [ui]
-product_name = "Pi Control Plane"
+product_name = "Home Edge"

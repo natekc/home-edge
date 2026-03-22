@@ -36,7 +36,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
         .await
         .with_context(|| format!("failed to bind {listen_addr}"))?;
 
-    info!(address = %listen_addr, "control plane listening");
+    info!(address = %listen_addr, "home edge listening");
 
     axum::serve(listener, http::router(state))
         .with_graceful_shutdown(shutdown_signal())

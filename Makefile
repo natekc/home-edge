@@ -1,7 +1,7 @@
 CARGO ?= cargo
 DOCKER ?= docker
 WORKDIR := /workspace
-IMAGE := pi-control-plane-build
+IMAGE := home-edge-build
 
 .PHONY: test run fmt cross docker-build docker-smoke
 
@@ -15,7 +15,7 @@ fmt:
 	$(CARGO) fmt
 
 cross:
-	$(CARGO) build --release --target arm-unknown-linux-gnueabihf -p pi-control-plane
+	$(CARGO) build --release --target arm-unknown-linux-gnueabihf -p home-edge
 
 docker-build:
 	$(DOCKER) build -f docker/Dockerfile.build --target build -t $(IMAGE) .

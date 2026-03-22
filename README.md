@@ -1,6 +1,8 @@
-# Rust MVP Milestone 0
+# Home Edge
 
-This directory contains the Milestone 0 foundation for a low-power Linux control-plane runtime targeting Raspberry Pi Zero W class devices first.
+Home Edge is an embedded, low-power Linux runtime for local-first automation deployments.
+
+This repository contains the Milestone 0 foundation for a standalone runtime targeting Raspberry Pi Zero W class devices first, with an eye toward other embedded Linux systems.
 
 ## Goals
 
@@ -13,7 +15,7 @@ This directory contains the Milestone 0 foundation for a low-power Linux control
 
 ## Layout
 
-- `crates/controller`: milestone 0 runtime shell
+- `crates/controller`: milestone 0 Home Edge runtime shell
 - `.cargo/config.toml`: target linker configuration
 - `config/default.toml`: default runtime config
 - `docker/`: cross-build and smoke-test assets
@@ -23,7 +25,6 @@ This directory contains the Milestone 0 foundation for a low-power Linux control
 ## Local development
 
 ```bash
-cd rust-mvp
 cargo test
 cargo run -- --config config/default.toml
 ```
@@ -31,10 +32,9 @@ cargo run -- --config config/default.toml
 ## Docker build
 
 ```bash
-cd rust-mvp
-docker build -f docker/Dockerfile.build --target runtime -t pi-control-plane-build .
-docker create --name extract pi-control-plane-build
-docker cp extract:/out/pi-control-plane ./target/pi-control-plane
+docker build -f docker/Dockerfile.build --target runtime -t home-edge-build .
+docker create --name extract home-edge-build
+docker cp extract:/out/home-edge ./target/home-edge
 ```
 
 ## Current endpoints
