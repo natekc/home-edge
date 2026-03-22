@@ -26,7 +26,7 @@
 //!   {discovery_prefix}/{component}/{node_id}/{object_id}/config
 //! where discovery_prefix defaults to "homeassistant".
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::Router;
@@ -44,18 +44,9 @@ use crate::app::AppState;
 // Webhook store — registered handlers keyed by webhook_id
 // ---------------------------------------------------------------------------
 
-/// A stored webhook registration.
-#[derive(Clone)]
-pub struct WebhookRegistration {
-    /// The domain that registered this webhook (e.g. "mobile_app").
-    pub domain: String,
-    /// Human-readable name.
-    pub name: String,
-}
-
 /// In-memory webhook registry.
 pub struct WebhookStore {
-    inner: RwLock<HashMap<String, WebhookRegistration>>,
+    inner: RwLock<HashSet<String>>,
     /// Payloads received, keyed by webhook_id (for testability).
     pub received: RwLock<HashMap<String, Vec<Value>>>,
 }
@@ -63,24 +54,22 @@ pub struct WebhookStore {
 impl WebhookStore {
     pub fn new() -> Self {
         WebhookStore {
-            inner: RwLock::new(HashMap::new()),
+            inner: RwLock::new(HashSet::new()),
             received: RwLock::new(HashMap::new()),
         }
     }
 
     /// Register a webhook.
-    pub async fn register(&self, webhook_id: String, domain: String, name: String) {
+    #[cfg(test)]
+    pub async fn register(&self, webhook_id: String, _domain: String, _name: String) {
         let mut inner = self.inner.write().await;
-        inner.insert(
-            webhook_id,
-            WebhookRegistration { domain, name },
-        );
+        inner.insert(webhook_id);
     }
 
     /// Returns true if the webhook_id is registered.
     pub async fn is_registered(&self, webhook_id: &str) -> bool {
         let inner = self.inner.read().await;
-        inner.contains_key(webhook_id)
+        inner.contains(webhook_id)
     }
 
     /// Store a received payload (for testing / forwarding).
@@ -92,14 +81,6 @@ impl WebhookStore {
             .push(payload);
     }
 
-    /// List registered webhooks.
-    pub async fn list(&self) -> Vec<(String, WebhookRegistration)> {
-        let inner = self.inner.read().await;
-        inner
-            .iter()
-            .map(|(id, reg)| (id.clone(), reg.clone()))
-            .collect()
-    }
 }
 
 // ---------------------------------------------------------------------------

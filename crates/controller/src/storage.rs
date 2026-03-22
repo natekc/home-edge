@@ -41,6 +41,7 @@ impl Storage {
 
     /// Create an in-memory storage backed by a unique temp directory.
     /// Intended for tests only — avoids async setup in unit tests.
+    #[cfg(test)]
     pub fn new_in_memory() -> Self {
         let root = std::env::temp_dir().join(format!(
             "ha-compat-test-{}",
