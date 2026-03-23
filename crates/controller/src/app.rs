@@ -10,6 +10,7 @@ use crate::ha_auth::{LoginFlowStore, TokenStore};
 use crate::ha_webhook::WebhookStore;
 use crate::http;
 use crate::mobile_device_store::MobileDeviceStore;
+use crate::mobile_entity_store::MobileEntityStore;
 use crate::service::ServiceRegistry;
 use crate::state_store::StateStore;
 use crate::storage::Storage;
@@ -20,6 +21,7 @@ pub struct AppState {
     pub storage: Storage,
     pub auth: AuthStore,
     pub mobile_devices: MobileDeviceStore,
+    pub mobile_entities: MobileEntityStore,
     pub states: StateStore,
     pub tokens: TokenStore,
     pub flows: LoginFlowStore,
@@ -31,9 +33,11 @@ impl AppState {
     pub fn new(config: AppConfig, storage: Storage) -> Self {
         let auth = AuthStore::new(storage.root().to_path_buf());
         let mobile_devices = MobileDeviceStore::new(storage.root().to_path_buf());
+        let mobile_entities = MobileEntityStore::new(storage.root().to_path_buf());
         Self {
             auth,
             mobile_devices,
+            mobile_entities,
             config,
             storage,
             states: StateStore::new(),

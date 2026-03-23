@@ -9,6 +9,7 @@ pub mod ha_ws;
 pub mod http;
 pub mod logging;
 pub mod mobile_device_store;
+pub mod mobile_entity_store;
 pub mod service;
 pub mod state_store;
 pub mod storage;
