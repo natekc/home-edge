@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::storage::save_json_atomic;
 
@@ -36,7 +36,7 @@ pub struct MobileEntityRecord {
     pub disabled: bool,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct MobileEntityStoreData {
     entities: BTreeMap<String, MobileEntityRecord>,
 }
@@ -44,6 +44,7 @@ struct MobileEntityStoreData {
 pub struct MobileEntityStore {
     root: PathBuf,
     lock: Mutex<()>,
+    cache: RwLock<Option<MobileEntityStoreData>>,
 }
 
 impl MobileEntityStore {
@@ -51,6 +52,7 @@ impl MobileEntityStore {
         Self {
             root,
             lock: Mutex::new(()),
+            cache: RwLock::new(None),
         }
     }
 
@@ -62,7 +64,7 @@ impl MobileEntityStore {
 
         let _guard = self.lock.lock().await;
         let path = self.path();
-        let mut data = self.load_data().await?;
+        let mut data = self.load_data_locked().await?;
         let key = store_key(
             &registration.webhook_id,
             &registration.entity_type,
@@ -93,6 +95,7 @@ impl MobileEntityStore {
 
         data.entities.insert(key, record.clone());
         save_json_atomic(&path, &data).await?;
+        self.store_cache(&data).await;
         Ok(record)
     }
 
@@ -125,15 +128,34 @@ impl MobileEntityStore {
     }
 
     async fn load_data(&self) -> Result<MobileEntityStoreData> {
+        if let Some(data) = self.cache.read().await.clone() {
+            return Ok(data);
+        }
+
+        let _guard = self.lock.lock().await;
+        self.load_data_locked().await
+    }
+
+    async fn load_data_locked(&self) -> Result<MobileEntityStoreData> {
+        if let Some(data) = self.cache.read().await.clone() {
+            return Ok(data);
+        }
+
         let path = self.path();
-        match tokio::fs::read_to_string(&path).await {
+        let data = match tokio::fs::read_to_string(&path).await {
             Ok(contents) => serde_json::from_str(&contents)
                 .with_context(|| format!("failed to parse {}", path.display())),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 Ok(MobileEntityStoreData::default())
             }
             Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
-        }
+        }?;
+        self.store_cache(&data).await;
+        Ok(data)
+    }
+
+    async fn store_cache(&self, data: &MobileEntityStoreData) {
+        *self.cache.write().await = Some(data.clone());
     }
 }
 

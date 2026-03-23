@@ -39,6 +39,9 @@ use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
 use crate::app::AppState;
+use crate::mobile_device_store::MobileDeviceRecord;
+use crate::mobile_entity_store::{MobileEntityRecord, MobileEntityRegistration};
+use crate::state_store::make_state;
 
 // ---------------------------------------------------------------------------
 // Webhook store — registered handlers keyed by webhook_id
@@ -59,11 +62,15 @@ impl WebhookStore {
         }
     }
 
+    pub async fn remember(&self, webhook_id: String) {
+        let mut inner = self.inner.write().await;
+        inner.insert(webhook_id);
+    }
+
     /// Register a webhook.
     #[cfg(test)]
     pub async fn register(&self, webhook_id: String, _domain: String, _name: String) {
-        let mut inner = self.inner.write().await;
-        inner.insert(webhook_id);
+        self.remember(webhook_id).await;
     }
 
     /// Returns true if the webhook_id is registered.
@@ -126,22 +133,51 @@ async fn webhook_handle(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    // Try to parse body as JSON for storage; fall through gracefully if not JSON.
-    let payload: Value = if headers
+    let is_json = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .map(|ct| ct.contains("application/json"))
-        .unwrap_or(false)
-    {
-        serde_json::from_slice(&body).unwrap_or(Value::Null)
+        .unwrap_or(false);
+
+    let mobile_device = match state.mobile_devices.get_by_webhook_id(&webhook_id).await {
+        Ok(device) => device,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to load mobile device: {err:#}")})),
+            )
+                .into_response();
+        }
+    };
+    let webhook_registered = state.webhooks.is_registered(&webhook_id).await;
+
+    if mobile_device.is_none() && !webhook_registered {
+        return (StatusCode::OK, Json(json!({}))).into_response();
+    }
+
+    let payload = if is_json {
+        match serde_json::from_slice::<Value>(&body) {
+            Ok(payload) => payload,
+            Err(_) if mobile_device.is_some() => {
+                return (StatusCode::BAD_REQUEST, Json(json!({}))).into_response();
+            }
+            Err(_) => Value::Null,
+        }
     } else {
         Value::Null
     };
 
+    if let Some(device) = mobile_device.as_ref() {
+        state.webhooks.remember(webhook_id.clone()).await;
+        let response = handle_mobile_webhook(&state, device, &payload).await;
+        state.webhooks.store_payload(&webhook_id, payload).await;
+        return response;
+    }
+
     // Store the received payload for registered webhooks.
     // Source: webhook handler records are dispatched per webhook_id.
     // Even for unknown IDs we return 200 — HA behavior.
-    if state.webhooks.is_registered(&webhook_id).await {
+    if webhook_registered {
         state.webhooks.store_payload(&webhook_id, payload).await;
     }
 
@@ -179,6 +215,305 @@ async fn mqtt_discovery_info(State(_state): State<Arc<AppState>>) -> Response {
         topic_pattern: "homeassistant/{component}/{node_id}/{object_id}/config".into(),
     };
     (StatusCode::OK, Json(info)).into_response()
+}
+
+async fn handle_mobile_webhook(
+    state: &Arc<AppState>,
+    device: &MobileDeviceRecord,
+    payload: &Value,
+) -> Response {
+    let Some(object) = payload.as_object() else {
+        return (StatusCode::OK, Json(json!({}))).into_response();
+    };
+
+    let Some(webhook_type) = object.get("type").and_then(Value::as_str) else {
+        return (StatusCode::OK, Json(json!({}))).into_response();
+    };
+
+    match webhook_type {
+        "register_sensor" => {
+            let data = object.get("data").cloned().unwrap_or_else(|| json!({}));
+            register_sensor_command(state, device, &data).await
+        }
+        "update_sensor_states" => {
+            let data = object.get("data").cloned().unwrap_or_else(|| json!([]));
+            update_sensor_states_command(state, device, &data).await
+        }
+        _ => (StatusCode::OK, Json(json!({}))).into_response(),
+    }
+}
+
+#[derive(Clone)]
+struct SensorCommand {
+    entity_type: String,
+    unique_id: String,
+    name: String,
+    state: Option<Value>,
+    attributes: serde_json::Map<String, Value>,
+    device_class: Option<String>,
+    unit_of_measurement: Option<String>,
+    icon: Option<String>,
+    entity_category: Option<String>,
+    state_class: Option<String>,
+    disabled: bool,
+}
+
+async fn register_sensor_command(
+    state: &Arc<AppState>,
+    device: &MobileDeviceRecord,
+    data: &Value,
+) -> Response {
+    let Some(command) = parse_sensor_command(data, true) else {
+        return (StatusCode::OK, Json(json!({}))).into_response();
+    };
+
+    let record = match state
+        .mobile_entities
+        .register(MobileEntityRegistration {
+            webhook_id: device.webhook_id.clone(),
+            entity_type: command.entity_type.clone(),
+            sensor_unique_id: command.unique_id.clone(),
+            sensor_name: command.name.clone(),
+            device_class: command.device_class.clone(),
+            unit_of_measurement: command.unit_of_measurement.clone(),
+            icon: command.icon.clone(),
+            entity_category: command.entity_category.clone(),
+            state_class: command.state_class.clone(),
+            disabled: command.disabled,
+        })
+        .await
+    {
+        Ok(record) => record,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to persist mobile entity: {err:#}")})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(err) = apply_sensor_state(state, &record, &command) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"message": err}))).into_response();
+    }
+
+    (StatusCode::CREATED, Json(json!({"success": true}))).into_response()
+}
+
+async fn update_sensor_states_command(
+    state: &Arc<AppState>,
+    device: &MobileDeviceRecord,
+    data: &Value,
+) -> Response {
+    let Some(items) = data.as_array() else {
+        return (StatusCode::OK, Json(json!({}))).into_response();
+    };
+
+    if items.iter().any(|item| {
+        item.get("type").and_then(Value::as_str).is_none()
+            || item.get("unique_id").and_then(Value::as_str).is_none()
+    }) {
+        return (StatusCode::OK, Json(json!({}))).into_response();
+    }
+
+    let mut response = serde_json::Map::new();
+
+    for item in items {
+        let Some(unique_id) = item.get("unique_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(entity_type) = item.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+
+        let record = match state
+            .mobile_entities
+            .get(&device.webhook_id, entity_type, unique_id)
+            .await
+        {
+            Ok(record) => record,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"message": format!("failed to load mobile entity: {err:#}")})),
+                )
+                    .into_response();
+            }
+        };
+
+        let Some(record) = record else {
+            response.insert(
+                unique_id.to_string(),
+                json!({
+                    "success": false,
+                    "error": {
+                        "code": "not_registered",
+                        "message": format!("{entity_type} {unique_id} is not registered")
+                    }
+                }),
+            );
+            continue;
+        };
+
+        let Some(command) = parse_sensor_command(item, false) else {
+            response.insert(
+                unique_id.to_string(),
+                json!({
+                    "success": false,
+                    "error": {
+                        "code": "invalid_format",
+                        "message": format!("invalid sensor payload for {entity_type} {unique_id}")
+                    }
+                }),
+            );
+            continue;
+        };
+
+        if let Err(err) = apply_sensor_state(state, &record, &command) {
+            response.insert(
+                unique_id.to_string(),
+                json!({
+                    "success": false,
+                    "error": {
+                        "code": "invalid_format",
+                        "message": err
+                    }
+                }),
+            );
+            continue;
+        }
+
+        let mut result = json!({"success": true});
+        if record.disabled {
+            result["is_disabled"] = Value::Bool(true);
+        }
+        response.insert(unique_id.to_string(), result);
+    }
+
+    (StatusCode::OK, Json(Value::Object(response))).into_response()
+}
+
+fn parse_sensor_command(value: &Value, require_name: bool) -> Option<SensorCommand> {
+    let object = value.as_object()?;
+    let entity_type = object.get("type")?.as_str()?.to_string();
+    if !matches!(entity_type.as_str(), "sensor" | "binary_sensor") {
+        return None;
+    }
+
+    let unique_id = object.get("unique_id")?.as_str()?.to_string();
+    if unique_id.is_empty() {
+        return None;
+    }
+
+    let name = match object.get("name").and_then(Value::as_str) {
+        Some(name) if !name.is_empty() => name.to_string(),
+        Some(_) => return None,
+        None if require_name => return None,
+        None => unique_id.clone(),
+    };
+
+    let state_class = nullable_string(object.get("state_class"))?;
+    if entity_type != "sensor" && state_class.is_some() {
+        return None;
+    }
+
+    let attributes = object
+        .get("attributes")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    Some(SensorCommand {
+        entity_type,
+        unique_id,
+        name,
+        state: object.get("state").cloned(),
+        attributes,
+        device_class: nullable_string(object.get("device_class"))?,
+        unit_of_measurement: nullable_string(object.get("unit_of_measurement"))?,
+        icon: match object.get("icon") {
+            Some(Value::Null) => Some("mdi:cellphone".to_string()),
+            Some(Value::String(icon)) => Some(icon.clone()),
+            Some(_) => return None,
+            None => Some("mdi:cellphone".to_string()),
+        },
+        entity_category: nullable_string(object.get("entity_category"))?,
+        state_class,
+        disabled: object
+            .get("disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn nullable_string(value: Option<&Value>) -> Option<Option<String>> {
+    match value {
+        None | Some(Value::Null) => Some(None),
+        Some(Value::String(value)) => Some(Some(value.clone())),
+        Some(_) => None,
+    }
+}
+
+fn apply_sensor_state(
+    state: &Arc<AppState>,
+    record: &MobileEntityRecord,
+    command: &SensorCommand,
+) -> Result<(), String> {
+    let mut attributes: HashMap<String, Value> = command.attributes.clone().into_iter().collect();
+    attributes.insert("friendly_name".into(), Value::String(command.name.clone()));
+    if let Some(device_class) = command
+        .device_class
+        .clone()
+        .or_else(|| record.device_class.clone())
+    {
+        attributes.insert("device_class".into(), Value::String(device_class));
+    }
+    if let Some(unit) = command
+        .unit_of_measurement
+        .clone()
+        .or_else(|| record.unit_of_measurement.clone())
+    {
+        attributes.insert("unit_of_measurement".into(), Value::String(unit));
+    }
+    if let Some(icon) = command.icon.clone().or_else(|| record.icon.clone()) {
+        attributes.insert("icon".into(), Value::String(icon));
+    }
+    if let Some(category) = command
+        .entity_category
+        .clone()
+        .or_else(|| record.entity_category.clone())
+    {
+        attributes.insert("entity_category".into(), Value::String(category));
+    }
+    if let Some(state_class) = command
+        .state_class
+        .clone()
+        .or_else(|| record.state_class.clone())
+    {
+        attributes.insert("state_class".into(), Value::String(state_class));
+    }
+
+    let state_value = match (
+        &record.entity_type[..],
+        command.state.clone().unwrap_or(Value::Null),
+    ) {
+        ("binary_sensor", Value::Bool(value)) => {
+            if value {
+                "on".to_string()
+            } else {
+                "off".to_string()
+            }
+        }
+        (_, Value::Null) => "unknown".to_string(),
+        (_, Value::Bool(value)) => value.to_string(),
+        (_, Value::Number(value)) => value.to_string(),
+        (_, Value::String(value)) => value,
+        (_, other) => return Err(format!("unsupported sensor state payload: {other}")),
+    };
+
+    state
+        .states
+        .set(make_state(&record.entity_id, state_value, attributes))
 }
 
 // ---------------------------------------------------------------------------

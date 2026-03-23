@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::storage::save_json_atomic;
@@ -39,7 +39,7 @@ pub struct MobileDeviceRecord {
     pub owner_username: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct MobileDeviceStoreData {
     devices: Vec<MobileDeviceRecord>,
 }
@@ -47,6 +47,7 @@ struct MobileDeviceStoreData {
 pub struct MobileDeviceStore {
     root: PathBuf,
     lock: Mutex<()>,
+    cache: RwLock<Option<MobileDeviceStoreData>>,
 }
 
 impl MobileDeviceStore {
@@ -54,6 +55,7 @@ impl MobileDeviceStore {
         Self {
             root,
             lock: Mutex::new(()),
+            cache: RwLock::new(None),
         }
     }
 
@@ -63,30 +65,43 @@ impl MobileDeviceStore {
     ) -> Result<MobileDeviceRecord> {
         let _guard = self.lock.lock().await;
         let path = self.path();
-        let mut data = self.load_data().await?;
+        let mut data = self.load_data_locked().await?;
 
         if let Some(device_id) = registration.device_id.as_deref() {
             if let Some(index) = data.devices.iter().position(|device| {
                 device.device_id.as_deref() == Some(device_id)
                     && device.app_id == registration.app_id
             }) {
-                {
-                    let existing = &mut data.devices[index];
-                    existing.app_name = registration.app_name;
-                    existing.app_version = registration.app_version;
-                    existing.device_name = registration.device_name;
-                    existing.manufacturer = registration.manufacturer;
-                    existing.model = registration.model;
-                    existing.os_name = registration.os_name;
-                    existing.os_version = registration.os_version;
-                    existing.supports_encryption = registration.supports_encryption;
-                    existing.owner_username = registration.owner_username;
-                    if existing.secret.is_none() && existing.supports_encryption {
-                        existing.secret = Some(new_secret());
-                    }
+                let current = data.devices[index].clone();
+                let secret = if current.secret.is_none() && registration.supports_encryption {
+                    Some(new_secret())
+                } else {
+                    current.secret.clone()
+                };
+                let updated = MobileDeviceRecord {
+                    webhook_id: current.webhook_id.clone(),
+                    secret,
+                    app_id: current.app_id.clone(),
+                    app_name: registration.app_name,
+                    app_version: registration.app_version,
+                    device_name: registration.device_name,
+                    manufacturer: registration.manufacturer,
+                    model: registration.model,
+                    os_name: registration.os_name,
+                    os_version: registration.os_version,
+                    device_id: current.device_id.clone(),
+                    supports_encryption: registration.supports_encryption,
+                    owner_username: registration.owner_username,
+                };
+
+                if current == updated {
+                    return Ok(current);
                 }
+
+                data.devices[index] = updated.clone();
                 save_json_atomic(&path, &data).await?;
-                return Ok(data.devices[index].clone());
+                self.store_cache(&data).await;
+                return Ok(updated);
             }
         }
 
@@ -107,7 +122,17 @@ impl MobileDeviceStore {
         };
         data.devices.push(record.clone());
         save_json_atomic(&path, &data).await?;
+        self.store_cache(&data).await;
         Ok(record)
+    }
+
+    pub async fn get_by_webhook_id(&self, webhook_id: &str) -> Result<Option<MobileDeviceRecord>> {
+        Ok(self
+            .load_data()
+            .await?
+            .devices
+            .into_iter()
+            .find(|device| device.webhook_id == webhook_id))
     }
 
     pub async fn all(&self) -> Result<Vec<MobileDeviceRecord>> {
@@ -119,15 +144,34 @@ impl MobileDeviceStore {
     }
 
     async fn load_data(&self) -> Result<MobileDeviceStoreData> {
+        if let Some(data) = self.cache.read().await.clone() {
+            return Ok(data);
+        }
+
+        let _guard = self.lock.lock().await;
+        self.load_data_locked().await
+    }
+
+    async fn load_data_locked(&self) -> Result<MobileDeviceStoreData> {
+        if let Some(data) = self.cache.read().await.clone() {
+            return Ok(data);
+        }
+
         let path = self.path();
-        match tokio::fs::read_to_string(&path).await {
+        let data = match tokio::fs::read_to_string(&path).await {
             Ok(contents) => serde_json::from_str(&contents)
                 .with_context(|| format!("failed to parse {}", path.display())),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 Ok(MobileDeviceStoreData::default())
             }
             Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
-        }
+        }?;
+        self.store_cache(&data).await;
+        Ok(data)
+    }
+
+    async fn store_cache(&self, data: &MobileDeviceStoreData) {
+        *self.cache.write().await = Some(data.clone());
     }
 }
 
