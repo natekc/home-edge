@@ -52,7 +52,10 @@ async fn onboarding_users_creates_first_user_and_returns_auth_code() {
     let json = response.json::<serde_json::Value>();
     assert!(json["auth_code"].as_str().is_some());
 
-    let progress = server.get("/api/onboarding").await.json::<serde_json::Value>();
+    let progress = server
+        .get("/api/onboarding")
+        .await
+        .json::<serde_json::Value>();
     assert_eq!(
         progress,
         json!([
@@ -126,7 +129,10 @@ async fn onboarding_core_config_marks_system_onboarded() {
 
     response.assert_status_ok();
 
-    let progress = server.get("/api/onboarding").await.json::<serde_json::Value>();
+    let progress = server
+        .get("/api/onboarding")
+        .await
+        .json::<serde_json::Value>();
     assert_eq!(
         progress,
         json!([

@@ -129,7 +129,9 @@ impl Storage {
             Ok(contents) => serde_json::from_str(&contents)
                 .with_context(|| format!("failed to parse {}", path.display()))?,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => OnboardingState::default(),
-            Err(err) => return Err(err).with_context(|| format!("failed to read {}", path.display())),
+            Err(err) => {
+                return Err(err).with_context(|| format!("failed to read {}", path.display()));
+            }
         };
 
         update(&mut state)?;

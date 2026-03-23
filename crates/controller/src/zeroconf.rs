@@ -192,8 +192,14 @@ mod tests {
         .expect("service info");
 
         assert_eq!(service.get_type(), ZEROCONF_TYPE);
-        assert_eq!(service.get_fullname(), "My Home._home-assistant._tcp.local.");
-        assert_eq!(service.get_hostname(), "123e4567-e89b-12d3-a456-426614174000.local.");
+        assert_eq!(
+            service.get_fullname(),
+            "My Home._home-assistant._tcp.local."
+        );
+        assert_eq!(
+            service.get_hostname(),
+            "123e4567-e89b-12d3-a456-426614174000.local."
+        );
         assert_eq!(service.get_port(), 8124);
         assert_eq!(
             service.get_property_val_str("location_name"),
@@ -203,13 +209,22 @@ mod tests {
             service.get_property_val_str("uuid"),
             Some("123e4567-e89b-12d3-a456-426614174000")
         );
-        assert_eq!(service.get_property_val_str("version"), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            service.get_property_val_str("version"),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
         assert_eq!(
             service.get_property_val_str("internal_url"),
             Some("http://192.168.1.20:8124")
         );
-        assert_eq!(service.get_property_val_str("base_url"), Some("http://192.168.1.20:8124"));
-        assert_eq!(service.get_property_val_str("requires_api_password"), Some("true"));
+        assert_eq!(
+            service.get_property_val_str("base_url"),
+            Some("http://192.168.1.20:8124")
+        );
+        assert_eq!(
+            service.get_property_val_str("requires_api_password"),
+            Some("true")
+        );
     }
 
     #[test]
@@ -226,6 +241,9 @@ mod tests {
             service.get_property_val_str("location_name"),
             Some("Home Edge")
         );
-        assert_eq!(service.get_fullname(), "Home Edge._home-assistant._tcp.local.");
+        assert_eq!(
+            service.get_fullname(),
+            "Home Edge._home-assistant._tcp.local."
+        );
     }
 }

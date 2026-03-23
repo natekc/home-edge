@@ -150,10 +150,7 @@ mod tests {
             "volume",
             "wind_speed",
         ] {
-            assert!(
-                json.get(key).is_some(),
-                "unit_system missing field: {key}"
-            );
+            assert!(json.get(key).is_some(), "unit_system missing field: {key}");
         }
     }
 

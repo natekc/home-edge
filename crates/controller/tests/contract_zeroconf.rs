@@ -50,18 +50,39 @@ fn zeroconf_contract_matches_home_assistant_service_type_and_fields() {
     .expect("service info");
 
     assert_eq!(service.get_type(), ZEROCONF_TYPE);
-    assert_eq!(service.get_fullname(), "Living Room._home-assistant._tcp.local.");
-    assert_eq!(service.get_hostname(), "123e4567-e89b-12d3-a456-426614174000.local.");
+    assert_eq!(
+        service.get_fullname(),
+        "Living Room._home-assistant._tcp.local."
+    );
+    assert_eq!(
+        service.get_hostname(),
+        "123e4567-e89b-12d3-a456-426614174000.local."
+    );
     assert_eq!(service.get_port(), 8124);
-    assert_eq!(service.get_property_val_str("location_name"), Some("Living Room"));
+    assert_eq!(
+        service.get_property_val_str("location_name"),
+        Some("Living Room")
+    );
     assert_eq!(
         service.get_property_val_str("uuid"),
         Some("123e4567-e89b-12d3-a456-426614174000")
     );
-    assert_eq!(service.get_property_val_str("version"), Some(env!("CARGO_PKG_VERSION")));
-    assert_eq!(service.get_property_val_str("internal_url"), Some("http://192.168.1.42:8124"));
-    assert_eq!(service.get_property_val_str("base_url"), Some("http://192.168.1.42:8124"));
-    assert_eq!(service.get_property_val_str("requires_api_password"), Some("true"));
+    assert_eq!(
+        service.get_property_val_str("version"),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(
+        service.get_property_val_str("internal_url"),
+        Some("http://192.168.1.42:8124")
+    );
+    assert_eq!(
+        service.get_property_val_str("base_url"),
+        Some("http://192.168.1.42:8124")
+    );
+    assert_eq!(
+        service.get_property_val_str("requires_api_password"),
+        Some("true")
+    );
 }
 
 #[test]
@@ -74,6 +95,12 @@ fn zeroconf_contract_uses_product_name_before_onboarding_location_exists() {
     )
     .expect("service info");
 
-    assert_eq!(service.get_property_val_str("location_name"), Some("Home Edge"));
-    assert_eq!(service.get_fullname(), "Home Edge._home-assistant._tcp.local.");
+    assert_eq!(
+        service.get_property_val_str("location_name"),
+        Some("Home Edge")
+    );
+    assert_eq!(
+        service.get_fullname(),
+        "Home Edge._home-assistant._tcp.local."
+    );
 }

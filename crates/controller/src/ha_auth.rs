@@ -295,7 +295,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/.well-known/oauth-authorization-server",
             get(well_known_oauth_info),
         )
-        .route("/auth/authorize", get(auth_authorize).post(auth_authorize_submit))
+        .route(
+            "/auth/authorize",
+            get(auth_authorize).post(auth_authorize_submit),
+        )
         .route("/auth/providers", get(auth_providers))
         .route("/auth/login_flow", post(login_flow_init))
         .route("/auth/login_flow/{flow_id}", post(login_flow_step))
@@ -454,7 +457,11 @@ async fn auth_authorize_submit(
         }
     }
 
-    let auth_user = match state.auth.load_user_with_legacy_fallback(&state.storage).await {
+    let auth_user = match state
+        .auth
+        .load_user_with_legacy_fallback(&state.storage)
+        .await
+    {
         Ok(user) => user,
         Err(err) => {
             return (
@@ -465,9 +472,9 @@ async fn auth_authorize_submit(
         }
     };
 
-    let valid = auth_user.as_ref().is_some_and(|user| {
-        form.username == user.username && form.password == user.password
-    });
+    let valid = auth_user
+        .as_ref()
+        .is_some_and(|user| form.username == user.username && form.password == user.password);
     if !valid {
         return Html(render_authorize_page(
             state.config.ui.product_name.as_str(),
@@ -625,7 +632,11 @@ async fn login_flow_step(
             .into_response();
     }
 
-    let auth_user = match state.auth.load_user_with_legacy_fallback(&state.storage).await {
+    let auth_user = match state
+        .auth
+        .load_user_with_legacy_fallback(&state.storage)
+        .await
+    {
         Ok(user) => user,
         Err(err) => {
             return (
@@ -893,7 +904,11 @@ fn render_authorize_page(
     } else {
         "<label for=\"name\">Name</label><input id=\"name\" name=\"name\" autocomplete=\"name\" placeholder=\"Home Edge Owner\"><label for=\"location_name\">Location name</label><input id=\"location_name\" name=\"location_name\" autocomplete=\"organization\" placeholder=\"Home\"><input type=\"hidden\" name=\"language\" value=\"en\">".to_string()
     };
-    let button_label = if onboarded { "Authorize" } else { "Create account and authorize" };
+    let button_label = if onboarded {
+        "Authorize"
+    } else {
+        "Create account and authorize"
+    };
 
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{product_name}</title><style>body{{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;margin:0;background:#f5f1e8;color:#1d2a2a}}main{{max-width:28rem;margin:4rem auto;padding:1.5rem}}section{{background:#fff;border-radius:16px;padding:2rem;box-shadow:0 10px 30px rgba(0,0,0,.08)}}h1{{font-size:1.8rem;margin:0 0 1rem}}p{{line-height:1.5}}label{{display:block;font-weight:600;margin:.9rem 0 .35rem}}input{{width:100%;box-sizing:border-box;border:1px solid #ccd5d7;border-radius:10px;padding:.85rem;font-size:1rem}}button{{margin-top:1.2rem;width:100%;background:#204030;color:#fff;border:0;border-radius:10px;padding:.95rem 1rem;font-weight:700;cursor:pointer}}</style></head><body><main><section><h1>{heading}</h1><p>{intro}</p>{error_html}<form method=\"post\" action=\"/auth/authorize\"><input type=\"hidden\" name=\"response_type\" value=\"{response_type}\"><input type=\"hidden\" name=\"client_id\" value=\"{client_id}\"><input type=\"hidden\" name=\"redirect_uri\" value=\"{redirect_uri}\"><input type=\"hidden\" name=\"state\" value=\"{state}\">{onboarding_fields}<label for=\"username\">Username</label><input id=\"username\" name=\"username\" autocomplete=\"username\" required><label for=\"password\">Password</label><input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><button type=\"submit\">{button_label}</button></form></section></main></body></html>"
@@ -919,7 +934,9 @@ fn percent_decode(value: &str) -> String {
                 index += 1;
             }
             b'%' if index + 2 < bytes.len() => {
-                if let (Some(high), Some(low)) = (hex_value(bytes[index + 1]), hex_value(bytes[index + 2])) {
+                if let (Some(high), Some(low)) =
+                    (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+                {
                     decoded.push((high << 4) | low);
                     index += 3;
                 } else {
@@ -1079,7 +1096,10 @@ mod tests {
         assert_eq!(json["authorization_endpoint"], "/auth/authorize");
         assert_eq!(json["token_endpoint"], "/auth/token");
         assert_eq!(json["revocation_endpoint"], "/auth/revoke");
-        assert_eq!(json["response_types_supported"], serde_json::json!(["code"]));
+        assert_eq!(
+            json["response_types_supported"],
+            serde_json::json!(["code"])
+        );
     }
 
     #[tokio::test]

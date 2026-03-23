@@ -65,7 +65,9 @@ impl State {
         let object_id = &rest[1..]; // skip the dot
         !domain.is_empty()
             && !object_id.is_empty()
-            && domain.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            && domain
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
             && object_id
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -92,10 +94,7 @@ mod tests {
             "a.b",
         ];
         for id in valid {
-            assert!(
-                State::is_valid_entity_id(id),
-                "expected valid: {id}"
-            );
+            assert!(State::is_valid_entity_id(id), "expected valid: {id}");
         }
     }
 
@@ -112,10 +111,7 @@ mod tests {
             "",
         ];
         for id in invalid {
-            assert!(
-                !State::is_valid_entity_id(id),
-                "expected invalid: {id}"
-            );
+            assert!(!State::is_valid_entity_id(id), "expected invalid: {id}");
         }
     }
 
@@ -178,7 +174,10 @@ mod tests {
             context: Context::new("x"),
         };
         let json = serde_json::to_value(&state).unwrap();
-        assert!(json["attributes"].is_object(), "attributes must be an object");
+        assert!(
+            json["attributes"].is_object(),
+            "attributes must be an object"
+        );
     }
 
     /// Round-trip: deserialise what we serialise.

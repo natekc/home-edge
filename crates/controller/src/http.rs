@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -40,7 +40,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/onboarding", get(onboarding_page))
         .route("/api/health", get(health))
         .route("/api/onboarding", get(onboarding_status))
-        .route("/api/onboarding/installation_type", get(onboarding_installation_type))
+        .route(
+            "/api/onboarding/installation_type",
+            get(onboarding_installation_type),
+        )
         .route("/api/onboarding/users", post(create_onboarding_user))
         .route("/api/onboarding/core_config", post(complete_core_config))
         .route("/api/onboarding/complete", post(complete_onboarding))
@@ -139,7 +142,9 @@ async fn create_onboarding_user(
     {
         return (
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("missing required onboarding user fields".into())),
+            Json(ErrorResponse::new(
+                "missing required onboarding user fields".into(),
+            )),
         )
             .into_response();
     }
@@ -175,7 +180,9 @@ async fn create_onboarding_user(
             {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse::new(format!("failed to persist auth user: {err:#}"))),
+                    Json(ErrorResponse::new(format!(
+                        "failed to persist auth user: {err:#}"
+                    ))),
                 )
                     .into_response();
             }
@@ -189,7 +196,9 @@ async fn create_onboarding_user(
             .into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!("failed to persist user: {err:#}"))),
+            Json(ErrorResponse::new(format!(
+                "failed to persist user: {err:#}"
+            ))),
         )
             .into_response(),
     }
@@ -220,7 +229,10 @@ async fn complete_core_config(
             }
             current.location_name = request.location_name.clone();
             current.country = request.country.clone();
-            current.language = request.language.clone().or_else(|| current.language.clone());
+            current.language = request
+                .language
+                .clone()
+                .or_else(|| current.language.clone());
             current.time_zone = request.time_zone.clone();
             current.unit_system = request.unit_system.clone();
             current.done.push(STEP_CORE_CONFIG.into());
@@ -237,12 +249,16 @@ async fn complete_core_config(
             .into_response(),
         Err(err) if err.to_string() == "user step required" => (
             StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("User step must be completed first".into())),
+            Json(ErrorResponse::new(
+                "User step must be completed first".into(),
+            )),
         )
             .into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!("failed to persist core config: {err:#}"))),
+            Json(ErrorResponse::new(format!(
+                "failed to persist core config: {err:#}"
+            ))),
         )
             .into_response(),
     }
@@ -253,7 +269,10 @@ async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoRes
         .storage
         .update_onboarding(|current| {
             current.onboarded = true;
-            current.done = ONBOARDING_STEPS.iter().map(|step| step.to_string()).collect();
+            current.done = ONBOARDING_STEPS
+                .iter()
+                .map(|step| step.to_string())
+                .collect();
             Ok(())
         })
         .await

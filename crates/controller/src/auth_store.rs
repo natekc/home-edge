@@ -45,7 +45,10 @@ impl AuthStore {
         save_json_atomic(&self.user_path(), user).await
     }
 
-    pub async fn load_user_with_legacy_fallback(&self, storage: &Storage) -> Result<Option<AuthUser>> {
+    pub async fn load_user_with_legacy_fallback(
+        &self,
+        storage: &Storage,
+    ) -> Result<Option<AuthUser>> {
         if let Some(user) = self.load_user().await? {
             return Ok(Some(user));
         }

@@ -217,10 +217,7 @@ async fn api_service_call(
         None => Map::new(),
     };
 
-    let return_response = uri
-        .query()
-        .map(query_has_return_response)
-        .unwrap_or(false);
+    let return_response = uri.query().map(query_has_return_response).unwrap_or(false);
     match app
         .services
         .call(&app, &domain, &service, data, None, return_response)
