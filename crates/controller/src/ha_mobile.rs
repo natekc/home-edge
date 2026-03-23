@@ -29,9 +29,9 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use uuid::Uuid;
 
 use crate::app::AppState;
+use crate::mobile_device_store::MobileDeviceRegistration;
 
 // ---------------------------------------------------------------------------
 // Request / Response shapes
@@ -117,7 +117,7 @@ pub fn router() -> Router<Arc<AppState>> {
 /// (we use UUID v4 hex), optionally issues an encryption secret, and returns
 /// the registration response with HTTP 201 Created.
 async fn mobile_app_register(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     body: axum::extract::Json<serde_json::Value>,
 ) -> Response {
     // Validate required fields — source: RegistrationsView.post schema
@@ -153,26 +153,51 @@ async fn mobile_app_register(
         }
     }
 
-    // Source: webhook_id = secrets.token_hex()
-    //   Python secrets.token_hex() returns 32 hex characters (16 bytes).
-    //   We use UUID v4 without hyphens for the same length (32 hex chars).
-    let webhook_id = Uuid::new_v4().to_string().replace('-', "");
+    let owner_username = match state
+        .auth
+        .load_user_with_legacy_fallback(&state.storage)
+        .await
+    {
+        Ok(user) => user.map(|user| user.username),
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to load auth user: {err:#}")})),
+            )
+                .into_response();
+        }
+    };
 
-    // Source: if data[ATTR_SUPPORTS_ENCRYPTION]: data[CONF_SECRET] = secrets.token_hex(SecretBox.KEY_SIZE)
-    //   SecretBox.KEY_SIZE == 32  → 32 bytes → 64 hex chars
-    let secret = if req.supports_encryption {
-        Some(format!(
-            "{}{}",
-            Uuid::new_v4().to_string().replace('-', ""),
-            Uuid::new_v4().to_string().replace('-', "")
-        ))
-    } else {
-        None
+    let record = match state
+        .mobile_devices
+        .register(MobileDeviceRegistration {
+            app_id: req.app_id,
+            app_name: req.app_name,
+            app_version: req.app_version,
+            device_name: req.device_name,
+            manufacturer: req.manufacturer,
+            model: req.model,
+            os_name: req.os_name,
+            os_version: req.os_version,
+            device_id: req.device_id,
+            supports_encryption: req.supports_encryption,
+            owner_username,
+        })
+        .await
+    {
+        Ok(record) => record,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to persist mobile registration: {err:#}")})),
+            )
+                .into_response();
+        }
     };
 
     let resp = RegistrationResponse {
-        webhook_id,
-        secret,
+        webhook_id: record.webhook_id,
+        secret: record.secret,
         // Source: "no cloud subscription" — always null for embedded device
         cloudhook_url: None,
         remote_ui_url: None,
@@ -371,6 +396,37 @@ mod tests {
             .unwrap()
             .to_string();
         assert_ne!(id1, id2, "webhook_ids must be unique per registration");
+    }
+
+    #[tokio::test]
+    async fn post_registration_reuses_device_id_when_present() {
+        let server = make_server();
+        let payload = serde_json::json!({
+            "app_id": "io.homeassistant.ios",
+            "app_name": "Home Assistant",
+            "app_version": "2024.1",
+            "device_name": "My iPhone",
+            "manufacturer": "Apple",
+            "model": "iPhone 15",
+            "device_id": "device-123",
+            "os_name": "iOS",
+            "os_version": "17.0",
+            "supports_encryption": true
+        });
+
+        let first = server
+            .post("/api/mobile_app/registrations")
+            .json(&payload)
+            .await
+            .json::<Value>();
+        let second = server
+            .post("/api/mobile_app/registrations")
+            .json(&payload)
+            .await
+            .json::<Value>();
+
+        assert_eq!(first["webhook_id"], second["webhook_id"]);
+        assert_eq!(first["secret"], second["secret"]);
     }
 
     /// Missing required field → 400 Bad Request.

@@ -1,5 +1,5 @@
-pub mod auth_store;
 pub mod app;
+pub mod auth_store;
 pub mod config;
 pub mod ha_api;
 pub mod ha_auth;
@@ -8,6 +8,7 @@ pub mod ha_webhook;
 pub mod ha_ws;
 pub mod http;
 pub mod logging;
+pub mod mobile_device_store;
 pub mod service;
 pub mod state_store;
 pub mod storage;
