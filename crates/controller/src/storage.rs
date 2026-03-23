@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
@@ -79,8 +81,10 @@ impl Storage {
     /// Intended for tests only — avoids async setup in unit tests.
     #[cfg(test)]
     pub fn new_in_memory() -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "ha-compat-test-{}",
+            "ha-compat-test-{}-{unique}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

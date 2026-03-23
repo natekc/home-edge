@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json, Response};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
+use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,6 +27,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::app::AppState;
+use crate::storage::StoredUser;
 
 fn onboarding_required_response() -> Response {
     (
@@ -261,6 +262,27 @@ struct TokenRequest {
     token: Option<String>,
 }
 
+#[derive(Debug, Default, Clone)]
+struct AuthorizeRequest {
+    response_type: Option<String>,
+    client_id: Option<String>,
+    redirect_uri: Option<String>,
+    state: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AuthorizeForm {
+    response_type: String,
+    client_id: String,
+    redirect_uri: String,
+    state: Option<String>,
+    name: Option<String>,
+    username: String,
+    password: String,
+    location_name: Option<String>,
+    language: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -268,6 +290,11 @@ struct TokenRequest {
 /// Return a router for all HA auth endpoints (no state applied yet).
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(well_known_oauth_info),
+        )
+        .route("/auth/authorize", get(auth_authorize).post(auth_authorize_submit))
         .route("/auth/providers", get(auth_providers))
         .route("/auth/login_flow", post(login_flow_init))
         .route("/auth/login_flow/{flow_id}", post(login_flow_step))
@@ -278,6 +305,185 @@ pub fn router() -> Router<Arc<AppState>> {
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
+
+async fn well_known_oauth_info() -> Response {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "authorization_endpoint": "/auth/authorize",
+            "token_endpoint": "/auth/token",
+            "revocation_endpoint": "/auth/revoke",
+            "response_types_supported": ["code"],
+            "service_documentation": "https://developers.home-assistant.io/docs/auth_api"
+        })),
+    )
+        .into_response()
+}
+
+async fn auth_authorize(State(state): State<Arc<AppState>>, uri: Uri) -> Response {
+    let onboarding = match state.storage.load_onboarding().await {
+        Ok(status) => status,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to load onboarding state: {err:#}")})),
+            )
+                .into_response();
+        }
+    };
+
+    let request = parse_authorize_request(&uri);
+    if authorize_request_error(&request).is_some() {
+        return Html(render_authorize_page(
+            state.config.ui.product_name.as_str(),
+            &request,
+            onboarding.onboarded,
+            Some("Invalid authorization request."),
+        ))
+        .into_response();
+    }
+
+    Html(render_authorize_page(
+        state.config.ui.product_name.as_str(),
+        &request,
+        onboarding.onboarded,
+        None,
+    ))
+    .into_response()
+}
+
+async fn auth_authorize_submit(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Form(form): axum::extract::Form<AuthorizeForm>,
+) -> Response {
+    let request = AuthorizeRequest {
+        response_type: Some(form.response_type.clone()),
+        client_id: Some(form.client_id.clone()),
+        redirect_uri: Some(form.redirect_uri.clone()),
+        state: form.state.clone(),
+    };
+    if let Some(error) = authorize_request_error(&request) {
+        return Html(render_authorize_page(
+            state.config.ui.product_name.as_str(),
+            &request,
+            false,
+            Some(error),
+        ))
+        .into_response();
+    }
+
+    let onboarding = match state.storage.load_onboarding().await {
+        Ok(status) => status,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to load onboarding state: {err:#}")})),
+            )
+                .into_response();
+        }
+    };
+
+    if !onboarding.onboarded {
+        let username = form.username.trim();
+        let password = form.password.trim();
+        if username.is_empty() || password.is_empty() {
+            return Html(render_authorize_page(
+                state.config.ui.product_name.as_str(),
+                &request,
+                false,
+                Some("Username and password are required."),
+            ))
+            .into_response();
+        }
+
+        let display_name = form
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(username)
+            .to_string();
+        let location_name = form
+            .location_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(state.config.ui.product_name.as_str())
+            .to_string();
+        let language = form
+            .language
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("en")
+            .to_string();
+
+        if let Err(err) = state
+            .storage
+            .update_onboarding(|current| {
+                current.user = Some(StoredUser {
+                    name: display_name.clone(),
+                    username: username.to_string(),
+                    password: password.to_string(),
+                    language: language.clone(),
+                });
+                current.location_name = Some(location_name.clone());
+                current.language = Some(language.clone());
+                current.done = vec!["user".into(), "core_config".into()];
+                current.onboarded = true;
+                Ok(())
+            })
+            .await
+        {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to complete onboarding: {err:#}")})),
+            )
+                .into_response();
+        }
+    }
+
+    let onboarding = match state.storage.load_onboarding().await {
+        Ok(status) => status,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to load onboarding state: {err:#}")})),
+            )
+                .into_response();
+        }
+    };
+
+    let valid = onboarding.user.as_ref().is_some_and(|user| {
+        form.username == user.username && form.password == user.password
+    });
+    if !valid {
+        return Html(render_authorize_page(
+            state.config.ui.product_name.as_str(),
+            &request,
+            onboarding.onboarded,
+            Some("Invalid username or password."),
+        ))
+        .into_response();
+    }
+
+    let auth_code = state.tokens.issue_auth_code(&form.client_id).await;
+    let location = build_authorize_redirect(&form.redirect_uri, &auth_code, form.state.as_deref());
+    let mut headers = HeaderMap::new();
+    match HeaderValue::from_str(&location) {
+        Ok(value) => {
+            headers.insert(header::LOCATION, value);
+            (StatusCode::FOUND, headers).into_response()
+        }
+        Err(_) => Html(render_authorize_page(
+            state.config.ui.product_name.as_str(),
+            &request,
+            onboarding.onboarded,
+            Some("Invalid redirect URI."),
+        ))
+        .into_response(),
+    }
+}
 
 /// GET /auth/providers
 ///
@@ -602,6 +808,146 @@ async fn auth_revoke(
     (StatusCode::OK, Json(json!({}))).into_response()
 }
 
+fn parse_authorize_request(uri: &Uri) -> AuthorizeRequest {
+    let mut request = AuthorizeRequest::default();
+    let Some(query) = uri.query() else {
+        return request;
+    };
+
+    for pair in query.split('&') {
+        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+        let value = percent_decode(raw_value);
+        match raw_key {
+            "response_type" => request.response_type = Some(value),
+            "client_id" => request.client_id = Some(value),
+            "redirect_uri" => request.redirect_uri = Some(value),
+            "state" => request.state = Some(value),
+            _ => {}
+        }
+    }
+
+    request
+}
+
+fn authorize_request_error(request: &AuthorizeRequest) -> Option<&'static str> {
+    if request.response_type.as_deref() != Some("code") {
+        return Some("Unsupported response_type.");
+    }
+    if request.client_id.as_deref().is_none_or(str::is_empty) {
+        return Some("Invalid client_id.");
+    }
+    if request.redirect_uri.as_deref().is_none_or(str::is_empty) {
+        return Some("Invalid redirect_uri.");
+    }
+    None
+}
+
+fn build_authorize_redirect(redirect_uri: &str, code: &str, state: Option<&str>) -> String {
+    let separator = if redirect_uri.contains('?') { '&' } else { '?' };
+    let mut location = format!("{redirect_uri}{separator}code={code}");
+    if let Some(state) = state {
+        location.push_str("&state=");
+        location.push_str(&percent_encode(state));
+    }
+    location
+}
+
+fn render_authorize_page(
+    product_name: &str,
+    request: &AuthorizeRequest,
+    onboarded: bool,
+    error: Option<&str>,
+) -> String {
+    let error_html = error.map_or_else(String::new, |message| {
+        format!(
+            "<p style=\"margin:0 0 1rem;color:#9b1c1c;background:#fde8e8;padding:.8rem 1rem;border-radius:10px;\">{message}</p>"
+        )
+    });
+    let response_type = html_escape(request.response_type.as_deref().unwrap_or("code"));
+    let client_id = html_escape(request.client_id.as_deref().unwrap_or(""));
+    let redirect_uri = html_escape(request.redirect_uri.as_deref().unwrap_or(""));
+    let state = html_escape(request.state.as_deref().unwrap_or(""));
+    let heading = if onboarded {
+        format!("Sign in to {product_name}")
+    } else {
+        format!("Set up {product_name}")
+    };
+    let intro = if onboarded {
+        "Authorize the Home Assistant app to connect to this Home Edge instance.".to_string()
+    } else {
+        "Create the first owner account for this Home Edge instance. After setup, the Home Assistant app will continue automatically.".to_string()
+    };
+    let onboarding_fields = if onboarded {
+        String::new()
+    } else {
+        "<label for=\"name\">Name</label><input id=\"name\" name=\"name\" autocomplete=\"name\" placeholder=\"Home Edge Owner\"><label for=\"location_name\">Location name</label><input id=\"location_name\" name=\"location_name\" autocomplete=\"organization\" placeholder=\"Home\"><input type=\"hidden\" name=\"language\" value=\"en\">".to_string()
+    };
+    let button_label = if onboarded { "Authorize" } else { "Create account and authorize" };
+
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{product_name}</title><style>body{{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;margin:0;background:#f5f1e8;color:#1d2a2a}}main{{max-width:28rem;margin:4rem auto;padding:1.5rem}}section{{background:#fff;border-radius:16px;padding:2rem;box-shadow:0 10px 30px rgba(0,0,0,.08)}}h1{{font-size:1.8rem;margin:0 0 1rem}}p{{line-height:1.5}}label{{display:block;font-weight:600;margin:.9rem 0 .35rem}}input{{width:100%;box-sizing:border-box;border:1px solid #ccd5d7;border-radius:10px;padding:.85rem;font-size:1rem}}button{{margin-top:1.2rem;width:100%;background:#204030;color:#fff;border:0;border-radius:10px;padding:.95rem 1rem;font-weight:700;cursor:pointer}}</style></head><body><main><section><h1>{heading}</h1><p>{intro}</p>{error_html}<form method=\"post\" action=\"/auth/authorize\"><input type=\"hidden\" name=\"response_type\" value=\"{response_type}\"><input type=\"hidden\" name=\"client_id\" value=\"{client_id}\"><input type=\"hidden\" name=\"redirect_uri\" value=\"{redirect_uri}\"><input type=\"hidden\" name=\"state\" value=\"{state}\">{onboarding_fields}<label for=\"username\">Username</label><input id=\"username\" name=\"username\" autocomplete=\"username\" required><label for=\"password\">Password</label><input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><button type=\"submit\">{button_label}</button></form></section></main></body></html>"
+    )
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                if let (Some(high), Some(low)) = (hex_value(bytes[index + 1]), hex_value(bytes[index + 2])) {
+                    decoded.push((high << 4) | low);
+                    index += 3;
+                } else {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            b' ' => encoded.push_str("%20"),
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Integration tests
 // ---------------------------------------------------------------------------
@@ -661,6 +1007,33 @@ mod tests {
         TestServer::new(app).unwrap()
     }
 
+    async fn make_unboarded_server() -> TestServer {
+        use std::net::{IpAddr, Ipv4Addr};
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        use crate::app::AppState;
+        use crate::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
+        use crate::storage::Storage;
+
+        let config = AppConfig {
+            server: ServerConfig {
+                host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: 0,
+            },
+            storage: StorageConfig {
+                data_dir: PathBuf::from("/tmp/ha-auth-test"),
+            },
+            ui: UiConfig {
+                product_name: "Test Home".into(),
+            },
+        };
+        let storage = Storage::new_in_memory();
+        let state = Arc::new(AppState::new(config, storage));
+        let app = super::router().with_state(state);
+        TestServer::new(app).unwrap()
+    }
+
     // -----------------------------------------------------------------------
     // GET /auth/providers
     ///   Returns {"providers": [...], "preselect_remember_me": bool}
@@ -682,6 +1055,106 @@ mod tests {
             assert!(p.get("name").is_some(), "provider missing name");
             assert!(p.get("type").is_some(), "provider missing type");
         }
+    }
+
+    #[tokio::test]
+    async fn well_known_oauth_info_returns_authorization_metadata() {
+        let server = make_server().await;
+
+        let resp = server.get("/.well-known/oauth-authorization-server").await;
+
+        resp.assert_status_ok();
+        let json: Value = resp.json();
+        assert_eq!(json["authorization_endpoint"], "/auth/authorize");
+        assert_eq!(json["token_endpoint"], "/auth/token");
+        assert_eq!(json["revocation_endpoint"], "/auth/revoke");
+        assert_eq!(json["response_types_supported"], serde_json::json!(["code"]));
+    }
+
+    #[tokio::test]
+    async fn get_authorize_returns_html_login_page() {
+        let server = make_server().await;
+
+        let resp = server
+            .get("/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome-assistant.io%2FiOS&redirect_uri=homeassistant%3A%2F%2Fauth-callback&state=abc123")
+            .await;
+
+        resp.assert_status_ok();
+        let body = resp.text();
+        assert!(body.contains("<form method=\"post\" action=\"/auth/authorize\">"));
+        assert!(body.contains("Sign in to Test Home"));
+        assert!(body.contains("name=\"client_id\" value=\"https://home-assistant.io/iOS\""));
+    }
+
+    #[tokio::test]
+    async fn get_authorize_returns_onboarding_page_when_not_onboarded() {
+        let server = make_unboarded_server().await;
+
+        let resp = server
+            .get("/auth/authorize?response_type=code&client_id=https%3A%2F%2Fhome-assistant.io%2FiOS&redirect_uri=homeassistant%3A%2F%2Fauth-callback")
+            .await;
+
+        resp.assert_status_ok();
+        let body = resp.text();
+        assert!(body.contains("Set up Test Home"));
+        assert!(body.contains("Create account and authorize"));
+    }
+
+    #[tokio::test]
+    async fn post_authorize_redirects_with_code_and_state() {
+        let server = make_server().await;
+
+        let resp = server
+            .post("/auth/authorize")
+            .form(&[
+                ("response_type", "code"),
+                ("client_id", "https://home-assistant.io/iOS"),
+                ("redirect_uri", "homeassistant://auth-callback"),
+                ("state", "abc#123"),
+                ("username", "admin"),
+                ("password", "secret"),
+            ])
+            .await;
+
+        resp.assert_status(StatusCode::FOUND);
+        let location = resp
+            .headers()
+            .get("location")
+            .expect("location header")
+            .to_str()
+            .expect("location string");
+        assert!(location.starts_with("homeassistant://auth-callback?code="));
+        assert!(location.contains("&state=abc%23123"));
+    }
+
+    #[tokio::test]
+    async fn post_authorize_bootstraps_onboarding_when_not_onboarded() {
+        let server = make_unboarded_server().await;
+
+        let resp = server
+            .post("/auth/authorize")
+            .form(&[
+                ("response_type", "code"),
+                ("client_id", "https://home-assistant.io/iOS"),
+                ("redirect_uri", "homeassistant://auth-callback"),
+                ("name", "Owner"),
+                ("username", "owner"),
+                ("password", "secret"),
+                ("location_name", "My Home"),
+            ])
+            .await;
+
+        resp.assert_status(StatusCode::FOUND);
+        let location = resp
+            .headers()
+            .get("location")
+            .expect("location header")
+            .to_str()
+            .expect("location string");
+        assert!(location.starts_with("homeassistant://auth-callback?code="));
+
+        let providers = server.get("/auth/providers").await;
+        providers.assert_status_ok();
     }
 
     // -----------------------------------------------------------------------
