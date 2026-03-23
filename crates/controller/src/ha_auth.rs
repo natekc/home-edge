@@ -27,6 +27,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::app::AppState;
+use crate::auth_store::AuthUser;
 use crate::storage::StoredUser;
 
 fn onboarding_required_response() -> Response {
@@ -418,15 +419,17 @@ async fn auth_authorize_submit(
             .unwrap_or("en")
             .to_string();
 
+        let auth_user = AuthUser {
+            name: display_name.clone(),
+            username: username.to_string(),
+            password: password.to_string(),
+            language: language.clone(),
+        };
+
         if let Err(err) = state
             .storage
             .update_onboarding(|current| {
-                current.user = Some(StoredUser {
-                    name: display_name.clone(),
-                    username: username.to_string(),
-                    password: password.to_string(),
-                    language: language.clone(),
-                });
+                current.user = Some(StoredUser::from(&auth_user));
                 current.location_name = Some(location_name.clone());
                 current.language = Some(language.clone());
                 current.done = vec!["user".into(), "core_config".into()];
@@ -441,27 +444,35 @@ async fn auth_authorize_submit(
             )
                 .into_response();
         }
+
+        if let Err(err) = state.auth.save_user(&auth_user).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message": format!("failed to persist auth user: {err:#}")})),
+            )
+                .into_response();
+        }
     }
 
-    let onboarding = match state.storage.load_onboarding().await {
-        Ok(status) => status,
+    let auth_user = match state.auth.load_user_with_legacy_fallback(&state.storage).await {
+        Ok(user) => user,
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"message": format!("failed to load onboarding state: {err:#}")})),
+                Json(json!({"message": format!("failed to load auth user: {err:#}")})),
             )
                 .into_response();
         }
     };
 
-    let valid = onboarding.user.as_ref().is_some_and(|user| {
+    let valid = auth_user.as_ref().is_some_and(|user| {
         form.username == user.username && form.password == user.password
     });
     if !valid {
         return Html(render_authorize_page(
             state.config.ui.product_name.as_str(),
             &request,
-            onboarding.onboarded,
+            true,
             Some("Invalid username or password."),
         ))
         .into_response();
@@ -478,7 +489,7 @@ async fn auth_authorize_submit(
         Err(_) => Html(render_authorize_page(
             state.config.ui.product_name.as_str(),
             &request,
-            onboarding.onboarded,
+            true,
             Some("Invalid redirect URI."),
         ))
         .into_response(),
@@ -614,18 +625,18 @@ async fn login_flow_step(
             .into_response();
     }
 
-    let onboarding = match state.storage.load_onboarding().await {
-        Ok(status) => status,
+    let auth_user = match state.auth.load_user_with_legacy_fallback(&state.storage).await {
+        Ok(user) => user,
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"message": format!("failed to load onboarding state: {err:#}")})),
+                Json(json!({"message": format!("failed to load auth user: {err:#}")})),
             )
                 .into_response();
         }
     };
 
-    let valid = onboarding.user.as_ref().is_some_and(|user| {
+    let valid = auth_user.as_ref().is_some_and(|user| {
         body.username.as_deref() == Some(user.username.as_str())
             && body.password.as_deref() == Some(user.password.as_str())
     });

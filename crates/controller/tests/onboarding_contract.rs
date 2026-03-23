@@ -189,3 +189,46 @@ async fn login_flow_uses_stored_onboarding_credentials() {
     assert_eq!(success_json["type"], "create_entry");
     assert!(success_json["result"].as_str().is_some());
 }
+
+#[tokio::test]
+async fn login_flow_uses_dedicated_auth_store_when_onboarding_user_missing() {
+    let onboarding = OnboardingState {
+        onboarded: true,
+        done: vec!["user".into(), "core_config".into()],
+        user: None,
+        ..OnboardingState::default()
+    };
+    let (server, state) = support::test_server_and_state(onboarding).await;
+    state
+        .auth
+        .save_user(&home_edge::auth_store::AuthUser {
+            name: "Test Name".into(),
+            username: "test-user".into(),
+            password: "test-pass".into(),
+            language: "en".into(),
+        })
+        .await
+        .expect("save auth user");
+
+    let flow = server
+        .post("/auth/login_flow")
+        .json(&json!({
+            "client_id": "https://example.com",
+            "handler": ["homeassistant", null],
+            "redirect_uri": "https://example.com/callback"
+        }))
+        .await
+        .json::<serde_json::Value>();
+
+    let success = server
+        .post(format!("/auth/login_flow/{}", flow["flow_id"].as_str().unwrap()).as_str())
+        .json(&json!({
+            "client_id": "https://example.com",
+            "username": "test-user",
+            "password": "test-pass"
+        }))
+        .await;
+    success.assert_status_ok();
+    let success_json = success.json::<serde_json::Value>();
+    assert_eq!(success_json["type"], "create_entry");
+}

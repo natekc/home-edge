@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::app::AppState;
+use crate::auth_store::AuthUser;
 use crate::ha_api;
 use crate::ha_auth;
 use crate::ha_mobile;
@@ -162,6 +163,22 @@ async fn create_onboarding_user(
         .await
     {
         Ok(_) => {
+            if let Err(err) = state
+                .auth
+                .save_user(&AuthUser {
+                    name: body.name.clone(),
+                    username: body.username.clone(),
+                    password: body.password.clone(),
+                    language: body.language.clone(),
+                })
+                .await
+            {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse::new(format!("failed to persist auth user: {err:#}"))),
+                )
+                    .into_response();
+            }
             let auth_code = state.tokens.issue_auth_code(&body.client_id).await;
             (StatusCode::OK, Json(json!({"auth_code": auth_code}))).into_response()
         }

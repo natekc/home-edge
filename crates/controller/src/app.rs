@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use tokio::signal;
 use tracing::info;
 
+use crate::auth_store::AuthStore;
 use crate::config::AppConfig;
 use crate::ha_auth::{LoginFlowStore, TokenStore};
 use crate::ha_webhook::WebhookStore;
@@ -16,6 +17,7 @@ use crate::zeroconf;
 pub struct AppState {
     pub config: AppConfig,
     pub storage: Storage,
+    pub auth: AuthStore,
     pub states: StateStore,
     pub tokens: TokenStore,
     pub flows: LoginFlowStore,
@@ -25,7 +27,9 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: AppConfig, storage: Storage) -> Self {
+        let auth = AuthStore::new(storage.root().to_path_buf());
         Self {
+            auth,
             config,
             storage,
             states: StateStore::new(),

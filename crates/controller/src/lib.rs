@@ -1,3 +1,4 @@
+pub mod auth_store;
 pub mod app;
 pub mod config;
 pub mod ha_api;

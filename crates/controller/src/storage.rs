@@ -152,6 +152,10 @@ impl Storage {
         }
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     fn onboarding_path(&self) -> PathBuf {
         self.root.join("onboarding.json")
     }
@@ -161,7 +165,7 @@ impl Storage {
     }
 }
 
-async fn save_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+pub(crate) async fn save_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("missing parent dir for {}", path.display()))?;
