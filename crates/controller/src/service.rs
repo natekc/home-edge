@@ -5,8 +5,7 @@ use ha_types::entity::State;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use crate::state_store::make_state_with_context;
-use crate::state_store::StateStore;
+use crate::state_store::{StateAttributes, StateStore, make_state_with_context};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupportsResponse {
@@ -320,7 +319,7 @@ fn set_entities_state(
         let new_state = make_state_with_context(
             entity_id.clone(),
             state_value.to_string(),
-            attributes,
+            StateAttributes::from_hash(attributes),
             request.context.clone(),
         );
         states

@@ -6,7 +6,6 @@ use anyhow::Result;
 use ha_types::api::{ApiConfigResponse, ApiStatusResponse, UnitSystem};
 use ha_types::core_state::{CoreState, CoreStateResponse, RecorderState};
 use ha_types::entity::State;
-use serde_json::{Map, Value};
 
 #[cfg(feature = "transport_wifi")]
 use crate::auth_store::{AuthStore, AuthUser};
@@ -14,7 +13,7 @@ use crate::config::AppConfig;
 use crate::service::{
     ServiceCall, ServiceDomainCatalog, ServiceError, ServiceOutcome, ServiceRegistry,
 };
-use crate::state_store::{StateStore, make_state};
+use crate::state_store::{StateAttributes, StateStore, make_state};
 #[cfg(feature = "transport_wifi")]
 use crate::storage::{OnboardingState as PersistedOnboardingState, Storage, StoredUser};
 
@@ -527,7 +526,7 @@ pub enum OperationRequest<'a> {
     SetEntityState {
         entity_id: &'a str,
         state: &'a str,
-        attributes: Map<String, Value>,
+        attributes: StateAttributes,
         meta: OperationMeta,
     },
     ListServices { page: PageRequest, meta: OperationMeta },
@@ -826,8 +825,7 @@ impl AppCore {
                     return OperationResult::Error(OperationError::InvalidRequest);
                 }
 
-                let attrs = attributes.into_iter().collect();
-                let next_state = make_state(entity_id, state, attrs);
+                let next_state = make_state(entity_id, state, attributes);
                 if deps.states.set(next_state).is_err() {
                     return OperationResult::Error(OperationError::InvalidRequest);
                 }

@@ -141,11 +141,42 @@ fn is_leap(y: u64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
+/// Typed attribute container that bridges the core domain and the HA wire format.
+///
+/// Adapters parse their JSON payloads into `StateAttributes` before passing
+/// them into `OperationRequest` or `make_state*`. The raw `HashMap` is only
+/// materialised at the store boundary, keeping `serde_json` types out of the
+/// core operation types.
+#[derive(Clone, Debug, Default)]
+pub struct StateAttributes(HashMap<String, serde_json::Value>);
+
+impl StateAttributes {
+    /// Empty attribute set.
+    pub fn empty() -> Self {
+        Self(HashMap::new())
+    }
+
+    /// Build from a JSON object map (called at the REST/WS transport edge).
+    pub fn from_json_object(obj: &serde_json::Map<String, serde_json::Value>) -> Self {
+        Self(obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+    }
+
+    /// Wrap an already-built `HashMap` (used by service dispatch internally).
+    pub(crate) fn from_hash(map: HashMap<String, serde_json::Value>) -> Self {
+        Self(map)
+    }
+
+    /// Consume into the raw map required by `ha_types::entity::State`.
+    pub(crate) fn into_inner(self) -> HashMap<String, serde_json::Value> {
+        self.0
+    }
+}
+
 /// Build a new State with current timestamps and a generated context.
 pub fn make_state(
     entity_id: impl Into<String>,
     state_value: impl Into<String>,
-    attributes: std::collections::HashMap<String, serde_json::Value>,
+    attributes: StateAttributes,
 ) -> State {
     make_state_with_context(
         entity_id,
@@ -158,14 +189,14 @@ pub fn make_state(
 pub fn make_state_with_context(
     entity_id: impl Into<String>,
     state_value: impl Into<String>,
-    attributes: std::collections::HashMap<String, serde_json::Value>,
+    attributes: StateAttributes,
     context: Context,
 ) -> State {
     let ts = now_iso8601();
     State {
         entity_id: entity_id.into(),
         state: state_value.into(),
-        attributes,
+        attributes: attributes.into_inner(),
         last_changed: ts.clone(),
         last_reported: ts.clone(),
         last_updated: ts,
@@ -196,10 +227,9 @@ fn pseudo_rand() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn sample_state(entity_id: &str) -> State {
-        make_state(entity_id, "on", HashMap::new())
+        make_state(entity_id, "on", StateAttributes::empty())
     }
 
     #[test]

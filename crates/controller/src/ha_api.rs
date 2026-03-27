@@ -11,7 +11,6 @@
 //!   GET /api/states/{entity_id}    → homeassistant/components/api/__init__.py  APIEntityStateView
 //!   POST /api/states/{entity_id}   → homeassistant/components/api/__init__.py  APIEntityStateView
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Router;
@@ -26,6 +25,7 @@ use ha_types::api::ApiStatusResponse;
 use crate::app::AppState;
 use crate::core::{Consistency, CoreDeps, DeadlineClass, OperationError, OperationMeta, OperationRequest, OperationResult, PageRequest, StateFilter};
 use crate::service::{ServiceCall, ServiceData, ServiceError, ServiceTarget};
+use crate::state_store::StateAttributes;
 
 /// Return a router for all HA-compatible API endpoints.
 ///
@@ -207,11 +207,11 @@ async fn api_state_set(
             .into_response();
     }
 
-    let attributes: HashMap<String, serde_json::Value> = data
+    let attributes = data
         .get("attributes")
         .and_then(|v| v.as_object())
-        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-        .unwrap_or_default();
+        .map(StateAttributes::from_json_object)
+        .unwrap_or_else(StateAttributes::empty);
 
     let is_new = app.states.get(&entity_id).is_none();
     match app.core.execute(
@@ -223,7 +223,7 @@ async fn api_state_set(
         OperationRequest::SetEntityState {
             entity_id: &entity_id,
             state: new_state_val,
-            attributes: attributes.into_iter().collect(),
+            attributes,
             meta: default_operation_meta(),
         },
     ) {

@@ -41,7 +41,7 @@ use tokio::sync::RwLock;
 use crate::app::AppState;
 use crate::mobile_device_store::MobileDeviceRecord;
 use crate::mobile_entity_store::{MobileEntityRecord, MobileEntityRegistration};
-use crate::state_store::make_state;
+use crate::state_store::{StateAttributes, make_state};
 
 // ---------------------------------------------------------------------------
 // Webhook store — registered handlers keyed by webhook_id
@@ -513,7 +513,7 @@ fn apply_sensor_state(
 
     state
         .states
-        .set(make_state(&record.entity_id, state_value, attributes))
+        .set(make_state(&record.entity_id, state_value, StateAttributes::from_hash(attributes)))
 }
 
 // ---------------------------------------------------------------------------
