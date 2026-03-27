@@ -1,3 +1,5 @@
+#![cfg(feature = "transport_wifi")]
+
 mod support;
 
 use axum::http::StatusCode;

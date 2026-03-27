@@ -27,8 +27,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::auth_store::AuthUser;
-use crate::storage::StoredUser;
+use crate::core::AuthorizeBootstrapInput;
 
 fn onboarding_required_response() -> Response {
     (
@@ -325,7 +324,7 @@ async fn well_known_oauth_info() -> Response {
 }
 
 async fn auth_authorize(State(state): State<Arc<AppState>>, uri: Uri) -> Response {
-    let onboarding = match state.storage.load_onboarding().await {
+    let onboarding = match state.core.onboarding_progress(&state.storage).await {
         Ok(status) => status,
         Err(err) => {
             return (
@@ -376,7 +375,7 @@ async fn auth_authorize_submit(
         .into_response();
     }
 
-    let onboarding = match state.storage.load_onboarding().await {
+    let onboarding = match state.core.onboarding_progress(&state.storage).await {
         Ok(status) => status,
         Err(err) => {
             return (
@@ -422,23 +421,19 @@ async fn auth_authorize_submit(
             .unwrap_or("en")
             .to_string();
 
-        let auth_user = AuthUser {
-            name: display_name.clone(),
-            username: username.to_string(),
-            password: password.to_string(),
-            language: language.clone(),
-        };
-
         if let Err(err) = state
-            .storage
-            .update_onboarding(|current| {
-                current.user = Some(StoredUser::from(&auth_user));
-                current.location_name = Some(location_name.clone());
-                current.language = Some(language.clone());
-                current.done = vec!["user".into(), "core_config".into()];
-                current.onboarded = true;
-                Ok(())
-            })
+            .core
+            .bootstrap_authorized_owner(
+                &state.storage,
+                &state.auth,
+                &AuthorizeBootstrapInput {
+                    display_name,
+                    username: username.to_string(),
+                    password: password.to_string(),
+                    location_name,
+                    language,
+                },
+            )
             .await
         {
             return (
@@ -447,21 +442,9 @@ async fn auth_authorize_submit(
             )
                 .into_response();
         }
-
-        if let Err(err) = state.auth.save_user(&auth_user).await {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"message": format!("failed to persist auth user: {err:#}")})),
-            )
-                .into_response();
-        }
     }
 
-    let auth_user = match state
-        .auth
-        .load_user_with_legacy_fallback(&state.storage)
-        .await
-    {
+    let auth_user = match state.core.auth_user(&state.auth, &state.storage).await {
         Ok(user) => user,
         Err(err) => {
             return (
@@ -511,8 +494,8 @@ async fn auth_authorize_submit(
 ///
 /// We expose a single "homeassistant" (username/password) provider.
 async fn auth_providers(State(state): State<Arc<AppState>>) -> Response {
-    match state.storage.load_onboarding().await {
-        Ok(status) if !status.onboarded => return onboarding_required_response(),
+    match state.core.is_onboarded(&state.storage).await {
+        Ok(false) => return onboarding_required_response(),
         Ok(_) => {}
         Err(err) => {
             return (
@@ -554,8 +537,8 @@ async fn login_flow_init(
     State(state): State<Arc<AppState>>,
     body: axum::extract::Json<LoginFlowRequest>,
 ) -> Response {
-    match state.storage.load_onboarding().await {
-        Ok(status) if !status.onboarded => return onboarding_required_response(),
+    match state.core.is_onboarded(&state.storage).await {
+        Ok(false) => return onboarding_required_response(),
         Ok(_) => {}
         Err(err) => {
             return (
@@ -632,11 +615,7 @@ async fn login_flow_step(
             .into_response();
     }
 
-    let auth_user = match state
-        .auth
-        .load_user_with_legacy_fallback(&state.storage)
-        .await
-    {
+    let auth_user = match state.core.auth_user(&state.auth, &state.storage).await {
         Ok(user) => user,
         Err(err) => {
             return (

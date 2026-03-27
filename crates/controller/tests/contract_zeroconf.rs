@@ -1,3 +1,5 @@
+#![cfg(feature = "transport_wifi")]
+
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 

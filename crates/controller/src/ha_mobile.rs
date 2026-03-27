@@ -153,11 +153,7 @@ async fn mobile_app_register(
         }
     }
 
-    let owner_username = match state
-        .auth
-        .load_user_with_legacy_fallback(&state.storage)
-        .await
-    {
+    let owner_username = match state.core.auth_user(&state.auth, &state.storage).await {
         Ok(user) => user.map(|user| user.username),
         Err(err) => {
             return (

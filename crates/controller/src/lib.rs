@@ -1,16 +1,34 @@
+#[cfg(all(feature = "transport_wifi", feature = "transport_ble"))]
+compile_error!("home-edge supports exactly one transport feature at a time");
+
+#[cfg(not(any(feature = "transport_wifi", feature = "transport_ble")))]
+compile_error!("home-edge requires exactly one transport feature");
+
 pub mod app;
-pub mod auth_store;
 pub mod config;
-pub mod ha_api;
-pub mod ha_auth;
-pub mod ha_mobile;
-pub mod ha_webhook;
-pub mod ha_ws;
-pub mod http;
+pub mod core;
 pub mod logging;
-pub mod mobile_device_store;
-pub mod mobile_entity_store;
 pub mod service;
 pub mod state_store;
 pub mod storage;
+
+#[cfg(feature = "transport_wifi")]
+pub mod auth_store;
+#[cfg(feature = "transport_wifi")]
+pub mod ha_api;
+#[cfg(feature = "transport_wifi")]
+pub mod ha_auth;
+#[cfg(feature = "transport_wifi")]
+pub mod ha_mobile;
+#[cfg(feature = "transport_wifi")]
+pub mod ha_webhook;
+#[cfg(feature = "transport_wifi")]
+pub mod ha_ws;
+#[cfg(feature = "transport_wifi")]
+pub mod http;
+#[cfg(feature = "transport_wifi")]
+pub mod mobile_device_store;
+#[cfg(feature = "transport_wifi")]
+pub mod mobile_entity_store;
+#[cfg(feature = "transport_wifi")]
 pub mod zeroconf;

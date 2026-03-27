@@ -27,7 +27,8 @@ use serde_json::{Map, Value, json};
 use tracing::debug;
 
 use crate::app::AppState;
-use crate::service::ServiceError;
+use crate::core::{Consistency, CoreDeps, DeadlineClass, OperationError, OperationMeta, OperationRequest, OperationResult, PageRequest, StateFilter};
+use crate::service::{ServiceCall, ServiceData, ServiceError, ServiceTarget};
 
 /// Version string sent in auth handshake messages.
 /// Source: homeassistant/const.py  __version__ (we mimic a recent HA version).
@@ -251,32 +252,101 @@ async fn dispatch_command(id: u64, msg_type: &str, extra: &Value, state: &Arc<Ap
 
         // Source: commands.py  handle_get_states
         // Returns array of entity states.
-        "get_states" => {
-            let states = state.states.all();
-            result_ok(id, serde_json::to_value(states).unwrap_or(json!([])))
-        }
+        "get_states" => match state.core.execute(
+            CoreDeps {
+                config: &state.config,
+                states: &state.states,
+                services: &state.services,
+            },
+            OperationRequest::ListEntityStates {
+                page: PageRequest {
+                    limit: state.core.transport_policy().max_page_size,
+                    cursor: None,
+                    include_attributes: true,
+                },
+                filter: StateFilter {
+                    domain: crate::core::DomainKind::Any,
+                    changed_since: None,
+                    include_attributes: true,
+                },
+                meta: default_operation_meta(id),
+            },
+        ) {
+            OperationResult::EntityStates(states) => {
+                result_ok(id, serde_json::to_value(states).unwrap_or(json!([])))
+            }
+            _ => result_err(id, "internal_error", "Failed to fetch states"),
+        },
 
         // Source: commands.py  handle_get_config
         // Returns the HA config dict (same as GET /api/config).
-        "get_config" => {
-            use ha_types::api::{ApiConfigResponse, UnitSystem};
-            let cfg = ApiConfigResponse {
-                version: env!("CARGO_PKG_VERSION").into(),
-                location_name: state.config.ui.product_name.clone(),
-                time_zone: "UTC".into(),
-                language: "en".into(),
-                latitude: 0.0,
-                longitude: 0.0,
-                elevation: 0.0,
-                unit_system: UnitSystem::metric(),
-                state: "RUNNING".into(),
-                components: vec!["api".into(), "core".into()],
-                whitelist_external_dirs: vec![],
-            };
-            result_ok(id, serde_json::to_value(cfg).unwrap_or(json!(null)))
-        }
+        "get_config" => match state.core.execute(
+            CoreDeps {
+                config: &state.config,
+                states: &state.states,
+                services: &state.services,
+            },
+            OperationRequest::GetConfigSummary,
+        ) {
+            OperationResult::ConfigSummary(cfg) => {
+                result_ok(id, serde_json::to_value(cfg).unwrap_or(json!(null)))
+            }
+            _ => result_err(id, "internal_error", "Failed to fetch config"),
+        },
 
-        "get_services" => result_ok(id, state.services.describe()),
+        "get_services" => match state.core.execute(
+            CoreDeps {
+                config: &state.config,
+                states: &state.states,
+                services: &state.services,
+            },
+            OperationRequest::ListServices {
+                page: PageRequest {
+                    limit: state.core.transport_policy().max_page_size,
+                    cursor: None,
+                    include_attributes: false,
+                },
+                meta: default_operation_meta(id),
+            },
+        ) {
+            OperationResult::ServiceCatalog(services) => {
+                let domains = services
+                    .into_iter()
+                    .map(|entry| {
+                        let services = entry
+                            .services
+                            .into_iter()
+                            .map(|service| {
+                                let fields = service
+                                    .fields
+                                    .into_iter()
+                                    .map(|field| {
+                                        (
+                                            field.field,
+                                            json!({
+                                                "required": field.required,
+                                                "selector": field.selector
+                                            }),
+                                        )
+                                    })
+                                    .collect::<Map<String, Value>>();
+                                (
+                                    service.service,
+                                    json!({
+                                        "name": service.name,
+                                        "description": service.description,
+                                        "fields": fields,
+                                    }),
+                                )
+                            })
+                            .collect::<Map<String, Value>>();
+                        (entry.domain, Value::Object(services))
+                    })
+                    .collect::<Map<String, Value>>();
+                result_ok(id, Value::Object(domains))
+            }
+            _ => result_err(id, "internal_error", "Failed to fetch services"),
+        },
 
         "call_service" => {
             let request: CallServiceRequest = match serde_json::from_value(extra.clone()) {
@@ -290,22 +360,55 @@ async fn dispatch_command(id: u64, msg_type: &str, extra: &Value, state: &Arc<Ap
                 }
             };
 
-            match state.services.call(
-                state,
-                &request.domain,
-                &request.service,
-                request.service_data,
-                request.target.as_ref(),
-                request.return_response,
+            let target = match ServiceTarget::from_parts(request.target.as_ref(), Some(&request.service_data)) {
+                Ok(target) => target,
+                Err(err) => return result_err_value(id, err.as_json()),
+            };
+            let service_data = match ServiceData::from_json(&request.service_data) {
+                Ok(service_data) => service_data,
+                Err(err) => return result_err_value(id, err.as_json()),
+            };
+
+            match state.core.execute(
+                CoreDeps {
+                    config: &state.config,
+                    states: &state.states,
+                    services: &state.services,
+                },
+                OperationRequest::CallService {
+                    call: ServiceCall {
+                        domain: request.domain.clone(),
+                        service: request.service.clone(),
+                        target,
+                        data: service_data,
+                        return_response: request.return_response,
+                    },
+                    meta: OperationMeta {
+                        allow_deferred: request.return_response,
+                        ..default_operation_meta(id)
+                    },
+                },
             ) {
-                Ok(outcome) => {
+                OperationResult::ServiceCallCompleted(outcome) => {
                     let mut result = json!({"context": outcome.context});
                     if request.return_response {
                         result["response"] = outcome.response.unwrap_or(json!(null));
                     }
                     result_ok(id, result)
                 }
-                Err(error) => result_err_value(id, error.as_json()),
+                OperationResult::Error(OperationError::NotFound) => result_err_value(
+                    id,
+                    ServiceError::NotFound {
+                        domain: request.domain,
+                        service: request.service,
+                    }
+                    .as_json(),
+                ),
+                OperationResult::Error(OperationError::InvalidRequest) => result_err_value(
+                    id,
+                    ServiceError::InvalidFormat("target must include entity_id".into()).as_json(),
+                ),
+                _ => result_err(id, "internal_error", "Service call failed"),
             }
         }
 
@@ -315,6 +418,16 @@ async fn dispatch_command(id: u64, msg_type: &str, extra: &Value, state: &Arc<Ap
             "unknown_command",
             &format!("Unknown command: {msg_type}"),
         ),
+    }
+}
+
+fn default_operation_meta(id: u64) -> OperationMeta {
+    OperationMeta {
+        request_id: id as u32,
+        consistency: Consistency::LivePreferred,
+        deadline: DeadlineClass::Interactive,
+        allow_cached: true,
+        allow_deferred: false,
     }
 }
 

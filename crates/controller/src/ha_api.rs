@@ -21,12 +21,11 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use serde_json::{Map, Value, json};
 
-use ha_types::api::{ApiConfigResponse, ApiStatusResponse, UnitSystem};
-use ha_types::core_state::{CoreState, CoreStateResponse, RecorderState};
+use ha_types::api::ApiStatusResponse;
 
 use crate::app::AppState;
-use crate::service::ServiceError;
-use crate::state_store::make_state;
+use crate::core::{Consistency, CoreDeps, DeadlineClass, OperationError, OperationMeta, OperationRequest, OperationResult, PageRequest, StateFilter};
+use crate::service::{ServiceCall, ServiceData, ServiceError, ServiceTarget};
 
 /// Return a router for all HA-compatible API endpoints.
 ///
@@ -58,6 +57,14 @@ pub fn router() -> Router<Arc<AppState>> {
 /// Source: homeassistant/components/api/__init__.py  APIStatusView.get
 ///   return self.json_message("API running.")
 async fn api_status() -> impl IntoResponse {
+    let meta = OperationMeta {
+        request_id: 0,
+        consistency: Consistency::LivePreferred,
+        deadline: DeadlineClass::Interactive,
+        allow_cached: true,
+        allow_deferred: false,
+    };
+    let _ = meta;
     (StatusCode::OK, Json(ApiStatusResponse::default()))
 }
 
@@ -65,34 +72,35 @@ async fn api_status() -> impl IntoResponse {
 ///
 /// Source: homeassistant/components/api/__init__.py  APICoreStateView.get
 async fn api_core_state(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    let resp = CoreStateResponse {
-        state: CoreState::Running,
-        recorder_state: RecorderState {
-            migration_in_progress: false,
-            migration_is_live: false,
+    let state = _state;
+    match state.core.execute(
+        CoreDeps {
+            config: &state.config,
+            states: &state.states,
+            services: &state.services,
         },
-    };
-    (StatusCode::OK, Json(resp))
+        OperationRequest::GetCoreState,
+    ) {
+        OperationResult::CoreState(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// GET /api/config
 ///
 /// Source: homeassistant/components/api/__init__.py  APIConfigView.get
 async fn api_config(State(state): State<Arc<AppState>>) -> Response {
-    let cfg = ApiConfigResponse {
-        version: env!("CARGO_PKG_VERSION").into(),
-        location_name: state.config.ui.product_name.clone(),
-        time_zone: "UTC".into(),
-        language: "en".into(),
-        latitude: 0.0,
-        longitude: 0.0,
-        elevation: 0.0,
-        unit_system: UnitSystem::metric(),
-        state: "RUNNING".into(),
-        components: vec!["api".into(), "core".into()],
-        whitelist_external_dirs: vec![],
-    };
-    (StatusCode::OK, Json(cfg)).into_response()
+    match state.core.execute(
+        CoreDeps {
+            config: &state.config,
+            states: &state.states,
+            services: &state.services,
+        },
+        OperationRequest::GetConfigSummary,
+    ) {
+        OperationResult::ConfigSummary(cfg) => (StatusCode::OK, Json(cfg)).into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// GET /api/states
@@ -101,8 +109,30 @@ async fn api_config(State(state): State<Arc<AppState>>) -> Response {
 /// Returns a JSON array of all entity states.
 /// HA returns HTTP 200 with an empty array [] when no states exist.
 async fn api_states_list(State(state): State<Arc<AppState>>) -> Response {
-    let states = state.states.all();
-    (StatusCode::OK, Json(states)).into_response()
+    let request = OperationRequest::ListEntityStates {
+        page: PageRequest {
+            limit: state.core.transport_policy().max_page_size,
+            cursor: None,
+            include_attributes: true,
+        },
+        filter: StateFilter {
+            domain: crate::core::DomainKind::Any,
+            changed_since: None,
+            include_attributes: true,
+        },
+        meta: default_operation_meta(),
+    };
+    match state.core.execute(
+        CoreDeps {
+            config: &state.config,
+            states: &state.states,
+            services: &state.services,
+        },
+        request,
+    ) {
+        OperationResult::EntityStates(states) => (StatusCode::OK, Json(states)).into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// GET /api/states/{entity_id}
@@ -113,13 +143,24 @@ async fn api_state_get(
     State(state): State<Arc<AppState>>,
     Path(entity_id): Path<String>,
 ) -> Response {
-    match state.states.get(&entity_id) {
-        Some(s) => (StatusCode::OK, Json(s)).into_response(),
-        None => (
+    match state.core.execute(
+        CoreDeps {
+            config: &state.config,
+            states: &state.states,
+            services: &state.services,
+        },
+        OperationRequest::GetEntityState {
+            entity_id: &entity_id,
+            meta: default_operation_meta(),
+        },
+    ) {
+        OperationResult::EntityState(s) => (StatusCode::OK, Json(s)).into_response(),
+        OperationResult::Error(OperationError::NotFound) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"message": "Entity not found."})),
         )
             .into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -173,30 +214,90 @@ async fn api_state_set(
         .unwrap_or_default();
 
     let is_new = app.states.get(&entity_id).is_none();
-    let new_state = make_state(&entity_id, new_state_val, attributes);
-    // Entity-id validity already checked above; store won't fail.
-    let _ = app.states.set(new_state);
-
-    let saved = app.states.get(&entity_id).unwrap();
-    let status = if is_new {
-        StatusCode::CREATED
-    } else {
-        StatusCode::OK
-    };
-    (status, Json(saved)).into_response()
+    match app.core.execute(
+        CoreDeps {
+            config: &app.config,
+            states: &app.states,
+            services: &app.services,
+        },
+        OperationRequest::SetEntityState {
+            entity_id: &entity_id,
+            state: new_state_val,
+            attributes: attributes.into_iter().collect(),
+            meta: default_operation_meta(),
+        },
+    ) {
+        OperationResult::EntityState(saved) => {
+            let status = if is_new {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+            (status, Json(saved)).into_response()
+        }
+        OperationResult::Error(OperationError::InvalidRequest) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"message": "Invalid state specified."})),
+        )
+            .into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 async fn api_services_list(State(app): State<Arc<AppState>>) -> Response {
-    let services = app
-        .services
-        .describe()
-        .as_object()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(domain, services)| json!({"domain": domain, "services": services}))
-        .collect::<Vec<_>>();
-    (StatusCode::OK, Json(services)).into_response()
+    match app.core.execute(
+        CoreDeps {
+            config: &app.config,
+            states: &app.states,
+            services: &app.services,
+        },
+        OperationRequest::ListServices {
+            page: PageRequest {
+                limit: app.core.transport_policy().max_page_size,
+                cursor: None,
+                include_attributes: false,
+            },
+            meta: default_operation_meta(),
+        },
+    ) {
+        OperationResult::ServiceCatalog(services) => {
+            let services = services
+                .into_iter()
+                .map(|entry| {
+                    let services = entry
+                        .services
+                        .into_iter()
+                        .map(|service| {
+                            let fields = service
+                                .fields
+                                .into_iter()
+                                .map(|field| {
+                                    (
+                                        field.field,
+                                        json!({
+                                            "required": field.required,
+                                            "selector": field.selector
+                                        }),
+                                    )
+                                })
+                                .collect::<Map<String, Value>>();
+                            (
+                                service.service,
+                                json!({
+                                    "name": service.name,
+                                    "description": service.description,
+                                    "fields": fields,
+                                }),
+                            )
+                        })
+                        .collect::<Map<String, Value>>();
+                    json!({"domain": entry.domain, "services": services})
+                })
+                .collect::<Vec<_>>();
+            (StatusCode::OK, Json(services)).into_response()
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 async fn api_service_call(
@@ -218,11 +319,41 @@ async fn api_service_call(
     };
 
     let return_response = uri.query().map(query_has_return_response).unwrap_or(false);
-    match app
-        .services
-        .call(&app, &domain, &service, data, None, return_response)
-    {
-        Ok(outcome) => {
+    let target = match ServiceTarget::from_parts(None, Some(&data)) {
+        Ok(target) => target,
+        Err(ServiceError::InvalidFormat(message)) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"message": message}))).into_response();
+        }
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let service_data = match ServiceData::from_json(&data) {
+        Ok(service_data) => service_data,
+        Err(ServiceError::InvalidFormat(message)) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"message": message}))).into_response();
+        }
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    match app.core.execute(
+        CoreDeps {
+            config: &app.config,
+            states: &app.states,
+            services: &app.services,
+        },
+        OperationRequest::CallService {
+            call: ServiceCall {
+                domain,
+                service,
+                target,
+                data: service_data,
+                return_response,
+            },
+            meta: OperationMeta {
+                allow_deferred: return_response,
+                ..default_operation_meta()
+            },
+        },
+    ) {
+        OperationResult::ServiceCallCompleted(outcome) => {
             if return_response {
                 (
                     StatusCode::OK,
@@ -236,20 +367,27 @@ async fn api_service_call(
                 (StatusCode::OK, Json(outcome.changed_states)).into_response()
             }
         }
-        Err(ServiceError::NotFound { .. }) => (
+        OperationResult::Error(OperationError::NotFound) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"message": "Service not found."})),
         )
             .into_response(),
-        Err(ServiceError::InvalidFormat(message))
-        | Err(ServiceError::ServiceValidation(message)) => {
-            (StatusCode::BAD_REQUEST, Json(json!({"message": message}))).into_response()
-        }
-        Err(error) => (
+        OperationResult::Error(OperationError::InvalidRequest) => (
             StatusCode::BAD_REQUEST,
-            Json(json!({"message": error.message()})),
+            Json(json!({"message": "target must include entity_id"})),
         )
             .into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+fn default_operation_meta() -> OperationMeta {
+    OperationMeta {
+        request_id: 0,
+        consistency: Consistency::LivePreferred,
+        deadline: DeadlineClass::Interactive,
+        allow_cached: true,
+        allow_deferred: false,
     }
 }
 

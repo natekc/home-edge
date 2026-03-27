@@ -131,7 +131,11 @@ async fn build_server_and_state(
             product_name: "Test Home".into(),
         },
     };
-    let state = Arc::new(AppState::new(config, storage));
+    let state = Arc::new(
+        AppState::new_initialized(config, storage)
+            .await
+            .expect("init app state"),
+    );
     if let Some(user) = onboarding.user.as_ref() {
         state
             .auth

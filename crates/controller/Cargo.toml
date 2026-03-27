@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["transport_wifi"]
+transport_wifi = []
+transport_ble = []
+
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
