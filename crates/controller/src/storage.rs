@@ -147,7 +147,16 @@ impl Storage {
         let _guard = self.lock.lock().await;
         let path = self.instance_id_path();
         match tokio::fs::read_to_string(&path).await {
-            Ok(contents) => Ok(contents.trim().to_string()),
+            Ok(contents) => {
+                let trimmed = contents.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed);
+                }
+                // File exists but is empty — regenerate.
+                let instance_id = Uuid::new_v4().to_string();
+                save_text_atomic(&path, &instance_id).await?;
+                Ok(instance_id)
+            }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 let instance_id = Uuid::new_v4().to_string();
                 save_text_atomic(&path, &instance_id).await?;
