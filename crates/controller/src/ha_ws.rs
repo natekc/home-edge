@@ -412,6 +412,44 @@ async fn dispatch_command(id: u64, msg_type: &str, extra: &Value, state: &Arc<Ap
             }
         }
 
+        "config/device_registry/list" => {
+            match state.mobile_devices.all().await {
+                Ok(devices) => {
+                    let entries: Vec<Value> = devices
+                        .into_iter()
+                        .map(|d| {
+                            json!({
+                                "id": d.webhook_id,
+                                "config_entries": [],
+                                "config_entries_subentries": {},
+                                "connections": [],
+                                "created_at": 0.0,
+                                "entry_type": "service",
+                                "identifiers": [["mobile_app", d.webhook_id]],
+                                "labels": [],
+                                "modified_at": 0.0,
+                                "name": d.device_name,
+                                "manufacturer": d.manufacturer,
+                                "model": d.model,
+                                "sw_version": d.os_version,
+                                "name_by_user": null,
+                                "area_id": null,
+                                "configuration_url": null,
+                                "disabled_by": null,
+                                "hw_version": null,
+                                "model_id": null,
+                                "primary_config_entry": null,
+                                "serial_number": null,
+                                "via_device_id": null,
+                            })
+                        })
+                        .collect();
+                    result_ok(id, json!(entries))
+                }
+                Err(_) => result_err(id, "internal_error", "Failed to fetch device registry"),
+            }
+        }
+
         // Source: const.py  ERR_UNKNOWN_COMMAND = "unknown_command"
         _ => result_err(
             id,
