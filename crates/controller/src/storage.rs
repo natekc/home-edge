@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -24,8 +24,11 @@ pub struct Storage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OnboardingState {
+    #[serde(default)]
     pub version: u32,
+    #[serde(default)]
     pub onboarded: bool,
+    #[serde(default = "now_unix_ms", deserialize_with = "deserialize_u128_or_now")]
     pub updated_at_unix_ms: u128,
     #[serde(default)]
     pub done: Vec<String>,
@@ -260,6 +263,13 @@ fn now_unix_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+/// Deserializes a u128 timestamp, treating JSON `null` or missing values
+/// as the current time. Guards against files written by older code versions
+/// that serialized this field as null.
+fn deserialize_u128_or_now<'de, D: Deserializer<'de>>(de: D) -> Result<u128, D::Error> {
+    Ok(Option::<u128>::deserialize(de)?.unwrap_or_else(now_unix_ms))
 }
 
 #[cfg(test)]
