@@ -11,8 +11,8 @@ use serde_json::json;
 
 use crate::app::AppState;
 use crate::core::{
-    CompleteCoreConfigOutcome, CreateOnboardingUserOutcome, OnboardingCoreConfigInput,
-    OnboardingUserInput,
+    CompleteAnalyticsOutcome, CompleteIntegrationOutcome, CompleteCoreConfigOutcome,
+    CreateOnboardingUserOutcome, OnboardingCoreConfigInput, OnboardingUserInput,
 };
 use crate::ha_api;
 use crate::ha_auth;
@@ -22,6 +22,8 @@ use crate::ha_ws;
 
 const STEP_USER: &str = "user";
 const STEP_CORE_CONFIG: &str = "core_config";
+const STEP_ANALYTICS: &str = "analytics";
+const STEP_INTEGRATION: &str = "integration";
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -46,6 +48,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/onboarding/users", post(create_onboarding_user))
         .route("/api/onboarding/core_config", post(complete_core_config))
+        .route("/api/onboarding/analytics", post(complete_analytics))
+        .route("/api/onboarding/integration", post(complete_integration))
         .route("/api/onboarding/complete", post(complete_onboarding))
         .with_state(state)
 }
@@ -90,6 +94,8 @@ async fn onboarding_status(State(state): State<Arc<AppState>>) -> impl IntoRespo
         Ok(progress) => Json(vec![
             json!({"step": STEP_USER, "done": progress.user_done}),
             json!({"step": STEP_CORE_CONFIG, "done": progress.core_config_done}),
+            json!({"step": STEP_ANALYTICS, "done": progress.analytics_done}),
+            json!({"step": STEP_INTEGRATION, "done": progress.integration_done}),
         ])
         .into_response(),
         Err(err) => (
@@ -225,6 +231,118 @@ async fn complete_core_config(
             Json(ErrorResponse::new(format!(
                 "failed to persist core config: {err:#}"
             ))),
+        )
+            .into_response(),
+    }
+}
+
+/// Extract a Bearer token from the Authorization header.
+fn extract_bearer(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|t| t.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct IntegrationRequest {
+    client_id: String,
+    redirect_uri: String,
+}
+
+/// POST /api/onboarding/analytics
+/// Source: homeassistant/components/onboarding/views.py  AnalyticsOnboardingView
+async fn complete_analytics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let token = match extract_bearer(&headers) {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse::new("Missing or invalid Bearer token".into())),
+            )
+                .into_response();
+        }
+    };
+    if state.tokens.validate_access_token(&token).await.is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse::new("Invalid access token".into())),
+        )
+            .into_response();
+    }
+    match state
+        .core
+        .complete_onboarding_analytics(&state.storage)
+        .await
+    {
+        Ok(CompleteAnalyticsOutcome::Completed) => {
+            (StatusCode::OK, Json(json!({}))).into_response()
+        }
+        Ok(CompleteAnalyticsOutcome::AlreadyDone) => (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse::new("Analytics step already done".into())),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(format!("failed to persist analytics step: {err:#}"))),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/onboarding/integration
+/// Source: homeassistant/components/onboarding/views.py  IntegrationOnboardingView
+async fn complete_integration(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Json<IntegrationRequest>,
+) -> impl IntoResponse {
+    let token = match extract_bearer(&headers) {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse::new("Missing or invalid Bearer token".into())),
+            )
+                .into_response();
+        }
+    };
+    if state.tokens.validate_access_token(&token).await.is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse::new("Invalid access token".into())),
+        )
+            .into_response();
+    }
+    if body.client_id.is_empty() || body.redirect_uri.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("client_id and redirect_uri are required".into())),
+        )
+            .into_response();
+    }
+    match state
+        .core
+        .complete_onboarding_integration(&state.storage)
+        .await
+    {
+        Ok(CompleteIntegrationOutcome::Completed) => {
+            let auth_code = state.tokens.issue_auth_code(&body.client_id).await;
+            (StatusCode::OK, Json(json!({"auth_code": auth_code}))).into_response()
+        }
+        Ok(CompleteIntegrationOutcome::AlreadyDone) => (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse::new("Integration step already done".into())),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(format!("failed to persist integration step: {err:#}"))),
         )
             .into_response(),
     }
