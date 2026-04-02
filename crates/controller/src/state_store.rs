@@ -15,16 +15,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ha_types::context::Context;
 use ha_types::entity::State;
+use tokio::sync::broadcast;
+
+/// A state change event broadcast when a state is inserted or updated.
+/// Source: homeassistant/core.py  Event(EVENT_STATE_CHANGED)
+#[derive(Clone, Debug)]
+pub struct StateEvent {
+    pub state: State,
+    pub old_state: Option<State>,
+}
 
 /// Thread-safe in-memory entity state store.
 pub struct StateStore {
     states: RwLock<HashMap<String, State>>,
+    change_tx: broadcast::Sender<StateEvent>,
 }
 
 impl StateStore {
     pub fn new() -> Self {
+        let (change_tx, _) = broadcast::channel(256);
         Self {
             states: RwLock::new(HashMap::new()),
+            change_tx,
         }
     }
 
@@ -51,9 +63,19 @@ impl StateStore {
         if state.state.len() > 255 {
             return Err("State value exceeds maximum length of 255".into());
         }
-        let mut lock = self.states.write().expect("state lock poisoned");
-        lock.insert(state.entity_id.clone(), state);
+        let old_state = {
+            let mut lock = self.states.write().expect("state lock poisoned");
+            let old = lock.get(&state.entity_id).cloned();
+            lock.insert(state.entity_id.clone(), state.clone());
+            old
+        };
+        let _ = self.change_tx.send(StateEvent { state, old_state });
         Ok(())
+    }
+
+    /// Subscribe to state change events.
+    pub fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
+        self.change_tx.subscribe()
     }
 
     /// Remove a state. Returns true if it existed.
