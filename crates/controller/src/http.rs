@@ -154,6 +154,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/onboarding/core_config",                    post(complete_core_config))
         .route("/api/onboarding/analytics",                      post(complete_analytics))
         .route("/api/onboarding/integration",                    post(complete_integration))
+        .route("/api/onboarding/integration/wait",               post(onboarding_integration_wait))
         .route("/api/onboarding/complete",                       post(complete_onboarding))
         .with_state(state)
 }
@@ -695,6 +696,19 @@ async fn complete_integration(
         Ok(CompleteIntegrationOutcome::AlreadyDone) => forbidden("Integration step already done"),
         Err(err) => internal_error(&err),
     }
+}
+
+/// POST /api/onboarding/integration/wait
+///
+/// Source: homeassistant/components/onboarding/views.py  IntegrationWaitView.post
+/// Polls completion of an asynchronously-loaded integration. The HA frontend calls
+/// this after the integration step to block until the integration is fully loaded.
+///
+/// On home-edge there is no async integration loading, so we always report
+/// integration_loaded: true immediately.
+async fn onboarding_integration_wait(body: Option<Json<serde_json::Value>>) -> impl IntoResponse {
+    let _ = body; // domain name accepted but unused — no async loading on embedded device
+    (StatusCode::OK, Json(json!({"integration_loaded": true}))).into_response()
 }
 
 async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoResponse {
