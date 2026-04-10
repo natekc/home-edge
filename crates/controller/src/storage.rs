@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -24,8 +24,11 @@ pub struct Storage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OnboardingState {
+    #[serde(default)]
     pub version: u32,
+    #[serde(default)]
     pub onboarded: bool,
+    #[serde(default = "now_unix_ms", deserialize_with = "deserialize_u128_or_now")]
     pub updated_at_unix_ms: u128,
     #[serde(default)]
     pub done: Vec<String>,
@@ -144,7 +147,16 @@ impl Storage {
         let _guard = self.lock.lock().await;
         let path = self.instance_id_path();
         match tokio::fs::read_to_string(&path).await {
-            Ok(contents) => Ok(contents.trim().to_string()),
+            Ok(contents) => {
+                let trimmed = contents.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed);
+                }
+                // File exists but is empty — regenerate.
+                let instance_id = Uuid::new_v4().to_string();
+                save_text_atomic(&path, &instance_id).await?;
+                Ok(instance_id)
+            }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 let instance_id = Uuid::new_v4().to_string();
                 save_text_atomic(&path, &instance_id).await?;
@@ -168,50 +180,15 @@ impl Storage {
 }
 
 pub(crate) async fn save_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("missing parent dir for {}", path.display()))?;
-    tokio::fs::create_dir_all(parent)
-        .await
-        .with_context(|| format!("failed to create {}", parent.display()))?;
-
-    let tmp_path = path.with_extension("tmp");
-    let serialized = serde_json::to_vec_pretty(value).context("failed to serialize state")?;
-    let final_parent = parent.to_path_buf();
-    let final_path = path.to_path_buf();
-    let final_tmp = tmp_path.clone();
-
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        use std::fs::{self, File};
-        use std::io::Write;
-
-        let mut file = File::create(&final_tmp)
-            .with_context(|| format!("failed to create {}", final_tmp.display()))?;
-        file.write_all(&serialized)
-            .with_context(|| format!("failed to write {}", final_tmp.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to sync {}", final_tmp.display()))?;
-        fs::rename(&final_tmp, &final_path).with_context(|| {
-            format!(
-                "failed to rename {} to {}",
-                final_tmp.display(),
-                final_path.display()
-            )
-        })?;
-
-        File::open(&final_parent)
-            .with_context(|| format!("failed to open {}", final_parent.display()))?
-            .sync_all()
-            .with_context(|| format!("failed to sync dir {}", final_parent.display()))?;
-        Ok(())
-    })
-    .await
-    .context("atomic write task failed")??;
-
-    Ok(())
+    let bytes = serde_json::to_vec_pretty(value).context("failed to serialize state")?;
+    save_bytes_atomic(path, bytes).await
 }
 
 async fn save_text_atomic(path: &Path, value: &str) -> Result<()> {
+    save_bytes_atomic(path, value.as_bytes().to_vec()).await
+}
+
+async fn save_bytes_atomic(path: &Path, bytes: Vec<u8>) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("missing parent dir for {}", path.display()))?;
@@ -220,7 +197,6 @@ async fn save_text_atomic(path: &Path, value: &str) -> Result<()> {
         .with_context(|| format!("failed to create {}", parent.display()))?;
 
     let tmp_path = path.with_extension("tmp");
-    let serialized = value.as_bytes().to_vec();
     let final_parent = parent.to_path_buf();
     let final_path = path.to_path_buf();
     let final_tmp = tmp_path.clone();
@@ -231,7 +207,7 @@ async fn save_text_atomic(path: &Path, value: &str) -> Result<()> {
 
         let mut file = File::create(&final_tmp)
             .with_context(|| format!("failed to create {}", final_tmp.display()))?;
-        file.write_all(&serialized)
+        file.write_all(&bytes)
             .with_context(|| format!("failed to write {}", final_tmp.display()))?;
         file.sync_all()
             .with_context(|| format!("failed to sync {}", final_tmp.display()))?;
@@ -260,6 +236,25 @@ fn now_unix_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+/// Deserializes a u128 timestamp, treating JSON `null` or missing values
+/// as the current time. Guards against files written by older code versions
+/// that serialized this field as null.
+fn deserialize_u128_or_now<'de, D: Deserializer<'de>>(de: D) -> Result<u128, D::Error> {
+    Ok(Option::<u128>::deserialize(de)?.unwrap_or_else(now_unix_ms))
+}
+
+#[cfg(test)]
+pub(crate) fn temp_dir(prefix: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("home-edge-{prefix}-{nanos}-{unique}"))
 }
 
 #[cfg(test)]

@@ -11,8 +11,8 @@ use serde_json::json;
 
 use crate::app::AppState;
 use crate::core::{
-    CompleteCoreConfigOutcome, CreateOnboardingUserOutcome, OnboardingCoreConfigInput,
-    OnboardingUserInput,
+    CompleteAnalyticsOutcome, CompleteIntegrationOutcome, CompleteCoreConfigOutcome,
+    CreateOnboardingUserOutcome, OnboardingCoreConfigInput, OnboardingUserInput,
 };
 use crate::ha_api;
 use crate::ha_auth;
@@ -22,6 +22,24 @@ use crate::ha_ws;
 
 const STEP_USER: &str = "user";
 const STEP_CORE_CONFIG: &str = "core_config";
+const STEP_ANALYTICS: &str = "analytics";
+const STEP_INTEGRATION: &str = "integration";
+
+fn internal_error(err: &anyhow::Error) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse::new(format!("{err:#}"))),
+    )
+        .into_response()
+}
+
+fn forbidden(msg: &'static str) -> Response {
+    (StatusCode::FORBIDDEN, Json(ErrorResponse::new(msg.into()))).into_response()
+}
+
+fn unauthorized(msg: &'static str) -> Response {
+    (StatusCode::UNAUTHORIZED, Json(ErrorResponse::new(msg.into()))).into_response()
+}
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -46,6 +64,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/onboarding/users", post(create_onboarding_user))
         .route("/api/onboarding/core_config", post(complete_core_config))
+        .route("/api/onboarding/analytics", post(complete_analytics))
+        .route("/api/onboarding/integration", post(complete_integration))
         .route("/api/onboarding/complete", post(complete_onboarding))
         .with_state(state)
 }
@@ -58,11 +78,7 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
             (StatusCode::TEMPORARY_REDIRECT, headers).into_response()
         }
         Ok(_) => Html(render_shell(&state.config.ui.product_name, true)).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to load onboarding state: {err:#}"),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -77,11 +93,7 @@ async fn onboarding_page(State(state): State<Arc<AppState>>) -> impl IntoRespons
     match state.core.onboarding_progress(&state.storage).await {
         Ok(progress) => Html(render_shell(&state.config.ui.product_name, progress.onboarded))
         .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to load onboarding state: {err:#}"),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -90,13 +102,11 @@ async fn onboarding_status(State(state): State<Arc<AppState>>) -> impl IntoRespo
         Ok(progress) => Json(vec![
             json!({"step": STEP_USER, "done": progress.user_done}),
             json!({"step": STEP_CORE_CONFIG, "done": progress.core_config_done}),
+            json!({"step": STEP_ANALYTICS, "done": progress.analytics_done}),
+            json!({"step": STEP_INTEGRATION, "done": progress.integration_done}),
         ])
         .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!("failed to load state: {err:#}"))),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -104,11 +114,7 @@ async fn onboarding_installation_type(State(state): State<Arc<AppState>>) -> imp
     match state.core.onboarding_progress(&state.storage).await {
         Ok(progress) if progress.onboarded => StatusCode::UNAUTHORIZED.into_response(),
         Ok(_) => Json(json!({"installation_type": "Home Edge"})).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!("failed to load state: {err:#}"))),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -162,18 +168,8 @@ async fn create_onboarding_user(
             let auth_code = state.tokens.issue_auth_code(&body.client_id).await;
             (StatusCode::OK, Json(json!({"auth_code": auth_code}))).into_response()
         }
-        Ok(CreateOnboardingUserOutcome::UserStepAlreadyDone) => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("User step already done".into())),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!(
-                "failed to persist user: {err:#}"
-            ))),
-        )
-            .into_response(),
+        Ok(CreateOnboardingUserOutcome::UserStepAlreadyDone) => forbidden("User step already done"),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -208,38 +204,92 @@ async fn complete_core_config(
         Ok(CompleteCoreConfigOutcome::Completed) => {
             (StatusCode::OK, Json(json!({}))).into_response()
         }
-        Ok(CompleteCoreConfigOutcome::CoreConfigStepAlreadyDone) => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("Core config step already done".into())),
+        Ok(CompleteCoreConfigOutcome::CoreConfigStepAlreadyDone) => forbidden("Core config step already done"),
+        Ok(CompleteCoreConfigOutcome::UserStepRequired) => forbidden("User step must be completed first"),
+        Err(err) => internal_error(&err),
+    }
+}
+
+/// Extract a Bearer token from the Authorization header.
+fn extract_bearer(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|t| t.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct IntegrationRequest {
+    client_id: String,
+    redirect_uri: String,
+}
+
+/// POST /api/onboarding/analytics
+/// Source: homeassistant/components/onboarding/views.py  AnalyticsOnboardingView
+async fn complete_analytics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let token = match extract_bearer(&headers) {
+        Some(t) => t,
+        None => return unauthorized("Missing or invalid Bearer token"),
+    };
+    if state.tokens.validate_access_token(&token).await.is_none() {
+        return unauthorized("Invalid access token");
+    }
+    match state
+        .core
+        .complete_onboarding_analytics(&state.storage)
+        .await
+    {
+        Ok(CompleteAnalyticsOutcome::Completed) => {
+            (StatusCode::OK, Json(json!({}))).into_response()
+        }
+        Ok(CompleteAnalyticsOutcome::AlreadyDone) => forbidden("Analytics step already done"),
+        Err(err) => internal_error(&err),
+    }
+}
+
+/// POST /api/onboarding/integration
+/// Source: homeassistant/components/onboarding/views.py  IntegrationOnboardingView
+async fn complete_integration(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Json<IntegrationRequest>,
+) -> impl IntoResponse {
+    let token = match extract_bearer(&headers) {
+        Some(t) => t,
+        None => return unauthorized("Missing or invalid Bearer token"),
+    };
+    if state.tokens.validate_access_token(&token).await.is_none() {
+        return unauthorized("Invalid access token");
+    }
+    if body.client_id.is_empty() || body.redirect_uri.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("client_id and redirect_uri are required".into())),
         )
-            .into_response(),
-        Ok(CompleteCoreConfigOutcome::UserStepRequired) => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new(
-                "User step must be completed first".into(),
-            )),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!(
-                "failed to persist core config: {err:#}"
-            ))),
-        )
-            .into_response(),
+            .into_response();
+    }
+    match state
+        .core
+        .complete_onboarding_integration(&state.storage)
+        .await
+    {
+        Ok(CompleteIntegrationOutcome::Completed) => {
+            let auth_code = state.tokens.issue_auth_code(&body.client_id).await;
+            (StatusCode::OK, Json(json!({"auth_code": auth_code}))).into_response()
+        }
+        Ok(CompleteIntegrationOutcome::AlreadyDone) => forbidden("Integration step already done"),
+        Err(err) => internal_error(&err),
     }
 }
 
 async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.core.complete_onboarding(&state.storage).await {
         Ok(next) => Json(next).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!(
-                "failed to persist state: {err:#}"
-            ))),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 

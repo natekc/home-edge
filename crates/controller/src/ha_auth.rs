@@ -14,8 +14,10 @@
 //! status codes, field names) exactly mirrors the HA Python backend.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Result;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
@@ -23,11 +25,19 @@ use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::core::AuthorizeBootstrapInput;
+use crate::storage::save_json_atomic;
+
+const TOKENS_FILE: &str = "tokens.json";
+
+/// Return `opt` trimmed if non-empty, otherwise `fallback`.
+fn non_empty<'a>(opt: Option<&'a str>, fallback: &'a str) -> &'a str {
+    opt.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(fallback)
+}
 
 fn onboarding_required_response() -> Response {
     (
@@ -44,9 +54,18 @@ fn onboarding_required_response() -> Response {
 // Token store — holds short-lived access tokens and refresh tokens
 // ---------------------------------------------------------------------------
 
+/// On-disk representation — only refresh tokens survive restarts.
+/// Access tokens and auth codes are intentionally ephemeral.
+#[derive(Default, Serialize, Deserialize)]
+struct PersistedTokens {
+    /// refresh_token → client_id
+    refresh_tokens: HashMap<String, String>,
+}
+
 /// Opaque token registry kept in AppState.
 pub struct TokenStore {
-    inner: RwLock<TokenStoreInner>,
+    root: PathBuf,
+    inner: Mutex<TokenStoreInner>,
 }
 
 struct TokenStoreInner {
@@ -59,9 +78,10 @@ struct TokenStoreInner {
 }
 
 impl TokenStore {
-    pub fn new() -> Self {
+    pub fn new(root: PathBuf) -> Self {
         TokenStore {
-            inner: RwLock::new(TokenStoreInner {
+            root,
+            inner: Mutex::new(TokenStoreInner {
                 auth_codes: HashMap::new(),
                 refresh_tokens: HashMap::new(),
                 access_tokens: HashMap::new(),
@@ -69,10 +89,45 @@ impl TokenStore {
         }
     }
 
+    /// Load persisted refresh tokens from disk into the in-memory store.
+    /// Called once at startup in `AppState::new_initialized`.
+    pub async fn load_persisted(&self) -> Result<()> {
+        let path = self.root.join(TOKENS_FILE);
+        match tokio::fs::read_to_string(&path).await {
+            Ok(contents) => {
+                let persisted: PersistedTokens =
+                    serde_json::from_str(&contents).unwrap_or_default();
+                let mut inner = self.inner.lock().await;
+                inner.refresh_tokens = persisted.refresh_tokens;
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!("Token file not found: {}", path.display());
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Persist the current refresh token table to disk.
+    /// Errors are logged but not propagated — callers should not fail on persistence error.
+    async fn save_persisted(&self) {
+        let persisted = {
+            let inner = self.inner.lock().await;
+            PersistedTokens {
+                refresh_tokens: inner.refresh_tokens.clone(),
+            }
+        };
+        let path = self.root.join(TOKENS_FILE);
+        if let Err(e) = save_json_atomic(&path, &persisted).await {
+            tracing::warn!("Failed to persist token store: {e:#}");
+        }
+    }
+
     /// Issue a one-time authorization code for the given client.
     pub async fn issue_auth_code(&self, client_id: &str) -> String {
-        let code = Uuid::new_v4().to_string();
-        let mut inner = self.inner.write().await;
+        let code = new_token();
+        let mut inner = self.inner.lock().await;
         inner.auth_codes.insert(code.clone(), client_id.to_string());
         code
     }
@@ -80,19 +135,24 @@ impl TokenStore {
     /// Consume an auth code and, if valid, issue refresh + access tokens.
     /// Returns (access_token, refresh_token) or None if code is invalid.
     pub async fn exchange_code(&self, client_id: &str, code: &str) -> Option<(String, String)> {
-        let mut inner = self.inner.write().await;
-        let stored_client_id = inner.auth_codes.remove(code)?;
-        if stored_client_id != client_id {
-            return None;
-        }
-        let refresh_token = Uuid::new_v4().to_string();
-        let access_token = Uuid::new_v4().to_string();
-        inner
-            .refresh_tokens
-            .insert(refresh_token.clone(), client_id.to_string());
-        inner
-            .access_tokens
-            .insert(access_token.clone(), client_id.to_string());
+        let (access_token, refresh_token) = {
+            let mut inner = self.inner.lock().await;
+            let stored_client_id = inner.auth_codes.remove(code)?;
+            if stored_client_id != client_id {
+                tracing::warn!(expected = %stored_client_id, got = %client_id, "client_id mismatch during code exchange");
+                return None;
+            }
+            let refresh_token = new_token();
+            let access_token = new_token();
+            inner
+                .refresh_tokens
+                .insert(refresh_token.clone(), client_id.to_string());
+            inner
+                .access_tokens
+                .insert(access_token.clone(), client_id.to_string());
+            (access_token, refresh_token)
+        };
+        self.save_persisted().await;
         Some((access_token, refresh_token))
     }
 
@@ -103,17 +163,18 @@ impl TokenStore {
         client_id: Option<&str>,
         refresh_token: &str,
     ) -> Option<String> {
-        let mut inner = self.inner.write().await;
+        let mut inner = self.inner.lock().await;
         let stored_client = inner.refresh_tokens.get(refresh_token)?.clone();
         // Source: TokenView._async_handle_refresh_token
         //   if refresh_token.client_id != client_id: → invalid_request
         // client_id is optional for refresh; only check when provided.
         if let Some(cid) = client_id {
             if stored_client != cid {
+                tracing::warn!("client_id mismatch during token refresh");
                 return None;
             }
         }
-        let access_token = Uuid::new_v4().to_string();
+        let access_token = new_token();
         inner
             .access_tokens
             .insert(access_token.clone(), stored_client);
@@ -123,16 +184,19 @@ impl TokenStore {
     /// Revoke a refresh token (and conceptually all its access tokens).
     /// Source: RevokeTokenView — returns 200 regardless of whether token existed.
     pub async fn revoke_refresh_token(&self, token: &str) {
-        let mut inner = self.inner.write().await;
-        inner.refresh_tokens.remove(token);
+        {
+            let mut inner = self.inner.lock().await;
+            inner.refresh_tokens.remove(token);
+        }
+        self.save_persisted().await;
     }
 
-    /// Check if an access token is valid; returns the client_id if it is.
-    #[allow(dead_code)]
-    pub async fn validate_access_token(&self, access_token: &str) -> Option<String> {
-        let inner = self.inner.read().await;
-        inner.access_tokens.get(access_token).cloned()
+    /// Returns `Some(())` if the token is valid, `None` if not found.
+    pub async fn validate_access_token(&self, token: &str) -> Option<()> {
+        let inner = self.inner.lock().await;
+        inner.access_tokens.contains_key(token).then_some(())
     }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +262,10 @@ impl LoginFlowStore {
     }
 }
 
+fn new_token() -> String {
+    Uuid::new_v4().simple().to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Request / Response shapes — exactly matching HA protocol
 // ---------------------------------------------------------------------------
@@ -229,10 +297,6 @@ struct ProviderEntry {
 #[derive(Deserialize)]
 struct LoginFlowRequest {
     client_id: String,
-    #[allow(dead_code)]
-    handler: serde_json::Value,
-    #[allow(dead_code)]
-    redirect_uri: String,
 }
 
 /// POST /auth/login_flow/{flow_id} request body.
@@ -399,27 +463,9 @@ async fn auth_authorize_submit(
             .into_response();
         }
 
-        let display_name = form
-            .name
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(username)
-            .to_string();
-        let location_name = form
-            .location_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(state.config.ui.product_name.as_str())
-            .to_string();
-        let language = form
-            .language
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("en")
-            .to_string();
+        let display_name = non_empty(form.name.as_deref(), username).to_string();
+        let location_name = non_empty(form.location_name.as_deref(), state.config.ui.product_name.as_str()).to_string();
+        let language = non_empty(form.language.as_deref(), "en").to_string();
 
         if let Err(err) = state
             .core

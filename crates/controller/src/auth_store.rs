@@ -1,18 +1,9 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::storage::{Storage, StoredUser, save_json_atomic};
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AuthUser {
-    pub name: String,
-    pub username: String,
-    pub password: String,
-    pub language: String,
-}
 
 pub struct AuthStore {
     root: PathBuf,
@@ -27,7 +18,7 @@ impl AuthStore {
         }
     }
 
-    pub async fn load_user(&self) -> Result<Option<AuthUser>> {
+    pub async fn load_user(&self) -> Result<Option<StoredUser>> {
         let path = self.user_path();
         match tokio::fs::read_to_string(&path).await {
             Ok(contents) => {
@@ -40,7 +31,7 @@ impl AuthStore {
         }
     }
 
-    pub async fn save_user(&self, user: &AuthUser) -> Result<()> {
+    pub async fn save_user(&self, user: &StoredUser) -> Result<()> {
         let _guard = self.lock.lock().await;
         save_json_atomic(&self.user_path(), user).await
     }
@@ -48,7 +39,7 @@ impl AuthStore {
     pub async fn load_user_with_legacy_fallback(
         &self,
         storage: &Storage,
-    ) -> Result<Option<AuthUser>> {
+    ) -> Result<Option<StoredUser>> {
         if let Some(user) = self.load_user().await? {
             return Ok(Some(user));
         }
@@ -58,9 +49,8 @@ impl AuthStore {
             return Ok(None);
         };
 
-        let user = AuthUser::from(legacy_user);
-        self.save_user(&user).await?;
-        Ok(Some(user))
+        self.save_user(&legacy_user).await?;
+        Ok(Some(legacy_user))
     }
 
     fn user_path(&self) -> PathBuf {
@@ -68,61 +58,16 @@ impl AuthStore {
     }
 }
 
-impl From<StoredUser> for AuthUser {
-    fn from(value: StoredUser) -> Self {
-        Self {
-            name: value.name,
-            username: value.username,
-            password: value.password,
-            language: value.language,
-        }
-    }
-}
-
-impl From<&StoredUser> for AuthUser {
-    fn from(value: &StoredUser) -> Self {
-        Self {
-            name: value.name.clone(),
-            username: value.username.clone(),
-            password: value.password.clone(),
-            language: value.language.clone(),
-        }
-    }
-}
-
-impl From<&AuthUser> for StoredUser {
-    fn from(value: &AuthUser) -> Self {
-        Self {
-            name: value.name.clone(),
-            username: value.username.clone(),
-            password: value.password.clone(),
-            language: value.language.clone(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
-
-    fn temp_dir(prefix: &str) -> PathBuf {
-        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("home-edge-{prefix}-{nanos}-{unique}"))
-    }
+    use crate::storage::temp_dir;
 
     #[tokio::test]
     async fn persists_auth_user() {
         let root = temp_dir("auth-store");
         let store = AuthStore::new(root);
-        let user = AuthUser {
+        let user = StoredUser {
             name: "Test".into(),
             username: "test-user".into(),
             password: "secret".into(),

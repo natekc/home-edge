@@ -15,6 +15,7 @@
 //! 5. Server → `{"id":N,"type":"result","success":true,"result":...}`
 //!             or `{"id":N,"type":"result","success":false,"error":{"code":"...","message":"..."}}`
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Router;
@@ -24,11 +25,14 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::debug;
 
 use crate::app::AppState;
 use crate::core::{Consistency, CoreDeps, DeadlineClass, OperationError, OperationMeta, OperationRequest, OperationResult, PageRequest, StateFilter};
 use crate::service::{ServiceCall, ServiceData, ServiceError, ServiceTarget};
+use crate::state_store::StateEvent;
 
 /// Version string sent in auth handshake messages.
 /// Source: homeassistant/const.py  __version__ (we mimic a recent HA version).
@@ -170,24 +174,42 @@ async fn handle_socket(mut ws: WebSocket, state: Arc<AppState>) {
     }
 
     let mut phase = Phase::Auth;
+    // Channel for subscription tasks to push outbound messages.
+    let (push_tx, mut push_rx) = mpsc::channel::<String>(256);
+    // Active subscriptions keyed by the command id that created them.
+    let mut subscriptions: HashMap<u64, JoinHandle<()>> = HashMap::new();
 
-    while let Some(Ok(msg)) = ws.recv().await {
-        match msg {
-            Message::Text(text) => {
-                let reply = match phase {
-                    Phase::Auth => handle_auth_phase(&text, &state, &mut phase).await,
-                    Phase::Active => handle_command_phase(&text, &state).await,
-                };
-                if let Some(reply_text) = reply {
-                    if ws.send(Message::Text(reply_text.into())).await.is_err() {
-                        break;
+    loop {
+        tokio::select! {
+            msg = ws.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        let reply = match phase {
+                            Phase::Auth => handle_auth_phase(&text, &state, &mut phase).await,
+                            Phase::Active => handle_command_phase(&text, &state, &push_tx, &mut subscriptions).await,
+                        };
+                        if let Some(reply_text) = reply {
+                            if ws.send(Message::Text(reply_text.into())).await.is_err() {
+                                break;
+                            }
+                        }
                     }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    // Ignore binary / ping / pong frames
+                    _ => {}
                 }
             }
-            Message::Close(_) => break,
-            // Ignore binary / ping / pong frames
-            _ => {}
+            Some(text) = push_rx.recv() => {
+                if ws.send(Message::Text(text.into())).await.is_err() {
+                    break;
+                }
+            }
         }
+    }
+
+    // Clean up all active subscription tasks.
+    for (_, handle) in subscriptions {
+        handle.abort();
     }
 }
 
@@ -226,7 +248,12 @@ async fn handle_auth_phase(text: &str, state: &Arc<AppState>, phase: &mut Phase)
 /// Handle a command message in the active phase.
 ///
 /// Source: commands.py  handle_* functions
-async fn handle_command_phase(text: &str, state: &Arc<AppState>) -> Option<String> {
+async fn handle_command_phase(
+    text: &str,
+    state: &Arc<AppState>,
+    push_tx: &mpsc::Sender<String>,
+    subscriptions: &mut HashMap<u64, JoinHandle<()>>,
+) -> Option<String> {
     let parsed: Value = serde_json::from_str(text).ok()?;
 
     // Source: messages.py  BASE_COMMAND_MESSAGE_SCHEMA
@@ -239,12 +266,19 @@ async fn handle_command_phase(text: &str, state: &Arc<AppState>) -> Option<Strin
         }
     };
 
-    let reply = dispatch_command(cmd.id, &cmd.msg_type, &cmd.extra, state).await;
+    let reply = dispatch_command(cmd.id, &cmd.msg_type, &cmd.extra, state, push_tx, subscriptions).await;
     Some(reply)
 }
 
 /// Dispatch a command to the appropriate handler.
-async fn dispatch_command(id: u64, msg_type: &str, extra: &Value, state: &Arc<AppState>) -> String {
+async fn dispatch_command(
+    id: u64,
+    msg_type: &str,
+    extra: &Value,
+    state: &Arc<AppState>,
+    push_tx: &mpsc::Sender<String>,
+    subscriptions: &mut HashMap<u64, JoinHandle<()>>,
+) -> String {
     match msg_type {
         // Source: commands.py  handle_ping
         //   {"id": iden, "type": "pong"}   — returned as a result message
@@ -412,6 +446,84 @@ async fn dispatch_command(id: u64, msg_type: &str, extra: &Value, state: &Arc<Ap
             }
         }
 
+        // Source: commands.py  handle_subscribe_entities (~L422)
+        // Sends an ack then streams compressed-state events for all entity changes.
+        "subscribe_entities" => {
+            let initial = state.states.all();
+            let rx = state.states.subscribe();
+            let handle = spawn_subscribe_entities(id, initial, rx, push_tx.clone());
+            subscriptions.insert(id, handle);
+            result_ok(id, Value::Null)
+        }
+
+        // Source: commands.py  handle_subscribe_events (~L175)
+        // Sends an ack then streams state_changed events (filtered by event_type if given).
+        "subscribe_events" => {
+            let event_type_filter = extra
+                .get("event_type")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let rx = state.states.subscribe();
+            let handle = spawn_subscribe_events(id, event_type_filter, rx, push_tx.clone());
+            subscriptions.insert(id, handle);
+            result_ok(id, Value::Null)
+        }
+
+        // Source: commands.py  handle_unsubscribe_events (~L237)
+        "unsubscribe_events" => {
+            let sub_id = match extra.get("subscription").and_then(|v| v.as_u64()) {
+                Some(s) => s,
+                None => {
+                    return result_err(id, "invalid_format", "subscription must be a positive integer");
+                }
+            };
+            match subscriptions.remove(&sub_id) {
+                Some(handle) => {
+                    handle.abort();
+                    result_ok(id, Value::Null)
+                }
+                None => result_err(id, "not_found", "Subscription not found."),
+            }
+        }
+
+        "config/device_registry/list" => {
+            match state.mobile_devices.all().await {
+                Ok(devices) => {
+                    let entries: Vec<Value> = devices
+                        .into_iter()
+                        .map(|d| {
+                            json!({
+                                "id": d.webhook_id,
+                                "config_entries": [],
+                                "config_entries_subentries": {},
+                                "connections": [],
+                                "created_at": 0.0,
+                                "entry_type": "service",
+                                "identifiers": [["mobile_app", d.webhook_id]],
+                                "labels": [],
+                                "modified_at": 0.0,
+                                "name": d.device_name,
+                                "manufacturer": d.manufacturer,
+                                "model": d.model,
+                                "sw_version": d.os_version,
+                                "name_by_user": null,
+                                "area_id": null,
+                                "configuration_url": null,
+                                "disabled_by": null,
+                                "hw_version": null,
+                                "model_id": null,
+                                "primary_config_entry": null,
+                                "serial_number": null,
+                                "via_device_id": null,
+                            })
+                        })
+                        .collect();
+                    result_ok(id, json!(entries))
+                }
+                Err(_) => result_err(id, "internal_error", "Failed to fetch device registry"),
+            }
+        }
+
         // Source: const.py  ERR_UNKNOWN_COMMAND = "unknown_command"
         _ => result_err(
             id,
@@ -419,6 +531,179 @@ async fn dispatch_command(id: u64, msg_type: &str, extra: &Value, state: &Arc<Ap
             &format!("Unknown command: {msg_type}"),
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Subscription helpers
+// ---------------------------------------------------------------------------
+
+/// Serialize a State into the compressed-state format used by subscribe_entities events.
+/// Source: homeassistant/components/websocket_api/messages.py  compressed_state_dict_add
+fn compressed_state(state: &ha_types::entity::State) -> Value {
+    // Convert ISO 8601 timestamp to Unix epoch float.
+    fn iso_to_epoch(ts: &str) -> f64 {
+        // Parse "YYYY-MM-DDTHH:MM:SS.ffffffZ" or with +00:00 offset.
+        // We split on 'T', parse the date, then the time.
+        let ts = ts.trim_end_matches("+00:00").trim_end_matches('Z');
+        let parts: Vec<&str> = ts.splitn(2, 'T').collect();
+        if parts.len() != 2 {
+            return 0.0;
+        }
+        let date: Vec<u64> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
+        let time_frac: Vec<&str> = parts[1].splitn(2, '.').collect();
+        let time_parts: Vec<u64> = time_frac[0].split(':').filter_map(|p| p.parse().ok()).collect();
+        if date.len() < 3 || time_parts.len() < 3 {
+            return 0.0;
+        }
+        let micros: f64 = time_frac
+            .get(1)
+            .and_then(|s| s.parse::<f64>().ok())
+            .map(|v| v / 1_000_000.0)
+            .unwrap_or(0.0);
+        // Approximate: ignore leap seconds, assume UTC.
+        let days_from_epoch = date_to_epoch_days(date[0], date[1], date[2]);
+        let secs = days_from_epoch * 86400
+            + time_parts[0] * 3600
+            + time_parts[1] * 60
+            + time_parts[2];
+        secs as f64 + micros
+    }
+
+    fn date_to_epoch_days(y: u64, m: u64, d: u64) -> u64 {
+        // Days from 1970-01-01 to y-m-d (Gregorian, no leap-second correction).
+        let mut total = 0u64;
+        for yr in 1970..y {
+            total += if (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0 { 366 } else { 365 };
+        }
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        for mi in 0..(m as usize - 1) { total += months[mi]; }
+        total + d - 1
+    }
+
+    json!({
+        "s": state.state,
+        "a": state.attributes,
+        "lc": iso_to_epoch(&state.last_changed),
+        "lu": iso_to_epoch(&state.last_updated),
+    })
+}
+
+/// Build the full state dict used in state_changed events.
+/// Source: homeassistant/components/websocket_api/messages.py  state_diff_msg
+fn full_state_dict(state: &ha_types::entity::State) -> Value {
+    json!({
+        "entity_id": state.entity_id,
+        "state": state.state,
+        "attributes": state.attributes,
+        "last_changed": state.last_changed,
+        "last_updated": state.last_updated,
+        "context": {
+            "id": state.context.id,
+            "parent_id": null,
+            "user_id": null,
+        },
+    })
+}
+
+/// Spawn a subscribe_entities subscription task.
+/// Source: homeassistant/components/websocket_api/commands.py  handle_subscribe_entities
+fn spawn_subscribe_entities(
+    sub_id: u64,
+    initial: Vec<ha_types::entity::State>,
+    mut rx: tokio::sync::broadcast::Receiver<StateEvent>,
+    push_tx: mpsc::Sender<String>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        // Send initial full-state dump as an additions event.
+        let additions: serde_json::Map<String, Value> = initial
+            .iter()
+            .map(|s| (s.entity_id.clone(), compressed_state(s)))
+            .collect();
+        let initial_event = json!({
+            "id": sub_id,
+            "type": "event",
+            "event": {"a": additions, "c": {}, "r": []},
+        })
+        .to_string();
+        if push_tx.send(initial_event).await.is_err() {
+            return;
+        }
+
+        // Forward subsequent state changes.
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let entity_id = event.state.entity_id.clone();
+                    let change = json!({
+                        "id": sub_id,
+                        "type": "event",
+                        "event": {
+                            "a": {entity_id: compressed_state(&event.state)},
+                            "c": {},
+                            "r": [],
+                        },
+                    })
+                    .to_string();
+                    if push_tx.send(change).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
+}
+
+/// Spawn a subscribe_events subscription task.
+/// Source: homeassistant/components/websocket_api/commands.py  handle_subscribe_events
+fn spawn_subscribe_events(
+    sub_id: u64,
+    event_type_filter: Option<String>,
+    mut rx: tokio::sync::broadcast::Receiver<StateEvent>,
+    push_tx: mpsc::Sender<String>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let et = "state_changed";
+                    if let Some(ref filter) = event_type_filter {
+                        if filter != et {
+                            continue;
+                        }
+                    }
+                    let now = crate::state_store::now_iso8601();
+                    let msg = json!({
+                        "id": sub_id,
+                        "type": "event",
+                        "event": {
+                            "event_type": et,
+                            "data": {
+                                "entity_id": event.state.entity_id,
+                                "new_state": full_state_dict(&event.state),
+                                "old_state": event.old_state.as_ref().map(full_state_dict),
+                            },
+                            "origin": "local",
+                            "time_fired": now,
+                            "context": {
+                                "id": event.state.context.id,
+                                "parent_id": null,
+                                "user_id": null,
+                            },
+                        },
+                    })
+                    .to_string();
+                    if push_tx.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
 }
 
 fn default_operation_meta(id: u64) -> OperationMeta {

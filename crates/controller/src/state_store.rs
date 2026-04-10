@@ -15,16 +15,37 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ha_types::context::Context;
 use ha_types::entity::State;
+use tokio::sync::broadcast;
+use uuid::Uuid;
+
+/// A state change event broadcast when a state is inserted or updated.
+/// Source: homeassistant/core.py  Event(EVENT_STATE_CHANGED)
+#[derive(Clone, Debug)]
+pub struct StateEvent {
+    pub state: State,
+    pub old_state: Option<State>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StateError {
+    #[error("invalid entity ID: {0}")]
+    InvalidEntityId(String),
+    #[error("state value exceeds maximum length of 255")]
+    StateTooLong,
+}
 
 /// Thread-safe in-memory entity state store.
 pub struct StateStore {
     states: RwLock<HashMap<String, State>>,
+    change_tx: broadcast::Sender<StateEvent>,
 }
 
 impl StateStore {
     pub fn new() -> Self {
+        let (change_tx, _) = broadcast::channel(256);
         Self {
             states: RwLock::new(HashMap::new()),
+            change_tx,
         }
     }
 
@@ -44,16 +65,26 @@ impl StateStore {
     ///
     /// Returns Err if the entity_id is invalid.
     /// Source: homeassistant/core.py  StateMachine.async_set / valid_entity_id
-    pub fn set(&self, state: State) -> Result<(), String> {
+    pub fn set(&self, state: State) -> Result<(), StateError> {
         if !State::is_valid_entity_id(&state.entity_id) {
-            return Err(format!("Invalid entity ID: {}", state.entity_id));
+            return Err(StateError::InvalidEntityId(state.entity_id.clone()));
         }
         if state.state.len() > 255 {
-            return Err("State value exceeds maximum length of 255".into());
+            return Err(StateError::StateTooLong);
         }
-        let mut lock = self.states.write().expect("state lock poisoned");
-        lock.insert(state.entity_id.clone(), state);
+        let old_state = {
+            let mut lock = self.states.write().expect("state lock poisoned");
+            let old = lock.get(&state.entity_id).cloned();
+            lock.insert(state.entity_id.clone(), state.clone());
+            old
+        };
+        let _ = self.change_tx.send(StateEvent { state, old_state });
         Ok(())
+    }
+
+    /// Subscribe to state change events.
+    pub fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
+        self.change_tx.subscribe()
     }
 
     /// Remove a state. Returns true if it existed.
@@ -205,23 +236,7 @@ pub fn make_state_with_context(
 }
 
 fn new_context_id() -> String {
-    // Generate a simple random-ish 26-char ULID-compatible placeholder.
-    // A real implementation would use a proper ULID library.
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    format!("{ms:020X}{:06X}", pseudo_rand())
-}
-
-fn pseudo_rand() -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    std::time::SystemTime::now().hash(&mut h);
-    std::thread::current().id().hash(&mut h);
-    h.finish()
+    Uuid::new_v4().simple().to_string()
 }
 
 #[cfg(test)]

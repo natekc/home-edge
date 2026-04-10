@@ -8,7 +8,7 @@ use ha_types::core_state::{CoreState, CoreStateResponse, RecorderState};
 use ha_types::entity::State;
 
 #[cfg(feature = "transport_wifi")]
-use crate::auth_store::{AuthStore, AuthUser};
+use crate::auth_store::AuthStore;
 use crate::config::AppConfig;
 use crate::service::{
     ServiceCall, ServiceDomainCatalog, ServiceError, ServiceOutcome, ServiceRegistry,
@@ -424,6 +424,8 @@ pub struct ConfigSummary<'a> {
 pub struct OnboardingProgress {
     pub user_done: bool,
     pub core_config_done: bool,
+    pub analytics_done: bool,
+    pub integration_done: bool,
     pub onboarded: bool,
 }
 
@@ -433,6 +435,8 @@ impl OnboardingProgress {
         Self {
             user_done: state.step_done("user"),
             core_config_done: state.step_done("core_config"),
+            analytics_done: state.step_done("analytics"),
+            integration_done: state.step_done("integration"),
             onboarded: state.onboarded,
         }
     }
@@ -480,6 +484,20 @@ pub enum CompleteCoreConfigOutcome {
     Completed,
     CoreConfigStepAlreadyDone,
     UserStepRequired,
+}
+
+#[cfg(feature = "transport_wifi")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompleteAnalyticsOutcome {
+    Completed,
+    AlreadyDone,
+}
+
+#[cfg(feature = "transport_wifi")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompleteIntegrationOutcome {
+    Completed,
+    AlreadyDone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -918,7 +936,7 @@ impl AppCore {
 
         self.sync_runtime_mode_from_onboarding(&next);
 
-        auth.save_user(&AuthUser {
+        auth.save_user(&StoredUser {
             name: input.name.clone(),
             username: input.username.clone(),
             password: input.password.clone(),
@@ -965,6 +983,42 @@ impl AppCore {
     }
 
     #[cfg(feature = "transport_wifi")]
+    pub async fn complete_onboarding_analytics(
+        &self,
+        storage: &Storage,
+    ) -> Result<CompleteAnalyticsOutcome> {
+        let current = self.load_onboarding_state(storage).await?;
+        if current.step_done("analytics") {
+            return Ok(CompleteAnalyticsOutcome::AlreadyDone);
+        }
+        storage
+            .update_onboarding(|state| {
+                state.done.push("analytics".into());
+                Ok(())
+            })
+            .await?;
+        Ok(CompleteAnalyticsOutcome::Completed)
+    }
+
+    #[cfg(feature = "transport_wifi")]
+    pub async fn complete_onboarding_integration(
+        &self,
+        storage: &Storage,
+    ) -> Result<CompleteIntegrationOutcome> {
+        let current = self.load_onboarding_state(storage).await?;
+        if current.step_done("integration") {
+            return Ok(CompleteIntegrationOutcome::AlreadyDone);
+        }
+        storage
+            .update_onboarding(|state| {
+                state.done.push("integration".into());
+                Ok(())
+            })
+            .await?;
+        Ok(CompleteIntegrationOutcome::Completed)
+    }
+
+    #[cfg(feature = "transport_wifi")]
     pub async fn complete_onboarding(
         &self,
         storage: &Storage,
@@ -987,7 +1041,7 @@ impl AppCore {
         auth: &AuthStore,
         input: &AuthorizeBootstrapInput,
     ) -> Result<()> {
-        let auth_user = AuthUser {
+        let auth_user = StoredUser {
             name: input.display_name.clone(),
             username: input.username.clone(),
             password: input.password.clone(),
@@ -996,7 +1050,7 @@ impl AppCore {
 
         let next = storage
             .update_onboarding(|current| {
-                current.user = Some(StoredUser::from(&auth_user));
+                current.user = Some(auth_user.clone());
                 current.location_name = Some(input.location_name.clone());
                 current.language = Some(input.language.clone());
                 current.done = vec!["user".into(), "core_config".into()];
@@ -1015,7 +1069,7 @@ impl AppCore {
         &self,
         auth: &AuthStore,
         storage: &Storage,
-    ) -> Result<Option<AuthUser>> {
+    ) -> Result<Option<StoredUser>> {
         let onboarding = self.load_onboarding_state(storage).await?;
         self.sync_runtime_mode_from_onboarding(&onboarding);
         auth.load_user_with_legacy_fallback(storage).await

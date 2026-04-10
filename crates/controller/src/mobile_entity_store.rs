@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
@@ -64,7 +64,7 @@ impl MobileEntityStore {
 
         let _guard = self.lock.lock().await;
         let path = self.path();
-        let mut data = self.load_data_locked().await?;
+        let mut data = self.load_locked().await?;
         let key = store_key(
             &registration.webhook_id,
             &registration.entity_type,
@@ -95,7 +95,7 @@ impl MobileEntityStore {
 
         data.entities.insert(key, record.clone());
         save_json_atomic(&path, &data).await?;
-        self.store_cache(&data).await;
+        *self.cache.write().await = Some(data.clone());
         Ok(record)
     }
 
@@ -133,10 +133,10 @@ impl MobileEntityStore {
         }
 
         let _guard = self.lock.lock().await;
-        self.load_data_locked().await
+        self.load_locked().await
     }
 
-    async fn load_data_locked(&self) -> Result<MobileEntityStoreData> {
+    async fn load_locked(&self) -> Result<MobileEntityStoreData> {
         if let Some(data) = self.cache.read().await.clone() {
             return Ok(data);
         }
@@ -150,33 +150,23 @@ impl MobileEntityStore {
             }
             Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
         }?;
-        self.store_cache(&data).await;
-        Ok(data)
-    }
-
-    async fn store_cache(&self, data: &MobileEntityStoreData) {
         *self.cache.write().await = Some(data.clone());
+        Ok(data)
     }
 }
 
 fn validate_registration(registration: &MobileEntityRegistration) -> Result<()> {
     if registration.webhook_id.is_empty() {
-        return Err(anyhow!("webhook_id must not be empty"));
+        bail!("webhook_id must not be empty");
     }
     if registration.sensor_unique_id.is_empty() {
-        return Err(anyhow!("sensor_unique_id must not be empty"));
+        bail!("sensor_unique_id must not be empty");
     }
     if registration.sensor_name.is_empty() {
-        return Err(anyhow!("sensor_name must not be empty"));
+        bail!("sensor_name must not be empty");
     }
-    if !matches!(
-        registration.entity_type.as_str(),
-        "sensor" | "binary_sensor"
-    ) {
-        return Err(anyhow!(
-            "unsupported mobile entity type: {}",
-            registration.entity_type
-        ));
+    if !matches!(registration.entity_type.as_str(), "sensor" | "binary_sensor") {
+        bail!("unsupported mobile entity type: {}", registration.entity_type);
     }
     Ok(())
 }
@@ -223,21 +213,8 @@ fn sanitize_object_id(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
-
-    fn temp_dir(prefix: &str) -> PathBuf {
-        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("home-edge-{prefix}-{nanos}-{unique}"))
-    }
+    use crate::storage::temp_dir;
 
     fn registration(
         webhook_id: &str,
