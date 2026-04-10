@@ -282,6 +282,18 @@ fn deserialize_u128_or_now<'de, D: Deserializer<'de>>(de: D) -> Result<u128, D::
 }
 
 #[cfg(test)]
+pub(crate) fn temp_dir(prefix: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("home-edge-{prefix}-{nanos}-{unique}"))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

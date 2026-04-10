@@ -59,6 +59,7 @@ impl AppState {
         let auth = AuthStore::new(storage.root().to_path_buf());
         let mobile_devices = MobileDeviceStore::new(storage.root().to_path_buf());
         let mobile_entities = MobileEntityStore::new(storage.root().to_path_buf());
+        let tokens = TokenStore::new(storage.root().to_path_buf());
         Self {
             core: AppCore::new(),
             auth,
@@ -67,7 +68,7 @@ impl AppState {
             config,
             storage,
             states: StateStore::new(),
-            tokens: TokenStore::new(),
+            tokens,
             flows: LoginFlowStore::new(),
             webhooks: WebhookStore::new(),
             services: ServiceRegistry::new(),

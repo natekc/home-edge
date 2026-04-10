@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ha_types::context::Context;
 use ha_types::entity::State;
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 /// A state change event broadcast when a state is inserted or updated.
 /// Source: homeassistant/core.py  Event(EVENT_STATE_CHANGED)
@@ -227,23 +228,7 @@ pub fn make_state_with_context(
 }
 
 fn new_context_id() -> String {
-    // Generate a simple random-ish 26-char ULID-compatible placeholder.
-    // A real implementation would use a proper ULID library.
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    format!("{ms:020X}{:06X}", pseudo_rand())
-}
-
-fn pseudo_rand() -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    std::time::SystemTime::now().hash(&mut h);
-    std::thread::current().id().hash(&mut h);
-    h.finish()
+    Uuid::new_v4().simple().to_string()
 }
 
 #[cfg(test)]

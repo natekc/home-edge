@@ -8,7 +8,7 @@ use ha_types::core_state::{CoreState, CoreStateResponse, RecorderState};
 use ha_types::entity::State;
 
 #[cfg(feature = "transport_wifi")]
-use crate::auth_store::{AuthStore, AuthUser};
+use crate::auth_store::AuthStore;
 use crate::config::AppConfig;
 use crate::service::{
     ServiceCall, ServiceDomainCatalog, ServiceError, ServiceOutcome, ServiceRegistry,
@@ -936,7 +936,7 @@ impl AppCore {
 
         self.sync_runtime_mode_from_onboarding(&next);
 
-        auth.save_user(&AuthUser {
+        auth.save_user(&StoredUser {
             name: input.name.clone(),
             username: input.username.clone(),
             password: input.password.clone(),
@@ -1041,7 +1041,7 @@ impl AppCore {
         auth: &AuthStore,
         input: &AuthorizeBootstrapInput,
     ) -> Result<()> {
-        let auth_user = AuthUser {
+        let auth_user = StoredUser {
             name: input.display_name.clone(),
             username: input.username.clone(),
             password: input.password.clone(),
@@ -1050,7 +1050,7 @@ impl AppCore {
 
         let next = storage
             .update_onboarding(|current| {
-                current.user = Some(StoredUser::from(&auth_user));
+                current.user = Some(auth_user.clone());
                 current.location_name = Some(input.location_name.clone());
                 current.language = Some(input.language.clone());
                 current.done = vec!["user".into(), "core_config".into()];
@@ -1069,7 +1069,7 @@ impl AppCore {
         &self,
         auth: &AuthStore,
         storage: &Storage,
-    ) -> Result<Option<AuthUser>> {
+    ) -> Result<Option<StoredUser>> {
         let onboarding = self.load_onboarding_state(storage).await?;
         self.sync_runtime_mode_from_onboarding(&onboarding);
         auth.load_user_with_legacy_fallback(storage).await

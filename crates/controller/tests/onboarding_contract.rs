@@ -19,7 +19,9 @@ async fn onboarding_status_returns_step_progress() {
         json,
         json!([
             {"step": "user", "done": false},
-            {"step": "core_config", "done": false}
+            {"step": "core_config", "done": false},
+            {"step": "analytics", "done": false},
+            {"step": "integration", "done": false}
         ])
     );
 }
@@ -62,7 +64,9 @@ async fn onboarding_users_creates_first_user_and_returns_auth_code() {
         progress,
         json!([
             {"step": "user", "done": true},
-            {"step": "core_config", "done": false}
+            {"step": "core_config", "done": false},
+            {"step": "analytics", "done": false},
+            {"step": "integration", "done": false}
         ])
     );
 }
@@ -139,7 +143,9 @@ async fn onboarding_core_config_marks_system_onboarded() {
         progress,
         json!([
             {"step": "user", "done": true},
-            {"step": "core_config", "done": true}
+            {"step": "core_config", "done": true},
+            {"step": "analytics", "done": false},
+            {"step": "integration", "done": false}
         ])
     );
 
@@ -209,7 +215,7 @@ async fn login_flow_uses_dedicated_auth_store_when_onboarding_user_missing() {
     let (server, state) = support::test_server_and_state(onboarding).await;
     state
         .auth
-        .save_user(&home_edge::auth_store::AuthUser {
+        .save_user(&home_edge::storage::StoredUser {
             name: "Test Name".into(),
             username: "test-user".into(),
             password: "test-pass".into(),

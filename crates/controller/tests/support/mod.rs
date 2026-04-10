@@ -6,7 +6,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum_test::{TestServer, TestServerConfig, Transport};
 use home_edge::app::AppState;
-use home_edge::auth_store::AuthUser;
 use home_edge::config::{AppConfig, ServerConfig, StorageConfig, UiConfig};
 use home_edge::http;
 use home_edge::storage::{OnboardingState, Storage, StoredUser};
@@ -139,7 +138,7 @@ async fn build_server_and_state(
     if let Some(user) = onboarding.user.as_ref() {
         state
             .auth
-            .save_user(&AuthUser::from(user))
+            .save_user(user)
             .await
             .expect("save auth user");
     }
