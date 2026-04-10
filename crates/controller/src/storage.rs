@@ -180,50 +180,15 @@ impl Storage {
 }
 
 pub(crate) async fn save_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("missing parent dir for {}", path.display()))?;
-    tokio::fs::create_dir_all(parent)
-        .await
-        .with_context(|| format!("failed to create {}", parent.display()))?;
-
-    let tmp_path = path.with_extension("tmp");
-    let serialized = serde_json::to_vec_pretty(value).context("failed to serialize state")?;
-    let final_parent = parent.to_path_buf();
-    let final_path = path.to_path_buf();
-    let final_tmp = tmp_path.clone();
-
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        use std::fs::{self, File};
-        use std::io::Write;
-
-        let mut file = File::create(&final_tmp)
-            .with_context(|| format!("failed to create {}", final_tmp.display()))?;
-        file.write_all(&serialized)
-            .with_context(|| format!("failed to write {}", final_tmp.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to sync {}", final_tmp.display()))?;
-        fs::rename(&final_tmp, &final_path).with_context(|| {
-            format!(
-                "failed to rename {} to {}",
-                final_tmp.display(),
-                final_path.display()
-            )
-        })?;
-
-        File::open(&final_parent)
-            .with_context(|| format!("failed to open {}", final_parent.display()))?
-            .sync_all()
-            .with_context(|| format!("failed to sync dir {}", final_parent.display()))?;
-        Ok(())
-    })
-    .await
-    .context("atomic write task failed")??;
-
-    Ok(())
+    let bytes = serde_json::to_vec_pretty(value).context("failed to serialize state")?;
+    save_bytes_atomic(path, bytes).await
 }
 
 async fn save_text_atomic(path: &Path, value: &str) -> Result<()> {
+    save_bytes_atomic(path, value.as_bytes().to_vec()).await
+}
+
+async fn save_bytes_atomic(path: &Path, bytes: Vec<u8>) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("missing parent dir for {}", path.display()))?;
@@ -232,7 +197,6 @@ async fn save_text_atomic(path: &Path, value: &str) -> Result<()> {
         .with_context(|| format!("failed to create {}", parent.display()))?;
 
     let tmp_path = path.with_extension("tmp");
-    let serialized = value.as_bytes().to_vec();
     let final_parent = parent.to_path_buf();
     let final_path = path.to_path_buf();
     let final_tmp = tmp_path.clone();
@@ -243,7 +207,7 @@ async fn save_text_atomic(path: &Path, value: &str) -> Result<()> {
 
         let mut file = File::create(&final_tmp)
             .with_context(|| format!("failed to create {}", final_tmp.display()))?;
-        file.write_all(&serialized)
+        file.write_all(&bytes)
             .with_context(|| format!("failed to write {}", final_tmp.display()))?;
         file.sync_all()
             .with_context(|| format!("failed to sync {}", final_tmp.display()))?;

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
@@ -157,22 +157,16 @@ impl MobileEntityStore {
 
 fn validate_registration(registration: &MobileEntityRegistration) -> Result<()> {
     if registration.webhook_id.is_empty() {
-        return Err(anyhow!("webhook_id must not be empty"));
+        bail!("webhook_id must not be empty");
     }
     if registration.sensor_unique_id.is_empty() {
-        return Err(anyhow!("sensor_unique_id must not be empty"));
+        bail!("sensor_unique_id must not be empty");
     }
     if registration.sensor_name.is_empty() {
-        return Err(anyhow!("sensor_name must not be empty"));
+        bail!("sensor_name must not be empty");
     }
-    if !matches!(
-        registration.entity_type.as_str(),
-        "sensor" | "binary_sensor"
-    ) {
-        return Err(anyhow!(
-            "unsupported mobile entity type: {}",
-            registration.entity_type
-        ));
+    if !matches!(registration.entity_type.as_str(), "sensor" | "binary_sensor") {
+        bail!("unsupported mobile entity type: {}", registration.entity_type);
     }
     Ok(())
 }

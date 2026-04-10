@@ -12,6 +12,7 @@ transport_ble = []
 
 [dependencies]
 anyhow.workspace = true
+thiserror.workspace = true
 axum.workspace = true
 clap.workspace = true
 ha-types.workspace = true

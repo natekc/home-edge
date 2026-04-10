@@ -5,7 +5,7 @@ use ha_types::entity::State;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use crate::state_store::{StateAttributes, StateStore, make_state_with_context};
+use crate::state_store::{StateAttributes, StateError, StateStore, make_state_with_context};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupportsResponse {
@@ -162,12 +162,17 @@ pub struct ServiceOutcome {
     pub response: Option<Value>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ServiceError {
+    #[error("Service {domain}.{service} not found.")]
     NotFound { domain: String, service: String },
+    #[error("{0}")]
     InvalidFormat(String),
+    #[error("{0}")]
     ServiceValidation(String),
+    #[error("{0}")]
     HomeAssistant(String),
+    #[error("{0}")]
     Unknown(String),
 }
 
@@ -182,23 +187,11 @@ impl ServiceError {
         }
     }
 
-    pub fn message(&self) -> String {
-        match self {
-            Self::NotFound { domain, service } => {
-                format!("Service {domain}.{service} not found.")
-            }
-            Self::InvalidFormat(message)
-            | Self::ServiceValidation(message)
-            | Self::HomeAssistant(message)
-            | Self::Unknown(message) => message.clone(),
-        }
-    }
-
     pub fn as_json(&self) -> Value {
         match self {
             Self::NotFound { domain, service } => json!({
                 "code": self.code(),
-                "message": self.message(),
+                "message": self.to_string(),
                 "translation_key": "service_not_found",
                 "translation_domain": "homeassistant",
                 "translation_placeholders": {
@@ -208,9 +201,15 @@ impl ServiceError {
             }),
             _ => json!({
                 "code": self.code(),
-                "message": self.message()
+                "message": self.to_string()
             }),
         }
+    }
+}
+
+impl From<StateError> for ServiceError {
+    fn from(e: StateError) -> Self {
+        ServiceError::InvalidFormat(e.to_string())
     }
 }
 
@@ -322,9 +321,7 @@ fn set_entities_state(
             StateAttributes::from_hash(attributes),
             request.context.clone(),
         );
-        states
-            .set(new_state.clone())
-            .map_err(ServiceError::InvalidFormat)?;
+        states.set(new_state.clone())?;
         changed_states.push(new_state);
     }
     Ok(ServiceOutcome {

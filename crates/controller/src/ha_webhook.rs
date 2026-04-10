@@ -514,6 +514,7 @@ fn apply_sensor_state(
     state
         .states
         .set(make_state(&record.entity_id, state_value, StateAttributes::from_hash(attributes)))
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,14 @@ pub struct StateEvent {
     pub old_state: Option<State>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum StateError {
+    #[error("invalid entity ID: {0}")]
+    InvalidEntityId(String),
+    #[error("state value exceeds maximum length of 255")]
+    StateTooLong,
+}
+
 /// Thread-safe in-memory entity state store.
 pub struct StateStore {
     states: RwLock<HashMap<String, State>>,
@@ -57,12 +65,12 @@ impl StateStore {
     ///
     /// Returns Err if the entity_id is invalid.
     /// Source: homeassistant/core.py  StateMachine.async_set / valid_entity_id
-    pub fn set(&self, state: State) -> Result<(), String> {
+    pub fn set(&self, state: State) -> Result<(), StateError> {
         if !State::is_valid_entity_id(&state.entity_id) {
-            return Err(format!("Invalid entity ID: {}", state.entity_id));
+            return Err(StateError::InvalidEntityId(state.entity_id.clone()));
         }
         if state.state.len() > 255 {
-            return Err("State value exceeds maximum length of 255".into());
+            return Err(StateError::StateTooLong);
         }
         let old_state = {
             let mut lock = self.states.write().expect("state lock poisoned");

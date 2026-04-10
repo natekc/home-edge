@@ -25,6 +25,22 @@ const STEP_CORE_CONFIG: &str = "core_config";
 const STEP_ANALYTICS: &str = "analytics";
 const STEP_INTEGRATION: &str = "integration";
 
+fn internal_error(err: &anyhow::Error) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse::new(format!("{err:#}"))),
+    )
+        .into_response()
+}
+
+fn forbidden(msg: &'static str) -> Response {
+    (StatusCode::FORBIDDEN, Json(ErrorResponse::new(msg.into()))).into_response()
+}
+
+fn unauthorized(msg: &'static str) -> Response {
+    (StatusCode::UNAUTHORIZED, Json(ErrorResponse::new(msg.into()))).into_response()
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         // HA-compatible REST API surface
@@ -62,11 +78,7 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
             (StatusCode::TEMPORARY_REDIRECT, headers).into_response()
         }
         Ok(_) => Html(render_shell(&state.config.ui.product_name, true)).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to load onboarding state: {err:#}"),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -81,11 +93,7 @@ async fn onboarding_page(State(state): State<Arc<AppState>>) -> impl IntoRespons
     match state.core.onboarding_progress(&state.storage).await {
         Ok(progress) => Html(render_shell(&state.config.ui.product_name, progress.onboarded))
         .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to load onboarding state: {err:#}"),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -98,11 +106,7 @@ async fn onboarding_status(State(state): State<Arc<AppState>>) -> impl IntoRespo
             json!({"step": STEP_INTEGRATION, "done": progress.integration_done}),
         ])
         .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!("failed to load state: {err:#}"))),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -110,11 +114,7 @@ async fn onboarding_installation_type(State(state): State<Arc<AppState>>) -> imp
     match state.core.onboarding_progress(&state.storage).await {
         Ok(progress) if progress.onboarded => StatusCode::UNAUTHORIZED.into_response(),
         Ok(_) => Json(json!({"installation_type": "Home Edge"})).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!("failed to load state: {err:#}"))),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -168,18 +168,8 @@ async fn create_onboarding_user(
             let auth_code = state.tokens.issue_auth_code(&body.client_id).await;
             (StatusCode::OK, Json(json!({"auth_code": auth_code}))).into_response()
         }
-        Ok(CreateOnboardingUserOutcome::UserStepAlreadyDone) => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("User step already done".into())),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!(
-                "failed to persist user: {err:#}"
-            ))),
-        )
-            .into_response(),
+        Ok(CreateOnboardingUserOutcome::UserStepAlreadyDone) => forbidden("User step already done"),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -214,25 +204,9 @@ async fn complete_core_config(
         Ok(CompleteCoreConfigOutcome::Completed) => {
             (StatusCode::OK, Json(json!({}))).into_response()
         }
-        Ok(CompleteCoreConfigOutcome::CoreConfigStepAlreadyDone) => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("Core config step already done".into())),
-        )
-            .into_response(),
-        Ok(CompleteCoreConfigOutcome::UserStepRequired) => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new(
-                "User step must be completed first".into(),
-            )),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!(
-                "failed to persist core config: {err:#}"
-            ))),
-        )
-            .into_response(),
+        Ok(CompleteCoreConfigOutcome::CoreConfigStepAlreadyDone) => forbidden("Core config step already done"),
+        Ok(CompleteCoreConfigOutcome::UserStepRequired) => forbidden("User step must be completed first"),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -259,20 +233,10 @@ async fn complete_analytics(
 ) -> impl IntoResponse {
     let token = match extract_bearer(&headers) {
         Some(t) => t,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse::new("Missing or invalid Bearer token".into())),
-            )
-                .into_response();
-        }
+        None => return unauthorized("Missing or invalid Bearer token"),
     };
     if state.tokens.validate_access_token(&token).await.is_none() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse::new("Invalid access token".into())),
-        )
-            .into_response();
+        return unauthorized("Invalid access token");
     }
     match state
         .core
@@ -282,16 +246,8 @@ async fn complete_analytics(
         Ok(CompleteAnalyticsOutcome::Completed) => {
             (StatusCode::OK, Json(json!({}))).into_response()
         }
-        Ok(CompleteAnalyticsOutcome::AlreadyDone) => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("Analytics step already done".into())),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!("failed to persist analytics step: {err:#}"))),
-        )
-            .into_response(),
+        Ok(CompleteAnalyticsOutcome::AlreadyDone) => forbidden("Analytics step already done"),
+        Err(err) => internal_error(&err),
     }
 }
 
@@ -304,20 +260,10 @@ async fn complete_integration(
 ) -> impl IntoResponse {
     let token = match extract_bearer(&headers) {
         Some(t) => t,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse::new("Missing or invalid Bearer token".into())),
-            )
-                .into_response();
-        }
+        None => return unauthorized("Missing or invalid Bearer token"),
     };
     if state.tokens.validate_access_token(&token).await.is_none() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse::new("Invalid access token".into())),
-        )
-            .into_response();
+        return unauthorized("Invalid access token");
     }
     if body.client_id.is_empty() || body.redirect_uri.is_empty() {
         return (
@@ -335,29 +281,15 @@ async fn complete_integration(
             let auth_code = state.tokens.issue_auth_code(&body.client_id).await;
             (StatusCode::OK, Json(json!({"auth_code": auth_code}))).into_response()
         }
-        Ok(CompleteIntegrationOutcome::AlreadyDone) => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse::new("Integration step already done".into())),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!("failed to persist integration step: {err:#}"))),
-        )
-            .into_response(),
+        Ok(CompleteIntegrationOutcome::AlreadyDone) => forbidden("Integration step already done"),
+        Err(err) => internal_error(&err),
     }
 }
 
 async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.core.complete_onboarding(&state.storage).await {
         Ok(next) => Json(next).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(format!(
-                "failed to persist state: {err:#}"
-            ))),
-        )
-            .into_response(),
+        Err(err) => internal_error(&err),
     }
 }
 

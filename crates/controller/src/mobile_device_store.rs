@@ -7,6 +7,10 @@ use uuid::Uuid;
 
 use crate::storage::save_json_atomic;
 
+fn new_secret() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
 #[derive(Debug, Clone)]
 pub struct MobileDeviceRegistration {
     pub app_id: String,
@@ -64,7 +68,6 @@ impl MobileDeviceStore {
         registration: MobileDeviceRegistration,
     ) -> Result<MobileDeviceRecord> {
         let _guard = self.lock.lock().await;
-        let path = self.path();
         let mut data = self.load_locked().await?;
 
         if let Some(device_id) = registration.device_id.as_deref() {
@@ -73,15 +76,9 @@ impl MobileDeviceStore {
                     && device.app_id == registration.app_id
             }) {
                 let current = data.devices[index].clone();
-                let secret = if current.secret.is_none() && registration.supports_encryption {
-                    Some(format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()))
-                } else {
-                    current.secret.clone()
-                };
+                let secret = current.secret.clone().or_else(|| registration.supports_encryption.then(new_secret));
                 let updated = MobileDeviceRecord {
-                    webhook_id: current.webhook_id.clone(),
                     secret,
-                    app_id: current.app_id.clone(),
                     app_name: registration.app_name,
                     app_version: registration.app_version,
                     device_name: registration.device_name,
@@ -89,9 +86,9 @@ impl MobileDeviceStore {
                     model: registration.model,
                     os_name: registration.os_name,
                     os_version: registration.os_version,
-                    device_id: current.device_id.clone(),
                     supports_encryption: registration.supports_encryption,
                     owner_username: registration.owner_username,
+                    ..current.clone()
                 };
 
                 if current == updated {
@@ -99,15 +96,14 @@ impl MobileDeviceStore {
                 }
 
                 data.devices[index] = updated.clone();
-                save_json_atomic(&path, &data).await?;
-                *self.cache.write().await = Some(data.clone());
+                self.save(&data).await?;
                 return Ok(updated);
             }
         }
 
         let record = MobileDeviceRecord {
             webhook_id: Uuid::new_v4().simple().to_string(),
-            secret: registration.supports_encryption.then(|| format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())),
+            secret: registration.supports_encryption.then(new_secret),
             app_id: registration.app_id,
             app_name: registration.app_name,
             app_version: registration.app_version,
@@ -121,9 +117,14 @@ impl MobileDeviceStore {
             owner_username: registration.owner_username,
         };
         data.devices.push(record.clone());
-        save_json_atomic(&path, &data).await?;
-        *self.cache.write().await = Some(data.clone());
+        self.save(&data).await?;
         Ok(record)
+    }
+
+    async fn save(&self, data: &MobileDeviceStoreData) -> Result<()> {
+        save_json_atomic(&self.path(), data).await?;
+        *self.cache.write().await = Some(data.clone());
+        Ok(())
     }
 
     pub async fn get_by_webhook_id(&self, webhook_id: &str) -> Result<Option<MobileDeviceRecord>> {

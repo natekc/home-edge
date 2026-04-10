@@ -29,16 +29,10 @@ pub async fn announce(state: &AppState) -> Result<Option<ZeroconfRegistration>> 
         return Ok(None);
     }
 
-    let onboarding = state
-        .storage
-        .load_onboarding()
-        .await
-        .context("load onboarding for zeroconf")?;
-    let instance_id = state
-        .storage
-        .load_or_create_instance_id()
-        .await
-        .context("load instance id for zeroconf")?;
+    let (onboarding, instance_id) = tokio::try_join!(
+        async { state.storage.load_onboarding().await.context("load onboarding for zeroconf") },
+        async { state.storage.load_or_create_instance_id().await.context("load instance id for zeroconf") },
+    )?;
 
     let service = build_service_info(&state.config, &onboarding, &instance_id, &addresses)?;
     let daemon = ServiceDaemon::new().context("create zeroconf daemon")?;
