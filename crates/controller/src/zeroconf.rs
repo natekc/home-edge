@@ -146,6 +146,7 @@ mod tests {
             server: ServerConfig {
                 host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 port: 8124,
+                log_level: tracing::Level::INFO,
             },
             storage: StorageConfig {
                 data_dir: PathBuf::from("/tmp/home-edge-test"),
@@ -154,6 +155,7 @@ mod tests {
                 product_name: "Home Edge".into(),
             },
             areas: crate::config::AreasConfig::default(),
+            history: crate::config::HistoryConfig::default(),
         }
     }
 
