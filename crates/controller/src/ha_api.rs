@@ -20,10 +20,11 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use serde_json::{Map, Value, json};
 
-use ha_types::api::ApiStatusResponse;
+use ha_types::api::{ApiConfigResponse, ApiStatusResponse, UnitSystem};
 
 use crate::app::AppState;
 use crate::core::{Consistency, CoreDeps, DeadlineClass, OperationError, OperationMeta, OperationRequest, OperationResult, PageRequest, StateFilter};
+use crate::storage::OnboardingState;
 use crate::service::{ServiceCall, ServiceData, ServiceError, ServiceTarget};
 use crate::state_store::StateAttributes;
 
@@ -90,17 +91,33 @@ async fn api_core_state(State(_state): State<Arc<AppState>>) -> impl IntoRespons
 ///
 /// Source: homeassistant/components/api/__init__.py  APIConfigView.get
 async fn api_config(State(state): State<Arc<AppState>>) -> Response {
-    match state.core.execute(
-        CoreDeps {
-            config: &state.config,
-            states: &state.states,
-            services: &state.services,
-        },
-        OperationRequest::GetConfigSummary,
-    ) {
-        OperationResult::ConfigSummary(cfg) => (StatusCode::OK, Json(cfg)).into_response(),
-        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+    let onboarding = match state.storage.load_onboarding().await {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("Failed to load onboarding state for /api/config: {e:#}");
+            OnboardingState::default()
+        }
+    };
+    let unit_system = match onboarding.unit_system.as_deref().unwrap_or("metric") {
+        "us_customary" => UnitSystem::us_customary(),
+        _ => UnitSystem::metric(),
+    };
+    let cfg = ApiConfigResponse {
+        version: env!("CARGO_PKG_VERSION").into(),
+        location_name: onboarding
+            .location_name
+            .unwrap_or_else(|| state.config.ui.product_name.clone()),
+        time_zone: onboarding.time_zone.unwrap_or_else(|| "UTC".into()),
+        language: onboarding.language.unwrap_or_else(|| "en".into()),
+        latitude: 0.0,
+        longitude: 0.0,
+        elevation: 0.0,
+        unit_system,
+        state: "RUNNING".into(),
+        components: vec!["api".into(), "core".into()],
+        whitelist_external_dirs: vec![],
+    };
+    (StatusCode::OK, Json(cfg)).into_response()
 }
 
 /// GET /api/states

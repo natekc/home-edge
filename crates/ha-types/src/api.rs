@@ -89,6 +89,21 @@ impl UnitSystem {
             wind_speed: "m/s".into(),
         }
     }
+
+    /// US customary unit system.
+    ///
+    /// Source: homeassistant/util/unit_system.py  US_CUSTOMARY_SYSTEM
+    pub fn us_customary() -> Self {
+        Self {
+            length: "mi".into(),
+            accumulated_precipitation: "in".into(),
+            mass: "lb".into(),
+            pressure: "psi".into(),
+            temperature: "°F".into(),
+            volume: "gal".into(),
+            wind_speed: "mph".into(),
+        }
+    }
 }
 
 #[cfg(test)]
