@@ -54,15 +54,42 @@ fn onboarding_required_response() -> Response {
 // Token store — holds short-lived access tokens and refresh tokens
 // ---------------------------------------------------------------------------
 
+/// How long an access token is considered valid (matches `expires_in` returned
+/// to clients).  Source: homeassistant/auth/__init__.py ACCESS_TOKEN_EXPIRATION
+const ACCESS_TOKEN_TTL_SECS: u64 = 1800;
+
+/// Returns the current UTC time as Unix seconds.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Per-token metadata stored in the persisted access-token map.
+#[derive(Clone, Serialize, Deserialize)]
+struct PersistedAccessToken {
+    client_id: String,
+    /// UTC Unix seconds at which the token was issued.
+    issued_at: u64,
+}
+
 /// On-disk representation — refresh tokens and access tokens survive restarts.
 /// Auth codes are intentionally ephemeral (one-time use).
+///
+/// **Schema migration note:** changing `access_tokens` values from bare `String`
+/// (< 0.2.0) to `PersistedAccessToken` objects causes serde to fail the
+/// *entire* `PersistedTokens` deserialization when an old file is read;
+/// `unwrap_or_default()` then returns empty maps, forcing all sessions to
+/// re-authenticate. This is the intended behavior — upgrade = re-login.
 #[derive(Default, Serialize, Deserialize)]
 struct PersistedTokens {
     /// refresh_token → client_id
     refresh_tokens: HashMap<String, String>,
-    /// access_token → client_id
+    /// access_token → metadata (new format; old `String`-valued files are
+    /// treated as empty on load, forcing re-login once after upgrade).
     #[serde(default)]
-    access_tokens: HashMap<String, String>,
+    access_tokens: HashMap<String, PersistedAccessToken>,
 }
 
 /// Opaque token registry kept in AppState.
@@ -71,13 +98,20 @@ pub struct TokenStore {
     inner: Mutex<TokenStoreInner>,
 }
 
+/// In-memory access token entry.
+#[derive(Clone)]
+struct AccessTokenEntry {
+    client_id: String,
+    issued_at: u64,
+}
+
 struct TokenStoreInner {
     /// auth_code → client_id (one-time use, expires quickly in production)
     auth_codes: HashMap<String, String>,
     /// refresh_token → client_id
     refresh_tokens: HashMap<String, String>,
-    /// access_token → client_id
-    access_tokens: HashMap<String, String>,
+    /// access_token → entry (client_id + issue timestamp)
+    access_tokens: HashMap<String, AccessTokenEntry>,
 }
 
 impl TokenStore {
@@ -102,7 +136,13 @@ impl TokenStore {
                     serde_json::from_str(&contents).unwrap_or_default();
                 let mut inner = self.inner.lock().await;
                 inner.refresh_tokens = persisted.refresh_tokens;
-                inner.access_tokens = persisted.access_tokens;
+                inner.access_tokens = persisted
+                    .access_tokens
+                    .into_iter()
+                    .map(|(token, entry)| {
+                        (token, AccessTokenEntry { client_id: entry.client_id, issued_at: entry.issued_at })
+                    })
+                    .collect();
                 Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -120,7 +160,16 @@ impl TokenStore {
             let inner = self.inner.lock().await;
             PersistedTokens {
                 refresh_tokens: inner.refresh_tokens.clone(),
-                access_tokens: inner.access_tokens.clone(),
+                access_tokens: inner
+                    .access_tokens
+                    .iter()
+                    .map(|(token, entry)| {
+                        (token.clone(), PersistedAccessToken {
+                            client_id: entry.client_id.clone(),
+                            issued_at: entry.issued_at,
+                        })
+                    })
+                    .collect(),
             }
         };
         let path = self.root.join(TOKENS_FILE);
@@ -152,9 +201,10 @@ impl TokenStore {
             inner
                 .refresh_tokens
                 .insert(refresh_token.clone(), client_id.to_string());
-            inner
-                .access_tokens
-                .insert(access_token.clone(), client_id.to_string());
+            inner.access_tokens.insert(access_token.clone(), AccessTokenEntry {
+                client_id: client_id.to_string(),
+                issued_at: now_unix_secs(),
+            });
             (access_token, refresh_token)
         };
         self.save_persisted().await;
@@ -181,9 +231,10 @@ impl TokenStore {
                 }
             }
             let access_token = new_token();
-            inner
-                .access_tokens
-                .insert(access_token.clone(), stored_client);
+            inner.access_tokens.insert(access_token.clone(), AccessTokenEntry {
+                client_id: stored_client,
+                issued_at: now_unix_secs(),
+            });
             access_token
         };
         self.save_persisted().await;
@@ -196,16 +247,30 @@ impl TokenStore {
         {
             let mut inner = self.inner.lock().await;
             if let Some(client_id) = inner.refresh_tokens.remove(token) {
-                inner.access_tokens.retain(|_, cid| cid != &client_id);
+                inner.access_tokens.retain(|_, entry| entry.client_id != client_id);
             }
         }
         self.save_persisted().await;
     }
 
-    /// Returns `Some(())` if the token is valid, `None` if not found.
+    /// Returns `Some(())` if the token is valid and not yet expired, `None` otherwise.
+    ///
+    /// Tokens older than `ACCESS_TOKEN_TTL_SECS` (1800 s) are treated as expired and
+    /// removed — the client must use its refresh token or re-authenticate.
+    ///
+    /// Expired entries are removed from memory but not persisted immediately; the
+    /// age check (`now - issued_at`) re-applies correctly if the entry is reloaded
+    /// from disk after a restart, so no security gap results.
     pub async fn validate_access_token(&self, token: &str) -> Option<()> {
-        let inner = self.inner.lock().await;
-        inner.access_tokens.contains_key(token).then_some(())
+        let mut inner = self.inner.lock().await;
+        let entry = inner.access_tokens.get(token)?;
+        let age = now_unix_secs().saturating_sub(entry.issued_at);
+        if age > ACCESS_TOKEN_TTL_SECS {
+            tracing::debug!("Access token expired (age={age}s, ttl={ACCESS_TOKEN_TTL_SECS}s)");
+            inner.access_tokens.remove(token);
+            return None;
+        }
+        Some(())
     }
 
 }
@@ -1545,5 +1610,63 @@ mod tests {
         resp.assert_status(StatusCode::BAD_REQUEST);
         let json: Value = resp.json();
         assert_eq!(json["error"], "invalid_grant");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TokenStore unit tests — cover expiry logic that the HTTP-level tests cannot
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod token_store_tests {
+    use super::*;
+
+    fn temp_token_store() -> TokenStore {
+        let dir = std::env::temp_dir().join(format!("token-store-{}", uuid::Uuid::new_v4()));
+        TokenStore::new(dir)
+    }
+
+    /// A token issued at epoch (Jan 1 1970) must be expired immediately.
+    #[tokio::test]
+    async fn expired_token_is_rejected() {
+        let store = temp_token_store();
+        {
+            let mut inner = store.inner.lock().await;
+            inner.access_tokens.insert(
+                "expired-token".into(),
+                AccessTokenEntry { client_id: "c1".into(), issued_at: 0 },
+            );
+        }
+        assert!(
+            store.validate_access_token("expired-token").await.is_none(),
+            "epoch-issued token must be rejected"
+        );
+        // Also verify the entry was evicted from memory.
+        let inner = store.inner.lock().await;
+        assert!(!inner.access_tokens.contains_key("expired-token"), "expired entry must be removed");
+    }
+
+    /// A token issued right now must be accepted.
+    #[tokio::test]
+    async fn fresh_token_is_accepted() {
+        let store = temp_token_store();
+        {
+            let mut inner = store.inner.lock().await;
+            inner.access_tokens.insert(
+                "fresh-token".into(),
+                AccessTokenEntry { client_id: "c1".into(), issued_at: now_unix_secs() },
+            );
+        }
+        assert!(
+            store.validate_access_token("fresh-token").await.is_some(),
+            "just-issued token must be accepted"
+        );
+    }
+
+    /// An unknown token must return None.
+    #[tokio::test]
+    async fn unknown_token_is_rejected() {
+        let store = temp_token_store();
+        assert!(store.validate_access_token("unknown").await.is_none());
     }
 }
