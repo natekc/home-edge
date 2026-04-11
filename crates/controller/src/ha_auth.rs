@@ -577,9 +577,41 @@ async fn auth_authorize_submit(
         }
     };
 
-    let valid = auth_user
-        .as_ref()
-        .is_some_and(|user| form.username == user.username && form.password == user.password);
+    let valid = auth_user.as_ref().is_some_and(|user| {
+        user.username == form.username
+            && crate::auth_store::verify_password(&form.password, &user.password)
+    });
+    // Migrate legacy plaintext password to argon2 hash on first successful login.
+    if valid {
+        if let Some(user) = &auth_user {
+            if !user.password.starts_with("$argon2") {
+                match crate::auth_store::hash_password(&form.password) {
+                    Ok(hashed) => {
+                        let mut upgraded = user.clone();
+                        upgraded.password = hashed.clone();
+                        if let Err(e) = state.auth.save_user(&upgraded).await {
+                            tracing::warn!("Password migration failed (auth_user.json): {e:#}");
+                        }
+                        // Also upgrade the copy stored in onboarding.json.
+                        let h = hashed.clone();
+                        if let Err(e) = state
+                            .storage
+                            .update_onboarding(|ob| {
+                                if let Some(u) = &mut ob.user {
+                                    u.password = h.clone();
+                                }
+                                Ok(())
+                            })
+                            .await
+                        {
+                            tracing::warn!("Password migration failed (onboarding.json): {e:#}");
+                        }
+                    }
+                    Err(e) => tracing::warn!("Password migration hash failed: {e:#}"),
+                }
+            }
+        }
+    }
     if !valid {
         return Html(render_authorize_page(
             &state,
@@ -750,8 +782,45 @@ async fn login_flow_step(
 
     let valid = auth_user.as_ref().is_some_and(|user| {
         body.username.as_deref() == Some(user.username.as_str())
-            && body.password.as_deref() == Some(user.password.as_str())
+            && body.password.as_deref().is_some_and(|p| {
+                crate::auth_store::verify_password(p, &user.password)
+            })
     });
+    // Migrate legacy plaintext password to argon2 hash on first successful login.
+    if valid {
+        if let Some(user) = &auth_user {
+            if !user.password.starts_with("$argon2") {
+                if let Some(p) = body.password.as_deref() {
+                    match crate::auth_store::hash_password(p) {
+                        Ok(hashed) => {
+                            let mut upgraded = user.clone();
+                            upgraded.password = hashed.clone();
+                            if let Err(e) = state.auth.save_user(&upgraded).await {
+                                tracing::warn!("Password migration failed (auth_user.json): {e:#}");
+                            }
+                            // Also upgrade the copy stored in onboarding.json.
+                            let h = hashed.clone();
+                            if let Err(e) = state
+                                .storage
+                                .update_onboarding(|ob| {
+                                    if let Some(u) = &mut ob.user {
+                                        u.password = h.clone();
+                                    }
+                                    Ok(())
+                                })
+                                .await
+                            {
+                                tracing::warn!(
+                                    "Password migration failed (onboarding.json): {e:#}"
+                                );
+                            }
+                        }
+                        Err(e) => tracing::warn!("Password migration hash failed: {e:#}"),
+                    }
+                }
+            }
+        }
+    }
 
     if !valid {
         // Source: DataEntryFlow.async_configure — invalid_auth error

@@ -11,6 +11,8 @@ version = "0.1.0"
 [workspace.dependencies]
 anyhow = "1.0.98"
 thiserror = "2"
+argon2 = { version = "0.5", features = ["password-hash"] }
+rand_core = { version = "0.6", features = ["getrandom", "std"] }
 axum = { version = "0.8.4", default-features = false, features = ["form", "http1", "json", "query", "tokio", "ws"] }
 axum-test = { version = "17", features = ["ws"] }
 clap = { version = "4.5.40", features = ["derive", "env"] }

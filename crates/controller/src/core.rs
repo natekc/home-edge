@@ -920,12 +920,14 @@ impl AppCore {
             return Ok(CreateOnboardingUserOutcome::UserStepAlreadyDone);
         }
 
+        let password_hash = crate::auth_store::hash_password(&input.password)?;
+
         let next = storage
             .update_onboarding(|current| {
                 current.user = Some(StoredUser {
                     name: input.name.clone(),
                     username: input.username.clone(),
-                    password: input.password.clone(),
+                    password: password_hash.clone(),
                     language: input.language.clone(),
                 });
                 current.language = Some(input.language.clone());
@@ -939,7 +941,7 @@ impl AppCore {
         auth.save_user(&StoredUser {
             name: input.name.clone(),
             username: input.username.clone(),
-            password: input.password.clone(),
+            password: password_hash,
             language: input.language.clone(),
         })
         .await?;
@@ -1041,10 +1043,11 @@ impl AppCore {
         auth: &AuthStore,
         input: &AuthorizeBootstrapInput,
     ) -> Result<()> {
+        let password_hash = crate::auth_store::hash_password(&input.password)?;
         let auth_user = StoredUser {
             name: input.display_name.clone(),
             username: input.username.clone(),
-            password: input.password.clone(),
+            password: password_hash,
             language: input.language.clone(),
         };
 
