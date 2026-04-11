@@ -46,12 +46,9 @@ pub struct ServerConfig {
     pub host: IpAddr,
     #[serde(default = "default_port")]
     pub port: u16,
-    /// Tracing log level filter.  Accepts the same values as the `RUST_LOG`
-    /// environment variable, e.g. `"info"`, `"debug"`, `"warn"`, or
-    /// a target-scoped filter like `"home_edge=debug,tower_http=info"`.
-    /// `RUST_LOG` takes precedence when set.
-    #[serde(default = "default_log_level")]
-    pub log_level: String,
+    /// Tracing log level. `RUST_LOG` takes precedence when set.
+    #[serde(default = "default_log_level", deserialize_with = "deserialize_level")]
+    pub log_level: tracing::Level,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,6 +116,13 @@ fn default_port() -> u16 {
     8124
 }
 
-fn default_log_level() -> String {
-    "info".into()
+fn default_log_level() -> tracing::Level {
+    tracing::Level::INFO
 }
+
+fn deserialize_level<'de, D: serde::Deserializer<'de>>(d: D) -> Result<tracing::Level, D::Error> {
+    let s = String::deserialize(d)?;
+    s.parse().map_err(serde::de::Error::custom)
+}
+
+

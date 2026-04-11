@@ -12,7 +12,7 @@ fn sample_config() -> AppConfig {
         server: ServerConfig {
             host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port: 8124,
-            log_level: "info".into(),
+            log_level: tracing::Level::INFO,
         },
         storage: StorageConfig {
             data_dir: PathBuf::from("/tmp/home-edge-test"),

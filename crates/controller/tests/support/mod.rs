@@ -122,7 +122,7 @@ async fn build_server_and_state(
         server: ServerConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
-            log_level: "info".into(),
+            log_level: tracing::Level::INFO,
         },
         storage: StorageConfig {
             data_dir: storage_root,

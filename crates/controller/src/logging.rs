@@ -15,7 +15,7 @@ pub fn init_logging() {
 ///
 /// This is called after config is loaded; `RUST_LOG` still takes precedence
 /// (the default filter is only applied when `RUST_LOG` is not set).
-pub fn apply_config_log_level(log_level: &str) {
+pub fn apply_config_log_level(log_level: tracing::Level) {
     // tracing-subscriber does not support re-initialisation after init();
     // we rely on RUST_LOG for runtime overrides and the subscriber set in
     // init_logging() picks up the env var first.  This function is a no-op

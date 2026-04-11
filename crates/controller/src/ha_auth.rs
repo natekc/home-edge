@@ -1171,7 +1171,7 @@ mod tests {
             server: ServerConfig {
                 host: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: 0,
-                log_level: "info".into(),
+                log_level: tracing::Level::INFO,
             },
             storage: StorageConfig {
                 data_dir: PathBuf::from("/tmp/ha-auth-test"),
@@ -1205,7 +1205,7 @@ mod tests {
             server: ServerConfig {
                 host: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: 0,
-                log_level: "info".into(),
+                log_level: tracing::Level::INFO,
             },
             storage: StorageConfig {
                 data_dir: PathBuf::from("/tmp/ha-auth-test"),
