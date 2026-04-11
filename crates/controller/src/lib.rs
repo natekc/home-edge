@@ -7,11 +7,15 @@ compile_error!("home-edge requires exactly one transport feature");
 pub mod app;
 pub mod config;
 pub mod core;
+pub mod history_store;
 pub mod logging;
 pub mod service;
 pub mod state_store;
 pub mod storage;
+pub mod templates;
 
+#[cfg(feature = "transport_wifi")]
+pub mod area_registry_store;
 #[cfg(feature = "transport_wifi")]
 pub mod auth_store;
 #[cfg(feature = "transport_wifi")]

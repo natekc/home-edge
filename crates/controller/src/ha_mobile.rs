@@ -232,6 +232,7 @@ mod tests {
             ui: UiConfig {
                 product_name: "Test Home".into(),
             },
+            areas: crate::config::AreasConfig::default(),
         };
         let storage = Storage::new_in_memory();
         let state = Arc::new(AppState::new(config, storage));

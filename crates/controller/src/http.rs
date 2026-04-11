@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
+use minijinja::context;
+use minijinja::Value;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -19,13 +21,19 @@ use crate::ha_auth;
 use crate::ha_mobile;
 use crate::ha_webhook;
 use crate::ha_ws;
+use crate::history_store;
+use crate::mobile_entity_store::{EntityMetaUpdate, MobileEntityRecord};
 
 const STEP_USER: &str = "user";
 const STEP_CORE_CONFIG: &str = "core_config";
 const STEP_ANALYTICS: &str = "analytics";
 const STEP_INTEGRATION: &str = "integration";
 
-fn internal_error(err: &anyhow::Error) -> Response {
+// ---------------------------------------------------------------------------
+// Error helpers
+// ---------------------------------------------------------------------------
+
+pub fn internal_error(err: &anyhow::Error) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse::new(format!("{err:#}"))),
@@ -41,68 +49,475 @@ fn unauthorized(msg: &'static str) -> Response {
     (StatusCode::UNAUTHORIZED, Json(ErrorResponse::new(msg.into()))).into_response()
 }
 
+/// Render a named minijinja template into an HTML response.
+fn render_template(state: &AppState, name: &str, ctx: Value) -> Response {
+    match state.render_html(name, ctx) {
+        Ok(html) => Html(html).into_response(),
+        Err(err) => {
+            let err = anyhow::anyhow!("template {name}: {err}");
+            internal_error(&err)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Context helpers
+// ---------------------------------------------------------------------------
+
+fn local_host() -> String {
+    local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| "localhost".to_string())
+}
+
+async fn load_area_names(state: &AppState) -> Vec<String> {
+    state
+        .area_registry
+        .list()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| a.name)
+        .collect()
+}
+
+/// Load the configured location name («Nathan's Home») for the sidebar header.
+/// Falls back to product_name if onboarding hasn't set one yet.
+async fn load_location_name(state: &AppState) -> String {
+    state
+        .storage
+        .load_onboarding()
+        .await
+        .ok()
+        .and_then(|o| o.location_name)
+        .unwrap_or_else(|| state.config.ui.product_name.clone())
+}
+
+/// Common template context variables present on every app-shell page.
+macro_rules! app_ctx {
+    ($state:expr, $active:expr, $location_name:expr, $areas:expr, $($rest:tt)*) => {
+        context! {
+            product_name  => $state.config.ui.product_name.as_str(),
+            location_name => $location_name,
+            transport     => if cfg!(feature = "transport_wifi") { "WiFi" } else { "BLE" },
+            is_ble_build  => cfg!(feature = "transport_ble"),
+            active_page   => $active,
+            server_host   => local_host(),
+            server_port   => $state.config.server.port,
+            areas         => Value::from_serialize($areas),
+            $($rest)*
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         // HA-compatible REST API surface
         .merge(ha_api::router())
-        // HA-compatible auth surface
         .merge(ha_auth::router())
-        // HA-compatible WebSocket surface
         .merge(ha_ws::router())
-        // HA mobile app registration
         .merge(ha_mobile::router())
-        // HA webhook endpoint + MQTT discovery
         .merge(ha_webhook::router())
-        // Original shell routes
-        .route("/", get(index))
-        .route("/onboarding", get(onboarding_page))
-        .route("/api/health", get(health))
-        .route("/api/onboarding", get(onboarding_status))
+        // Web UI pages
+        .route("/",                                              get(index))
+        .route("/onboarding",                                    get(onboarding_page))
+        .route("/ble",                                           get(ble_scan_page))
+        .route("/settings",                                      get(settings_page))
+        .route("/profile",                                       get(profile_page))
+        .route("/devices/{webhook_id}",                          get(device_detail_page))
+        .route("/devices/{webhook_id}/entities/{entity_id}",     get(entity_edit_page))
+        .route(
+            "/devices/{webhook_id}/entities/{entity_id}/save",
+            post(entity_edit_save),
+        )
+        // HTMX fragments
+        .route("/fragments/dashboard-sensors",                   get(fragment_dashboard_sensors))
+        // Mutation API (HTMX)
+        .route("/api/devices/{webhook_id}",                      patch(api_device_rename))
+        // BLE stubs
+        .route("/api/ble/scan",                                  post(api_ble_scan))
+        .route("/api/ble/pair",                                  post(api_ble_pair))
+        // History JSON
+        .route("/api/history/{entity_id}",                       get(api_history))
+        // Health + onboarding REST API
+        .route("/api/health",                                    get(health))
+        .route("/api/onboarding",                                get(onboarding_status))
         .route(
             "/api/onboarding/installation_type",
             get(onboarding_installation_type),
         )
-        .route("/api/onboarding/users", post(create_onboarding_user))
-        .route("/api/onboarding/core_config", post(complete_core_config))
-        .route("/api/onboarding/analytics", post(complete_analytics))
-        .route("/api/onboarding/integration", post(complete_integration))
-        .route("/api/onboarding/complete", post(complete_onboarding))
+        .route("/api/onboarding/users",                          post(create_onboarding_user))
+        .route("/api/onboarding/core_config",                    post(complete_core_config))
+        .route("/api/onboarding/analytics",                      post(complete_analytics))
+        .route("/api/onboarding/integration",                    post(complete_integration))
+        .route("/api/onboarding/complete",                       post(complete_onboarding))
         .with_state(state)
 }
 
+// ---------------------------------------------------------------------------
+// Web UI page handlers
+// ---------------------------------------------------------------------------
+
 async fn index(State(state): State<Arc<AppState>>) -> Response {
     match state.core.onboarding_progress(&state.storage).await {
-        Ok(progress) if !progress.onboarded => {
-            let mut headers = HeaderMap::new();
-            headers.insert(header::LOCATION, HeaderValue::from_static("/onboarding"));
-            (StatusCode::TEMPORARY_REDIRECT, headers).into_response()
-        }
-        Ok(_) => Html(render_shell(&state.config.ui.product_name, true)).into_response(),
+        Ok(progress) if !progress.onboarded => redirect("/onboarding"),
+        Ok(_) => dashboard_response(&state).await,
         Err(err) => internal_error(&err),
     }
 }
 
-async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok",
-        milestone: "m0",
-    })
+fn redirect(path: &'static str) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::LOCATION, HeaderValue::from_static(path));
+    (StatusCode::TEMPORARY_REDIRECT, headers).into_response()
 }
 
-async fn onboarding_page(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.core.onboarding_progress(&state.storage).await {
-        Ok(progress) => Html(render_shell(&state.config.ui.product_name, progress.onboarded))
+async fn profile_page(State(state): State<Arc<AppState>>) -> Response {
+    let onboarding = state.storage.load_onboarding().await.unwrap_or_default();
+    let user = state
+        .auth
+        .load_user_with_legacy_fallback(&state.storage)
+        .await
+        .ok()
+        .flatten();
+    let location_name = onboarding
+        .location_name
+        .clone()
+        .unwrap_or_else(|| state.config.ui.product_name.clone());
+    let area_names = load_area_names(&state).await;
+    let ctx = app_ctx!(state, "profile", location_name.as_str(), &area_names,
+        user_name     => user.as_ref().map(|u| u.name.as_str()).unwrap_or("—"),
+        user_username => user.as_ref().map(|u| u.username.as_str()).unwrap_or("—"),
+        language      => onboarding.language.as_deref().unwrap_or("—"),
+        time_zone     => onboarding.time_zone.as_deref().unwrap_or("—"),
+        unit_system   => onboarding.unit_system.as_deref().unwrap_or("—"),
+        country       => onboarding.country.as_deref().unwrap_or("—"),
+    );
+    render_template(&state, "profile.html", ctx)
+}
+
+async fn dashboard_response(state: &AppState) -> Response {
+    let devices = match state.mobile_devices.all().await {
+        Ok(d) => d,
+        Err(err) => return internal_error(&err),
+    };
+    let all_entities = match state.mobile_entities.all().await {
+        Ok(e) => e,
+        Err(err) => return internal_error(&err),
+    };
+    let device_summaries: Vec<_> = devices
+        .iter()
+        .map(|d| {
+            let count = all_entities
+                .iter()
+                .filter(|e| e.webhook_id == d.webhook_id)
+                .count();
+            json!({
+                "webhook_id":   d.webhook_id,
+                "device_name":  d.display_name(),
+                "manufacturer": d.manufacturer,
+                "model":        d.model,
+                "os_name":      d.os_name,
+                "entity_count": count,
+            })
+        })
+        .collect();
+    let entity_groups = build_entity_groups(&devices, &all_entities, state);
+    let location_name = load_location_name(state).await;
+    let area_names = load_area_names(state).await;
+    let ctx = app_ctx!(state, "dashboard", location_name.as_str(), &area_names,
+        devices       => Value::from_serialize(&device_summaries),
+        entity_groups => Value::from_serialize(&entity_groups),
+    );
+    render_template(state, "dashboard.html", ctx)
+}
+
+async fn onboarding_page(State(state): State<Arc<AppState>>) -> Response {
+    let progress = match state.core.onboarding_progress(&state.storage).await {
+        Ok(p) => p,
+        Err(err) => return internal_error(&err),
+    };
+    let steps = vec![
+        json!({"done": progress.user_done,        "label": "Create owner account"}),
+        json!({"done": progress.core_config_done, "label": "Configure your home"}),
+        json!({"done": progress.analytics_done,   "label": "Analytics preference"}),
+        json!({"done": progress.integration_done, "label": "Connect Home Assistant app"}),
+    ];
+    let ctx = context! {
+        product_name => state.config.ui.product_name.as_str(),
+        onboarded    => progress.onboarded,
+        server_host  => local_host(),
+        server_port  => state.config.server.port,
+        steps        => Value::from_serialize(&steps),
+    };
+    render_template(&state, "onboarding.html", ctx)
+}
+
+async fn settings_page(State(state): State<Arc<AppState>>) -> Response {
+    let mode = format!("{:?}", state.core.runtime_mode());
+    let location_name = load_location_name(&state).await;
+    let area_names = load_area_names(&state).await;
+    let ctx = app_ctx!(state, "settings", location_name.as_str(), &area_names,
+        version      => env!("CARGO_PKG_VERSION"),
+        runtime_mode => mode.as_str(),
+    );
+    render_template(&state, "settings.html", ctx)
+}
+
+async fn ble_scan_page(State(state): State<Arc<AppState>>) -> Response {
+    let location_name = load_location_name(&state).await;
+    let area_names = load_area_names(&state).await;
+    let ctx = app_ctx!(state, "ble", location_name.as_str(), &area_names,);
+    render_template(&state, "ble_scan.html", ctx)
+}
+
+async fn device_detail_page(
+    State(state): State<Arc<AppState>>,
+    Path(webhook_id): Path<String>,
+) -> Response {
+    let device = match state.mobile_devices.get_by_webhook_id(&webhook_id).await {
+        Ok(Some(d)) => d,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Err(err) => return internal_error(&err),
+    };
+    let raw_entities = match state.mobile_entities.list_by_webhook_id(&webhook_id).await {
+        Ok(e) => e,
+        Err(err) => return internal_error(&err),
+    };
+    let entities: Vec<_> = raw_entities
+        .iter()
+        .map(|e| entity_to_view(e, &state))
+        .collect();
+    let location_name = load_location_name(&state).await;
+    let area_names = load_area_names(&state).await;
+    let ctx = app_ctx!(state, "devices", location_name.as_str(), &area_names,
+        device   => Value::from_serialize(&device),
+        entities => Value::from_serialize(&entities),
+    );
+    render_template(&state, "device_detail.html", ctx)
+}
+
+async fn entity_edit_page(
+    State(state): State<Arc<AppState>>,
+    Path((webhook_id, entity_id)): Path<(String, String)>,
+    Query(params): Query<EntityEditQuery>,
+) -> Response {
+    let device = match state.mobile_devices.get_by_webhook_id(&webhook_id).await {
+        Ok(Some(d)) => d,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Err(err) => return internal_error(&err),
+    };
+    let entity_record = match state.mobile_entities.get_by_entity_id(&entity_id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Entity not found").into_response(),
+        Err(err) => return internal_error(&err),
+    };
+    let history = state.history.last_n(&entity_id, 100).await;
+    let sparkline = if history.len() >= 2 {
+        Some(history_store::render_sparkline(&history, 320, 60))
+    } else {
+        None
+    };
+    let entity_view = entity_to_view(&entity_record, &state);
+    let location_name = load_location_name(&state).await;
+    let area_names = load_area_names(&state).await;
+    let ctx = app_ctx!(state, "devices", location_name.as_str(), &area_names,
+        device        => Value::from_serialize(&device),
+        entity        => Value::from_serialize(&entity_view),
+        saved         => params.saved.unwrap_or(false),
+        sparkline     => sparkline,
+        history_count => history.len(),
+    );
+    render_template(&state, "entity_edit.html", ctx)
+}
+
+#[derive(Deserialize)]
+struct EntityEditQuery {
+    saved: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct EntityEditForm {
+    display_name: String,
+    area_id: String,
+    unit_override: String,
+    disabled: Option<String>,
+}
+
+async fn entity_edit_save(
+    State(state): State<Arc<AppState>>,
+    Path((webhook_id, entity_id)): Path<(String, String)>,
+    axum::extract::Form(form): axum::extract::Form<EntityEditForm>,
+) -> Response {
+    let update = EntityMetaUpdate {
+        name_by_user: if form.display_name.trim().is_empty() {
+            None
+        } else {
+            Some(form.display_name.trim().to_string())
+        },
+        user_area_id: if form.area_id.is_empty() {
+            Some(None)
+        } else {
+            Some(Some(form.area_id.clone()))
+        },
+        unit_of_measurement: if form.unit_override.trim().is_empty() {
+            None
+        } else {
+            Some(Some(form.unit_override.trim().to_string()))
+        },
+        disabled: Some(form.disabled.as_deref() == Some("true")),
+    };
+    match state.mobile_entities.update_meta(&entity_id, update).await {
+        Ok(_) => {
+            let location = format!("/devices/{webhook_id}/entities/{entity_id}?saved=true");
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::LOCATION,
+                HeaderValue::try_from(location).unwrap(),
+            );
+            (StatusCode::SEE_OTHER, headers).into_response()
+        }
+        Err(err) => internal_error(&err),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HTMX fragment handlers
+// ---------------------------------------------------------------------------
+
+async fn fragment_dashboard_sensors(State(state): State<Arc<AppState>>) -> Response {
+    let devices = match state.mobile_devices.all().await {
+        Ok(d) => d,
+        Err(err) => return internal_error(&err),
+    };
+    let all_entities = match state.mobile_entities.all().await {
+        Ok(e) => e,
+        Err(err) => return internal_error(&err),
+    };
+    let entity_groups = build_entity_groups(&devices, &all_entities, &state);
+    let ctx = context! { entity_groups => Value::from_serialize(&entity_groups) };
+    render_template(&state, "fragments/sensors.html", ctx)
+}
+
+// ---------------------------------------------------------------------------
+// Mutation API handlers (HTMX targets)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct DeviceRenameForm {
+    device_name: String,
+}
+
+async fn api_device_rename(
+    State(state): State<Arc<AppState>>,
+    Path(webhook_id): Path<String>,
+    axum::extract::Form(form): axum::extract::Form<DeviceRenameForm>,
+) -> Response {
+    let name = form.device_name.trim().to_string();
+    if name.is_empty() {
+        return Html(
+            "<span style='color:#9b1c1c'>Name cannot be empty</span>".to_string(),
+        )
+        .into_response();
+    }
+    match state.mobile_devices.rename(&webhook_id, &name).await {
+        Ok(true) => Html(
+            "<span class='badge badge-success' style='padding:6px 12px'>✓ Saved</span>"
+                .to_string(),
+        )
+        .into_response(),
+        Ok(false) => Html(
+            "<span style='color:#9b1c1c'>Device not found</span>".to_string(),
+        )
         .into_response(),
         Err(err) => internal_error(&err),
     }
 }
 
+// ---------------------------------------------------------------------------
+// BLE stub endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct BleDevice {
+    name: String,
+    rssi: i32,
+}
+
+async fn api_ble_scan(State(state): State<Arc<AppState>>) -> Response {
+    let fake_devices = vec![
+        BleDevice { name: "HA Sensor A3F2".into(), rssi: -62 },
+        BleDevice { name: "HA Sensor B8D1".into(), rssi: -77 },
+    ];
+    let ctx = context! { ble_devices => Value::from_serialize(&fake_devices) };
+    render_template(&state, "fragments/ble_results.html", ctx)
+}
+
+#[derive(Deserialize)]
+struct BlePairForm {
+    name: String,
+}
+
+async fn api_ble_pair(
+    axum::extract::Form(form): axum::extract::Form<BlePairForm>,
+) -> Response {
+    let fake_webhook = uuid::Uuid::new_v4().simple().to_string();
+    Html(format!(
+        "<div class='ble-device-row' style='background:#dcfce7'>\
+         <svg width='22' height='22' style='color:#16a34a;fill:currentColor'><use href='#icon-check'/></svg>\
+         <span class='ble-device-name'>{} paired</span>\
+         <code style='font-size:.75rem;color:#5a6778'>{}</code>\
+         </div>",
+        html_escape_str(&form.name),
+        &fake_webhook[..8],
+    ))
+    .into_response()
+}
+
+fn html_escape_str(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+// ---------------------------------------------------------------------------
+// History endpoint
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct HistoryQuery {
+    last: Option<usize>,
+}
+
+async fn api_history(
+    State(state): State<Arc<AppState>>,
+    Path(entity_id): Path<String>,
+    Query(params): Query<HistoryQuery>,
+) -> Response {
+    let n = params.last.unwrap_or(100).min(1000);
+    let entries = state.history.last_n(&entity_id, n).await;
+    Json(entries).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Health + onboarding REST API (unchanged business logic)
+// ---------------------------------------------------------------------------
+
+async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse { status: "ok", milestone: "m0" })
+}
+
 async fn onboarding_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.core.onboarding_progress(&state.storage).await {
         Ok(progress) => Json(vec![
-            json!({"step": STEP_USER, "done": progress.user_done}),
+            json!({"step": STEP_USER,        "done": progress.user_done}),
             json!({"step": STEP_CORE_CONFIG, "done": progress.core_config_done}),
-            json!({"step": STEP_ANALYTICS, "done": progress.analytics_done}),
+            json!({"step": STEP_ANALYTICS,   "done": progress.analytics_done}),
             json!({"step": STEP_INTEGRATION, "done": progress.integration_done}),
         ])
         .into_response(),
@@ -149,7 +564,6 @@ async fn create_onboarding_user(
         )
             .into_response();
     }
-
     match state
         .core
         .create_onboarding_user(
@@ -204,13 +618,16 @@ async fn complete_core_config(
         Ok(CompleteCoreConfigOutcome::Completed) => {
             (StatusCode::OK, Json(json!({}))).into_response()
         }
-        Ok(CompleteCoreConfigOutcome::CoreConfigStepAlreadyDone) => forbidden("Core config step already done"),
-        Ok(CompleteCoreConfigOutcome::UserStepRequired) => forbidden("User step must be completed first"),
+        Ok(CompleteCoreConfigOutcome::CoreConfigStepAlreadyDone) => {
+            forbidden("Core config step already done")
+        }
+        Ok(CompleteCoreConfigOutcome::UserStepRequired) => {
+            forbidden("User step must be completed first")
+        }
         Err(err) => internal_error(&err),
     }
 }
 
-/// Extract a Bearer token from the Authorization header.
 fn extract_bearer(headers: &HeaderMap) -> Option<String> {
     headers
         .get(header::AUTHORIZATION)
@@ -225,8 +642,6 @@ struct IntegrationRequest {
     redirect_uri: String,
 }
 
-/// POST /api/onboarding/analytics
-/// Source: homeassistant/components/onboarding/views.py  AnalyticsOnboardingView
 async fn complete_analytics(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -238,11 +653,7 @@ async fn complete_analytics(
     if state.tokens.validate_access_token(&token).await.is_none() {
         return unauthorized("Invalid access token");
     }
-    match state
-        .core
-        .complete_onboarding_analytics(&state.storage)
-        .await
-    {
+    match state.core.complete_onboarding_analytics(&state.storage).await {
         Ok(CompleteAnalyticsOutcome::Completed) => {
             (StatusCode::OK, Json(json!({}))).into_response()
         }
@@ -251,8 +662,6 @@ async fn complete_analytics(
     }
 }
 
-/// POST /api/onboarding/integration
-/// Source: homeassistant/components/onboarding/views.py  IntegrationOnboardingView
 async fn complete_integration(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -268,7 +677,9 @@ async fn complete_integration(
     if body.client_id.is_empty() || body.redirect_uri.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::new("client_id and redirect_uri are required".into())),
+            Json(ErrorResponse::new(
+                "client_id and redirect_uri are required".into(),
+            )),
         )
             .into_response();
     }
@@ -293,6 +704,107 @@ async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoRes
     }
 }
 
+// ---------------------------------------------------------------------------
+// Entity / device view helpers
+// ---------------------------------------------------------------------------
+
+/// A serializable view of a sensor entity for use in templates.
+#[derive(Serialize)]
+struct EntityView {
+    entity_id: String,
+    webhook_id: String,
+    display_name: String,
+    entity_type: String,
+    icon_name: String,
+    value: String,
+    unit: String,
+    device_class: String,
+    user_area_id: String,
+    unit_of_measurement: Option<String>,
+    disabled: bool,
+}
+
+fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
+    let value = state
+        .states
+        .get(&entity.entity_id)
+        .map(|s| s.state.clone())
+        .unwrap_or_else(|| "unavailable".to_string());
+    EntityView {
+        entity_id: entity.entity_id.clone(),
+        webhook_id: entity.webhook_id.clone(),
+        display_name: entity.display_name().to_string(),
+        entity_type: entity.entity_type.clone(),
+        icon_name: entity_icon_name(entity).to_string(),
+        value,
+        unit: entity.unit_of_measurement.clone().unwrap_or_default(),
+        device_class: entity.device_class.clone().unwrap_or_default(),
+        user_area_id: entity.user_area_id.clone().unwrap_or_default(),
+        unit_of_measurement: entity.unit_of_measurement.clone(),
+        disabled: entity.disabled,
+    }
+}
+
+#[derive(Serialize)]
+struct DeviceEntityGroup {
+    webhook_id: String,
+    device_name: String,
+    entities: Vec<EntityView>,
+}
+
+fn build_entity_groups(
+    devices: &[crate::mobile_device_store::MobileDeviceRecord],
+    all_entities: &[MobileEntityRecord],
+    state: &AppState,
+) -> Vec<DeviceEntityGroup> {
+    devices
+        .iter()
+        .map(|d| {
+            let entities: Vec<EntityView> = all_entities
+                .iter()
+                .filter(|e| e.webhook_id == d.webhook_id)
+                .map(|e| entity_to_view(e, state))
+                .collect();
+            DeviceEntityGroup {
+                webhook_id: d.webhook_id.clone(),
+                device_name: d.display_name().to_string(),
+                entities,
+            }
+        })
+        .filter(|g| !g.entities.is_empty())
+        .collect()
+}
+
+fn entity_icon_name(entity: &MobileEntityRecord) -> &'static str {
+    if let Some(mdi) = entity.icon.as_deref() {
+        let key = mdi.strip_prefix("mdi:").unwrap_or(mdi);
+        match key {
+            "battery" | "battery-high" | "battery-medium" | "battery-low"
+            | "battery-charging" => return "battery",
+            "thermometer" | "temperature-celsius" | "temperature-fahrenheit" => {
+                return "thermometer"
+            }
+            "water" | "water-percent" | "water-drop" => return "water",
+            "flash" | "lightning-bolt" | "power" | "power-plug" => return "lightning",
+            "toggle-switch" | "toggle-switch-off" => return "toggle",
+            "bluetooth" => return "bluetooth",
+            _ => {}
+        }
+    }
+    match entity.device_class.as_deref() {
+        Some("battery") => "battery",
+        Some("temperature") => "thermometer",
+        Some("humidity") | Some("moisture") => "water",
+        Some("power") | Some("energy") | Some("current") | Some("voltage") => "lightning",
+        _ if entity.entity_type == "binary_sensor" => "toggle",
+        _ => "sensor",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -300,29 +812,12 @@ struct HealthResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct ErrorResponse {
-    error: String,
+pub struct ErrorResponse {
+    pub error: String,
 }
 
 impl ErrorResponse {
-    fn new(error: String) -> Self {
+    pub fn new(error: String) -> Self {
         Self { error }
     }
-}
-
-fn render_shell(product_name: &str, onboarded: bool) -> String {
-    let title = if onboarded { "Home" } else { "Onboarding" };
-    let body = if onboarded {
-        "Milestone 0 runtime shell is online. Onboarding has been marked complete, and the system is ready for the next slice of implementation."
-    } else {
-        "Milestone 0 onboarding shell is online. This page is intentionally small and server-rendered to keep first-load cost low on low-power embedded Linux devices, with Raspberry Pi Zero W as the benchmark baseline."
-    };
-    let action = if onboarded {
-        "<a href=\"/\" style=\"display:inline-block;background:#204030;color:#fff;text-decoration:none;border-radius:10px;padding:.9rem 1.1rem;font-weight:700\">Go to home</a>"
-    } else {
-        "<form method=\"post\" action=\"/api/onboarding/complete\"><button type=\"submit\">Mark onboarding complete</button></form>"
-    };
-    format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{product_name}</title><style>body{{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;margin:0;background:#f2efe8;color:#1d2a2a}}main{{max-width:42rem;margin:5rem auto;padding:2rem}}.card{{background:#fff;border-radius:16px;padding:2rem;box-shadow:0 10px 30px rgba(0,0,0,.08)}}.pill{{display:inline-block;background:#dce9de;color:#204030;padding:.3rem .7rem;border-radius:999px;font-size:.85rem}}h1{{font-size:2.4rem;line-height:1.1;margin:.8rem 0}}p{{font-size:1.05rem;line-height:1.6}}button{{background:#204030;color:#fff;border:0;border-radius:10px;padding:.9rem 1.1rem;font-weight:700;cursor:pointer}}</style></head><body><main><section class=\"card\"><span class=\"pill\">Milestone 0</span><h1>{title}</h1><p>{body}</p>{action}</section></main></body></html>"
-    )
 }

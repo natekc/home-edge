@@ -9,6 +9,33 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub storage: StorageConfig,
     pub ui: UiConfig,
+    #[serde(default)]
+    pub areas: AreasConfig,
+}
+
+/// Initial area names used to seed the area registry on first boot.
+///
+/// After the first boot, areas are managed dynamically through the WS API
+/// (`config/area_registry/{create,update,delete}`) and persisted in
+/// `<data_dir>/area_registry.json`; this list is ignored from that point on.
+///
+/// Define in `config.toml`:
+/// ```toml
+/// [areas]
+/// names = ["Living Room", "Kitchen", "Bedroom"]
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AreasConfig {
+    #[serde(default = "default_areas")]
+    pub names: Vec<String>,
+}
+
+fn default_areas() -> Vec<String> {
+    vec![
+        "Living Room".into(),
+        "Kitchen".into(),
+        "Bedroom".into(),
+    ]
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ product_name }}</title>
+  <!-- Roboto — same font used by HA frontend -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>{% include "_css.html" %}</style>
+  <!-- Stub window.hassConnection so WebSocketBridge.js (injected by iOS into every
+       WKWebView) stops spinning in waitForHassConnection(). conn methods are no-ops;
+       home-edge's own externalBus messages drive native iOS integration. -->
+  <script>
+  (function() {
+    var noopCancel = { cancel: function() {} };
+    var conn = {
+      sendMessagePromise: function() { return Promise.resolve({}); },
+      subscribeEvents: function() { return noopCancel; }
+    };
+    window.hassConnection = Promise.resolve({ conn: conn });
+  })();
+  </script>
+  <script src="https://unpkg.com/htmx.org@2.0.4" crossorigin="anonymous"></script>
+</head>
+<body>
+{% include "_icons.html" %}
+
+<!-- Mobile hamburger FAB (visible only when sidebar is hidden on narrow screens) -->
+<button class="mobile-menu-fab" id="mobile-fab" onclick="openMobileSidebar()" aria-label="Open menu">
+  <svg><use href="#icon-menu"/></svg>
+</button>
+<!-- Backdrop for mobile overlay -->
+<div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
+
+<div class="app-shell">
+
+  <!-- ================================================================
+       SIDEBAR  (mirrors ha-sidebar structure)
+       ================================================================ -->
+  <aside class="sidebar" id="sidebar">
+
+    <!-- .menu: hamburger + instance title (64 px) -->
+    <div class="sidebar-menu">
+      <button class="sidebar-menu-btn" id="sidebar-toggle-btn"
+              onclick="toggleSidebar()" title="Toggle menu" aria-label="Toggle menu">
+        <svg><use href="#icon-menu"/></svg>
+      </button>
+      <div class="sidebar-title">{{ location_name }}</div>
+    </div>
+
+    <div class="panels-list">
+
+      <!-- before-spacer: scrollable panel list -->
+      <div class="before-spacer-wrapper">
+        <ul class="nav-list" role="list">
+
+          <li class="nav-item {{ 'selected' if active_page == 'dashboard' else '' }}">
+            <a href="/" role="listitem">
+              <svg class="nav-icon"><use href="#icon-view-dashboard"/></svg>
+              <span class="item-text">Overview</span>
+            </a>
+          </li>
+
+          {% if is_ble_build %}
+          <li class="nav-item {{ 'selected' if active_page == 'ble' else '' }}">
+            <a href="/ble" role="listitem">
+              <svg class="nav-icon"><use href="#icon-bluetooth"/></svg>
+              <span class="item-text">Bluetooth</span>
+            </a>
+          </li>
+          {% endif %}
+
+        </ul>
+      </div><!-- /before-spacer-wrapper -->
+
+      <div class="spacer"></div>
+
+      <!-- after-spacer: fixed bottom items (Settings, Switch Server, User) -->
+      <div class="after-spacer-wrapper">
+        <ul class="nav-list" role="list">
+
+          <li class="nav-item {{ 'selected' if active_page == 'settings' else '' }}">
+            <a href="/settings" role="listitem">
+              <svg class="nav-icon"><use href="#icon-settings"/></svg>
+              <span class="item-text">Settings</span>
+            </a>
+          </li>
+
+          <!-- Switch Server — maps to HA's mdiCellphoneCog / external_app_configuration -->
+          <li class="nav-item">
+            <button class="nav-btn" onclick="openNativeSettings()">
+              <svg class="nav-icon"><use href="#icon-bell"/></svg>
+              <span class="item-text">Switch Server</span>
+            </button>
+          </li>
+
+          <!-- User item — coloured avatar circle, HA ha-user-badge style -->
+          <li class="nav-item user {{ 'selected' if active_page == 'profile' else '' }}">
+            <a href="/profile" role="listitem">
+              <div class="user-badge" aria-hidden="true">{{ location_name[0:1] | upper }}</div>
+              <span class="item-text">{{ location_name }}</span>
+            </a>
+          </li>
+
+        </ul>
+      </div><!-- /after-spacer-wrapper -->
+
+    </div><!-- /panels-list -->
+  </aside><!-- /sidebar -->
+
+  <!-- ================================================================
+       MAIN CONTENT
+       ================================================================ -->
+  <div class="main-content" id="main-content">
+    {% block content %}{% endblock %}
+  </div>
+
+</div><!-- /app-shell -->
+
+<!-- Snackbar toast (HA uses a similar bottom-right notification) -->
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* --- Toast ------------------------------------------------------------- */
+function showToast(msg, dur) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function() { t.classList.remove('show'); }, dur || 2800);
+}
+
+/* --- iOS externalBus helpers ------------------------------------------ */
+
+// Opens the iOS native Settings overlay (server switcher).
+// config_screen/show is the same externalBus message HA core sends.
+function openNativeSettings() {
+  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.externalBus) {
+    window.webkit.messageHandlers.externalBus.postMessage({type: 'config_screen/show'});
+  }
+}
+
+// Tell the native iOS layer the WebView is connected.
+// MUST be a plain JS object — NOT JSON.stringify(). Swift casts message.body
+// as [String: Any]; if it gets a string the cast returns nil silently.
+function notifyNativeConnected() {
+  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.externalBus) {
+    window.webkit.messageHandlers.externalBus.postMessage(
+      {type: 'connection-status', payload: {event: 'connected'}}
+    );
+  }
+}
+window.checkForMissingHassConnectionAndReload = notifyNativeConnected;
+window.addEventListener('load', notifyNativeConnected);
+
+/* --- Sidebar toggle ---------------------------------------------------- */
+function toggleSidebar() {
+  var sidebar = document.getElementById('sidebar');
+  var main    = document.getElementById('main-content');
+  sidebar.classList.toggle('collapsed');
+  main.classList.toggle('sidebar-collapsed');
+  try { localStorage.setItem('sidebar-collapsed', sidebar.classList.contains('collapsed')); } catch(e) {}
+}
+
+// Mobile overlay helpers
+function openMobileSidebar() {
+  document.getElementById('sidebar').classList.add('mobile-open');
+  document.getElementById('sidebar-backdrop').classList.add('visible');
+}
+function closeMobileSidebar() {
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sidebar-backdrop').classList.remove('visible');
+}
+
+// Restore collapsed state from localStorage (desktop only)
+(function() {
+  try {
+    if (window.innerWidth > 640 && localStorage.getItem('sidebar-collapsed') === 'true') {
+      document.getElementById('sidebar').classList.add('collapsed');
+      document.getElementById('main-content').classList.add('sidebar-collapsed');
+    }
+  } catch(e) {}
+})();
+
+/* --- HTMX hooks -------------------------------------------------------- */
+document.addEventListener('htmx:afterRequest', function(evt) {
+  if (evt.detail.successful && evt.detail.requestConfig.verb === 'patch') {
+    showToast('Saved');
+  }
+});
+</script>
+</body>
+</html>

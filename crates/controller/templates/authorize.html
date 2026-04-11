@@ -1,0 +1,60 @@
+{% extends "_base_wizard.html" %}
+{% block content %}
+{% if onboarded %}
+
+<h1>Sign in to {{ product_name }}</h1>
+<p>Authorize the Home Assistant app to connect to this instance.</p>
+
+{% else %}
+
+<div class="wizard-steps">
+  <div class="wizard-step-dot active"></div>
+  <div class="wizard-step-dot"></div>
+  <div class="wizard-step-dot"></div>
+  <div class="wizard-step-dot"></div>
+</div>
+<h1>Set up {{ product_name }}</h1>
+<p>Create the first owner account. The Home Assistant app will continue automatically after submitting.</p>
+
+{% endif %}
+
+{% if error %}
+<div class="alert-error">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/auth/authorize">
+  <input type="hidden" name="response_type" value="{{ response_type }}">
+  <input type="hidden" name="client_id" value="{{ client_id }}">
+  <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+  <input type="hidden" name="state" value="{{ state_param }}">
+
+  {% if not onboarded %}
+  <div class="form-group">
+    <label for="name">Your name</label>
+    <input id="name" name="name" class="form-control"
+           autocomplete="name" placeholder="Home Edge Owner">
+  </div>
+  <div class="form-group">
+    <label for="location_name">Location name</label>
+    <input id="location_name" name="location_name" class="form-control"
+           autocomplete="organization" placeholder="Home">
+  </div>
+  <input type="hidden" name="language" value="en">
+  {% endif %}
+
+  <div class="form-group">
+    <label for="username">Username</label>
+    <input id="username" name="username" class="form-control"
+           autocomplete="username" required>
+  </div>
+  <div class="form-group">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" class="form-control"
+           autocomplete="current-password" required>
+  </div>
+
+  <button type="submit" class="btn btn-primary btn-full">
+    {{ "Authorize" if onboarded else "Create account and authorize" }}
+  </button>
+</form>
+{% endblock %}

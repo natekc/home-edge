@@ -41,6 +41,16 @@ pub struct MobileDeviceRecord {
     pub device_id: Option<String>,
     pub supports_encryption: bool,
     pub owner_username: Option<String>,
+    /// User-set display name overriding the device-reported name.
+    #[serde(default)]
+    pub name_by_user: Option<String>,
+}
+
+impl MobileDeviceRecord {
+    /// The display name shown in the UI: user override first, then device name.
+    pub fn display_name(&self) -> &str {
+        self.name_by_user.as_deref().unwrap_or(&self.device_name)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -115,6 +125,7 @@ impl MobileDeviceStore {
             device_id: registration.device_id,
             supports_encryption: registration.supports_encryption,
             owner_username: registration.owner_username,
+            name_by_user: None,
         };
         data.devices.push(record.clone());
         self.save(&data).await?;
@@ -138,6 +149,20 @@ impl MobileDeviceStore {
 
     pub async fn all(&self) -> Result<Vec<MobileDeviceRecord>> {
         Ok(self.load_data().await?.devices)
+    }
+
+    /// Set a user-defined display name for the device identified by `webhook_id`.
+    ///
+    /// Returns `Ok(true)` if found and updated, `Ok(false)` if not found.
+    pub async fn rename(&self, webhook_id: &str, name: &str) -> Result<bool> {
+        let _guard = self.lock.lock().await;
+        let mut data = self.load_locked().await?;
+        let Some(record) = data.devices.iter_mut().find(|d| d.webhook_id == webhook_id) else {
+            return Ok(false);
+        };
+        record.name_by_user = Some(name.to_string());
+        self.save(&data).await?;
+        Ok(true)
     }
 
     fn path(&self) -> PathBuf {

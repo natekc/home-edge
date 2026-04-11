@@ -18,6 +18,8 @@ use tokio::signal;
 use tracing::info;
 
 #[cfg(feature = "transport_wifi")]
+use crate::area_registry_store::AreaRegistryStore;
+#[cfg(feature = "transport_wifi")]
 use crate::auth_store::AuthStore;
 #[cfg(feature = "transport_wifi")]
 use crate::ha_auth::{LoginFlowStore, TokenStore};
@@ -44,6 +46,7 @@ pub struct AppState {
     pub config: AppConfig,
     pub storage: Storage,
     pub auth: AuthStore,
+    pub area_registry: AreaRegistryStore,
     pub mobile_devices: MobileDeviceStore,
     pub mobile_entities: MobileEntityStore,
     pub states: StateStore,
@@ -51,18 +54,22 @@ pub struct AppState {
     pub flows: LoginFlowStore,
     pub webhooks: WebhookStore,
     pub services: ServiceRegistry,
+    pub templates: minijinja::Environment<'static>,
+    pub history: crate::history_store::HistoryStore,
 }
 
 #[cfg(feature = "transport_wifi")]
 impl AppState {
     pub fn new(config: AppConfig, storage: Storage) -> Self {
         let auth = AuthStore::new(storage.root().to_path_buf());
+        let area_registry = AreaRegistryStore::new(storage.root().to_path_buf());
         let mobile_devices = MobileDeviceStore::new(storage.root().to_path_buf());
         let mobile_entities = MobileEntityStore::new(storage.root().to_path_buf());
         let tokens = TokenStore::new(storage.root().to_path_buf());
         Self {
             core: AppCore::new(),
             auth,
+            area_registry,
             mobile_devices,
             mobile_entities,
             config,
@@ -72,6 +79,8 @@ impl AppState {
             flows: LoginFlowStore::new(),
             webhooks: WebhookStore::new(),
             services: ServiceRegistry::new(),
+            templates: crate::templates::build_env(),
+            history: crate::history_store::HistoryStore::new(),
         }
     }
 
@@ -81,13 +90,40 @@ impl AppState {
         state
             .core
             .set_runtime_mode(RuntimeMode::from_persisted_onboarding(onboarding.onboarded));
+        state.tokens.load_persisted().await?;
+        state
+            .area_registry
+            .seed_if_empty(&state.config.areas.names)
+            .await?;
         Ok(state)
+    }
+
+    /// Render a named minijinja template and return the HTML string.
+    pub fn render_html(
+        &self,
+        name: &str,
+        ctx: minijinja::Value,
+    ) -> Result<String, minijinja::Error> {
+        self.templates.get_template(name)?.render(ctx)
     }
 }
 
 #[cfg(feature = "transport_wifi")]
-pub async fn run(config: AppConfig) -> Result<()> {
+pub async fn run(config: AppConfig, reset: bool) -> Result<()> {
     let listen_addr = config.listen_addr();
+
+    if reset {
+        let data_dir = &config.storage.data_dir;
+        if data_dir.exists() {
+            tokio::fs::remove_dir_all(data_dir)
+                .await
+                .with_context(|| format!("failed to wipe data dir {}", data_dir.display()))?;
+            tracing::warn!(path = %data_dir.display(), "--reset: wiped data directory");
+        } else {
+            tracing::info!("--reset: data directory does not exist, nothing to wipe");
+        }
+    }
+
     let storage = Storage::new(config.storage.data_dir.clone()).await?;
     let state = Arc::new(AppState::new_initialized(config, storage).await?);
     let _zeroconf = zeroconf::announce(&state).await?;
@@ -107,7 +143,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
 }
 
 #[cfg(feature = "transport_ble")]
-pub async fn run(_config: AppConfig) -> Result<()> {
+pub async fn run(_config: AppConfig, _reset: bool) -> Result<()> {
     let _core = AppCore::new();
     bail!("BLE transport build is not implemented yet")
 }
@@ -140,7 +176,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::config::{ServerConfig, StorageConfig, UiConfig};
+    use crate::config::{AreasConfig, ServerConfig, StorageConfig, UiConfig};
     use crate::storage::{OnboardingState, Storage};
 
     fn test_config() -> AppConfig {
@@ -155,6 +191,7 @@ mod tests {
             ui: UiConfig {
                 product_name: "Test Home".into(),
             },
+            areas: AreasConfig::default(),
         }
     }
 

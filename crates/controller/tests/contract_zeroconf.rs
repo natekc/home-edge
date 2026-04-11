@@ -19,6 +19,7 @@ fn sample_config() -> AppConfig {
         ui: UiConfig {
             product_name: "Home Edge".into(),
         },
+        areas: home_edge::config::AreasConfig::default(),
     }
 }
 

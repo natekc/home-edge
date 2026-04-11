@@ -153,6 +153,7 @@ mod tests {
             ui: UiConfig {
                 product_name: "Home Edge".into(),
             },
+            areas: crate::config::AreasConfig::default(),
         }
     }
 

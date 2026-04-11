@@ -1,0 +1,23 @@
+{% for group in entity_groups %}
+<div style="margin-bottom:22px">
+  <div style="font-size:.78rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">
+    {{ group.device_name }}
+  </div>
+  <div class="sensor-grid">
+    {% for entity in group.entities %}
+    <a href="/devices/{{ entity.webhook_id }}/entities/{{ entity.entity_id }}"
+       class="sensor-tile{% if entity.entity_type == 'binary_sensor' %}{% if entity.value == 'on' %} binary-on{% else %} binary-off{% endif %}{% endif %}{% if entity.disabled %} disabled{% endif %}">
+      <svg class="sensor-tile-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+      <div class="sensor-tile-value">
+        {{ entity.value }}<span class="sensor-tile-unit">{{ entity.unit }}</span>
+      </div>
+      <div class="sensor-tile-name">{{ entity.display_name }}</div>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<p class="text-muted" style="margin:0;padding:8px 0">
+  No sensor readings yet. Register sensors from the Home Assistant app.
+</p>
+{% endfor %}

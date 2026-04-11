@@ -7,3 +7,6 @@ data_dir = "./var/lib/home-edge"
 
 [ui]
 product_name = "Home Edge"
+
+[areas]
+names = ["Living Room", "Kitchen", "Bedroom"]

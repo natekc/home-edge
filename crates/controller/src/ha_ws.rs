@@ -21,13 +21,15 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tokio::time::{Duration, interval};
+use tracing;
 
 use crate::app::AppState;
 use crate::core::{Consistency, CoreDeps, DeadlineClass, OperationError, OperationMeta, OperationRequest, OperationResult, PageRequest, StateFilter};
@@ -35,8 +37,9 @@ use crate::service::{ServiceCall, ServiceData, ServiceError, ServiceTarget};
 use crate::state_store::StateEvent;
 
 /// Version string sent in auth handshake messages.
-/// Source: homeassistant/const.py  __version__ (we mimic a recent HA version).
-const HA_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Must be a modern HA-style version (YYYY.M.patch) so the iOS app's
+/// version-gated feature checks don't bail out.
+const HA_VERSION: &str = "2025.1.0";
 
 // ---------------------------------------------------------------------------
 // Message types (source: websocket_api/auth.py and const.py)
@@ -147,7 +150,20 @@ pub fn router() -> Router<Arc<AppState>> {
 /// HTTP upgrade handler for `GET /api/websocket`.
 ///
 /// Source: homeassistant/components/websocket_api/http.py  WebsocketAPIView.get
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let user_agent = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("(no user-agent)");
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("(no origin)");
+    tracing::debug!(user_agent, origin, "WebSocket: upgrade request");
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -165,11 +181,13 @@ enum Phase {
 async fn handle_socket(mut ws: WebSocket, state: Arc<AppState>) {
     // Step 1: send auth_required
     // Source: auth.py — server sends AUTH_REQUIRED_MESSAGE immediately on connect
+    tracing::debug!("WebSocket: client connected");
     if ws
         .send(Message::Text(auth_required_msg().into()))
         .await
         .is_err()
     {
+        tracing::debug!("WebSocket: failed to send auth_required, dropping");
         return;
     }
 
@@ -178,12 +196,17 @@ async fn handle_socket(mut ws: WebSocket, state: Arc<AppState>) {
     let (push_tx, mut push_rx) = mpsc::channel::<String>(256);
     // Active subscriptions keyed by the command id that created them.
     let mut subscriptions: HashMap<u64, JoinHandle<()>> = HashMap::new();
+    // Keepalive: send a WebSocket Ping frame every 30 s so NAT/proxy idle
+    // timeouts don't silently drop the connection.
+    let mut keepalive = interval(Duration::from_secs(30));
+    keepalive.tick().await; // consume the immediate first tick
 
     loop {
         tokio::select! {
             msg = ws.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        tracing::debug!(len = text.len(), "WebSocket: recv text message");
                         let reply = match phase {
                             Phase::Auth => handle_auth_phase(&text, &state, &mut phase).await,
                             Phase::Active => handle_command_phase(&text, &state, &push_tx, &mut subscriptions).await,
@@ -194,8 +217,19 @@ async fn handle_socket(mut ws: WebSocket, state: Arc<AppState>) {
                             }
                         }
                     }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    // Ignore binary / ping / pong frames
+                    Some(Ok(Message::Close(cf))) => {
+                        tracing::debug!("WebSocket: client sent Close frame: {:?}", cf);
+                        break;
+                    }
+                    None => {
+                        tracing::debug!("WebSocket: recv() returned None (stream ended)");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        tracing::debug!("WebSocket: recv() error: {e}");
+                        break;
+                    }
+                    // Ping frames are auto-responded by tungstenite; Pong and Binary are ignored.
                     _ => {}
                 }
             }
@@ -204,10 +238,21 @@ async fn handle_socket(mut ws: WebSocket, state: Arc<AppState>) {
                     break;
                 }
             }
+            _ = keepalive.tick() => {
+                if ws.send(Message::Ping(vec![].into())).await.is_err() {
+                    break;
+                }
+            }
         }
     }
 
     // Clean up all active subscription tasks.
+    let n = subscriptions.len();
+    if n > 0 {
+        tracing::warn!("WebSocket: live connection dropped ({n} subscriptions aborted)");
+    } else {
+        tracing::debug!("WebSocket: client disconnected (no active subscriptions)");
+    }
     for (_, handle) in subscriptions {
         handle.abort();
     }
@@ -217,7 +262,10 @@ async fn handle_socket(mut ws: WebSocket, state: Arc<AppState>) {
 ///
 /// Source: auth.py  AuthPhase.async_handle
 async fn handle_auth_phase(text: &str, state: &Arc<AppState>, phase: &mut Phase) -> Option<String> {
-    let parsed: Value = serde_json::from_str(text).ok()?;
+    let parsed: Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(_) => return Some(auth_invalid_msg("Auth message incorrectly formatted: expected JSON")),
+    };
 
     // Source: AUTH_MESSAGE_SCHEMA — type must be "auth"
     if parsed.get("type").and_then(|v| v.as_str()) != Some("auth") {
@@ -226,7 +274,10 @@ async fn handle_auth_phase(text: &str, state: &Arc<AppState>, phase: &mut Phase)
         ));
     }
 
-    let auth_msg: AuthMessage = serde_json::from_value(parsed).ok()?;
+    let auth_msg: AuthMessage = match serde_json::from_value(parsed) {
+        Ok(m) => m,
+        Err(_) => return Some(auth_invalid_msg("Auth message incorrectly formatted")),
+    };
 
     let token = match auth_msg.access_token {
         Some(t) if !t.is_empty() => t,
@@ -237,10 +288,11 @@ async fn handle_auth_phase(text: &str, state: &Arc<AppState>, phase: &mut Phase)
 
     // Source: auth.py — validate access token against the token store
     if state.tokens.validate_access_token(&token).await.is_some() {
-        debug!("WebSocket auth OK");
+        tracing::info!("WebSocket: auth OK");
         *phase = Phase::Active;
         Some(auth_ok_msg())
     } else {
+        tracing::info!("WebSocket: auth_invalid — token not found (len={})", token.len());
         Some(auth_invalid_msg("Invalid access token or password"))
     }
 }
@@ -280,9 +332,11 @@ async fn dispatch_command(
     subscriptions: &mut HashMap<u64, JoinHandle<()>>,
 ) -> String {
     match msg_type {
-        // Source: commands.py  handle_ping
-        //   {"id": iden, "type": "pong"}   — returned as a result message
-        "ping" => result_ok(id, json!("pong")),
+        // Source: commands.py  pong_message
+        //   {"id": iden, "type": "pong"}
+        // NOTE: must be "type":"pong" not a result message — ha-websocket
+        // checks specifically for type=="pong" to reset its keepalive timer.
+        "ping" => json!({"id": id, "type": "pong"}).to_string(),
 
         // Source: commands.py  handle_get_states
         // Returns array of entity states.
@@ -524,6 +578,237 @@ async fn dispatch_command(
             }
         }
 
+        // Source: homeassistant/components/auth/websocket_api.py  handle_get_current_user
+        // iOS HAKit calls this via connection.caches.user on every connect.
+        "auth/current_user" => {
+            let user = state
+                .auth
+                .load_user_with_legacy_fallback(&state.storage)
+                .await
+                .ok()
+                .flatten();
+            let (name, username) = user
+                .as_ref()
+                .map(|u| (u.name.as_str(), u.username.as_str()))
+                .unwrap_or(("Admin", "admin"));
+            // Derive a stable UUID v5 from the username so the id is consistent
+            // across restarts without requiring persistent storage.
+            let user_id = format!("{:x}", md5_hex(username.as_bytes()));
+            result_ok(id, json!({
+                "id": user_id,
+                "name": name,
+                "is_owner": true,
+                "is_admin": true,
+                "system_generated": false,
+                "credentials": [],
+                "mfa_modules": [],
+            }))
+        }
+
+        // Source: homeassistant/components/frontend/__init__.py  websocket_get_panels
+        // iOS HAKit calls connection.caches.panels() which subscribes to get_panels.
+        // We expose a minimal lovelace panel so the app has a home panel entry.
+        "get_panels" => {
+            result_ok(id, json!({
+                "lovelace": {
+                    "component_name": "lovelace",
+                    "icon": null,
+                    "title": null,
+                    "config": null,
+                    "url_path": "lovelace",
+                    "require_admin": false,
+                    "show_in_sidebar": true,
+                    "default_visible": true,
+                }
+            }))
+        }
+
+        // Source: homeassistant/components/frontend/__init__.py  websocket_get_themes
+        // WebSocketBridge.js (injected by iOS into every WKWebView page) calls this
+        // immediately after auth to apply themes. Returning empty themes is correct.
+        "frontend/get_themes" => {
+            result_ok(id, json!({
+                "themes": {},
+                "default_theme": "default",
+                "default_dark_theme": null,
+                "theme_color": null,
+            }))
+        }
+
+        // Source: homeassistant/components/frontend/storage.py  handle_get_user_data
+        // Stores user-specific frontend preferences (dashboard layout, etc).
+        "frontend/get_user_data" => {
+            result_ok(id, json!({"data": null}))
+        }
+
+        // Source: homeassistant/components/config/area_registry.py
+        "config/area_registry/list" => {
+            match state.area_registry.list().await {
+                Ok(areas) => {
+                    let entries: Vec<Value> = areas
+                        .into_iter()
+                        .map(|a| json!({
+                            "area_id": a.area_id,
+                            "name": a.name,
+                            "aliases": a.aliases,
+                            "labels": [],
+                            "floor_id": a.floor_id,
+                            "icon": a.icon,
+                            "picture": a.picture,
+                        }))
+                        .collect();
+                    result_ok(id, json!(entries))
+                }
+                Err(_) => result_err(id, "internal_error", "Failed to load area registry"),
+            }
+        }
+
+        // Source: homeassistant/components/config/area_registry.py  websocket_create_area
+        "config/area_registry/create" => {
+            let name = match extra.get("name").and_then(|v| v.as_str()) {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => return result_err(id, "invalid_format", "name is required"),
+            };
+            match state.area_registry.create(name).await {
+                Ok(area) => result_ok(id, json!({
+                    "area_id": area.area_id,
+                    "name": area.name,
+                    "aliases": area.aliases,
+                    "labels": [],
+                    "floor_id": area.floor_id,
+                    "icon": area.icon,
+                    "picture": area.picture,
+                })),
+                Err(_) => result_err(id, "internal_error", "Failed to create area"),
+            }
+        }
+
+        // Source: homeassistant/components/config/area_registry.py  websocket_update_area
+        "config/area_registry/update" => {
+            let area_id = match extra.get("area_id").and_then(|v| v.as_str()) {
+                Some(id) => id.to_string(),
+                None => return result_err(id, "invalid_format", "area_id is required"),
+            };
+            // Each field is optional; absent = leave unchanged, null = clear.
+            let name    = extra.get("name").and_then(|v| v.as_str()).map(str::to_string);
+            let aliases = extra.get("aliases").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect::<Vec<_>>()
+            });
+            let floor_id = extra.get("floor_id").map(|v| v.as_str().map(str::to_string));
+            let icon     = extra.get("icon").map(|v| v.as_str().map(str::to_string));
+            let picture  = extra.get("picture").map(|v| v.as_str().map(str::to_string));
+
+            match state.area_registry.update(&area_id, name, aliases, floor_id, icon, picture).await {
+                Ok(Some(area)) => result_ok(id, json!({
+                    "area_id": area.area_id,
+                    "name": area.name,
+                    "aliases": area.aliases,
+                    "labels": [],
+                    "floor_id": area.floor_id,
+                    "icon": area.icon,
+                    "picture": area.picture,
+                })),
+                Ok(None) => result_err(id, "not_found", "Area not found"),
+                Err(_)   => result_err(id, "internal_error", "Failed to update area"),
+            }
+        }
+
+        // Source: homeassistant/components/config/area_registry.py  websocket_delete_area
+        "config/area_registry/delete" => {
+            let area_id = match extra.get("area_id").and_then(|v| v.as_str()) {
+                Some(id) => id.to_string(),
+                None => return result_err(id, "invalid_format", "area_id is required"),
+            };
+            match state.area_registry.delete(&area_id).await {
+                Ok(true)  => result_ok(id, Value::Null),
+                Ok(false) => result_err(id, "not_found", "Area not found"),
+                Err(_)    => result_err(id, "internal_error", "Failed to delete area"),
+            }
+        }
+
+        // Source: homeassistant/components/config/entity_registry.py  websocket_list_entities
+        // iOS model manager caches the full entity + device registry.
+        "config/entity_registry/list" => {
+            match (state.mobile_entities.all().await, state.mobile_devices.all().await) {
+                (Ok(entities), Ok(devices)) => {
+                    let entries: Vec<Value> = entities
+                        .iter()
+                        .map(|e| {
+                            let device_id = devices
+                                .iter()
+                                .find(|d| d.webhook_id == e.webhook_id)
+                                .and_then(|d| d.device_id.as_deref())
+                                .unwrap_or(&e.webhook_id);
+                            json!({
+                                "entity_id": e.entity_id,
+                                "name": e.name_by_user,
+                                "original_name": e.sensor_name,
+                                "platform": "mobile_app",
+                                "device_id": device_id,
+                                "area_id": e.user_area_id,
+                                "disabled_by": if e.disabled { Value::String("user".into()) } else { Value::Null },
+                                "hidden_by": Value::Null,
+                                "aliases": [],
+                                "labels": [],
+                                "config_entry_id": e.webhook_id,
+                                "unique_id": e.sensor_unique_id,
+                                "icon": e.icon,
+                                "entity_category": e.entity_category,
+                            })
+                        })
+                        .collect();
+                    result_ok(id, json!(entries))
+                }
+                _ => result_err(id, "internal_error", "Failed to fetch entity registry"),
+            }
+        }
+
+        // Source: homeassistant/components/config/entity_registry.py  websocket_list_for_display
+        // Compact variant used by configEntityRegistryListForDisplay() in the iOS app.
+        "config/entity_registry/list_for_display" => {
+            match (state.mobile_entities.all().await, state.mobile_devices.all().await) {
+                (Ok(entities), Ok(devices)) => {
+                    let entries: Vec<Value> = entities
+                        .iter()
+                        .map(|e| {
+                            let device_id = devices
+                                .iter()
+                                .find(|d| d.webhook_id == e.webhook_id)
+                                .and_then(|d| d.device_id.as_deref())
+                                .unwrap_or(&e.webhook_id);
+                            // Compact keys match HAKit's EntityRegistryListForDisplay model:
+                            // ei=entity_id, n=name, di=device_id, pl=platform,
+                            // ai=area_id, dp=device_class, lb=labels, hb=hidden_by, db=disabled_by
+                            json!({
+                                "ei": e.entity_id,
+                                "n": e.name_by_user.as_deref().unwrap_or(&e.sensor_name),
+                                "di": device_id,
+                                "pl": "mobile_app",
+                                "ai": e.user_area_id,
+                                "dp": e.device_class,
+                                "lb": [],
+                                "hb": Value::Null,
+                                "db": if e.disabled { Value::String("user".into()) } else { Value::Null },
+                                "ic": e.icon,
+                                "ec": e.entity_category,
+                            })
+                        })
+                        .collect();
+                    result_ok(id, json!({"entities": entries, "entity_categories": {}}))
+                }
+                _ => result_err(id, "internal_error", "Failed to fetch entity registry"),
+            }
+        }
+
+        // Source: homeassistant/components/lovelace/websocket.py  websocket_lovelace_config
+        // iOS sidebar uses get_panels to find lovelace, then fetches lovelace/config.
+        // We return a minimal dashboard so the app doesn't error.
+        "lovelace/config" => {
+            result_ok(id, json!({
+                "views": [{"title": "Home", "path": "home", "cards": []}]
+            }))
+        }
+
         // Source: const.py  ERR_UNKNOWN_COMMAND = "unknown_command"
         _ => result_err(
             id,
@@ -531,6 +816,19 @@ async fn dispatch_command(
             &format!("Unknown command: {msg_type}"),
         ),
     }
+}
+
+/// Compute a simple 16-hex-char fingerprint from bytes — used as a stable user id.
+/// Not cryptographic; just needs to be deterministic and collision-resistant enough
+/// for a single-user device.
+fn md5_hex(data: &[u8]) -> u128 {
+    // FNV-1a 128-bit variant (no external dep).
+    let mut hash: u128 = 0x6c62272e07bb0142_62b821756295c58d_u128;
+    for &b in data {
+        hash ^= b as u128;
+        hash = hash.wrapping_mul(0x0000000001000000_000000000000013B_u128);
+    }
+    hash
 }
 
 // ---------------------------------------------------------------------------
@@ -767,6 +1065,7 @@ mod tests {
             ui: UiConfig {
                 product_name: "Test Home".into(),
             },
+            areas: crate::config::AreasConfig::default(),
         };
         let storage = Storage::new_in_memory();
         storage
@@ -904,9 +1203,9 @@ mod tests {
         assert!(msg.get("message").is_some());
     }
 
-    /// ping command -> result with success=true.
+    /// ping command -> {"type":"pong","id":N}.
     ///
-    /// Source: commands.py handle_ping
+    /// Source: commands.py pong_message
     #[tokio::test]
     async fn ws_ping_returns_pong_result() {
         let server = make_server().await;
@@ -925,8 +1224,7 @@ mod tests {
             .await;
         let resp: Value = ws.receive_json().await;
         assert_eq!(resp["id"], 1);
-        assert_eq!(resp["type"], "result");
-        assert_eq!(resp["success"], true);
+        assert_eq!(resp["type"], "pong");
     }
 
     /// get_states -> result array.
@@ -1009,7 +1307,7 @@ mod tests {
 
     /// Result shape: id + type + success always present.
     ///
-    /// Source: messages.py result_message
+    /// Source: commands.py pong_message
     #[tokio::test]
     async fn ws_result_message_has_required_fields() {
         let server = make_server().await;
@@ -1027,9 +1325,7 @@ mod tests {
         ws.send_json(&serde_json::json!({"id": 5, "type": "ping"}))
             .await;
         let resp: Value = ws.receive_json().await;
-        assert!(resp.get("id").is_some());
-        assert_eq!(resp["type"], "result");
-        assert!(resp.get("success").is_some());
-        assert!(resp.get("result").is_some());
+        assert_eq!(resp["id"], 5);
+        assert_eq!(resp["type"], "pong");
     }
 }

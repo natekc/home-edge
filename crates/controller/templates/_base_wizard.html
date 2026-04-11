@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ product_name }}</title>
+  <style>{% include "_css.html" %}</style>
+</head>
+<body>
+{% include "_icons.html" %}
+<div class="wizard-shell">
+  <div class="wizard-logo">
+    <svg><use href="#icon-home-edge"/></svg>
+    <span class="wizard-logo-text">{{ product_name }}</span>
+  </div>
+  <div class="wizard-card">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+</body>
+</html>
