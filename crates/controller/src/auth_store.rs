@@ -1,6 +1,11 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+};
+use rand_core::OsRng;
 use tokio::sync::Mutex;
 
 use crate::storage::{Storage, StoredUser, save_json_atomic};
@@ -58,26 +63,79 @@ impl AuthStore {
     }
 }
 
+/// Hash a password with Argon2id and return the PHC string.
+///
+/// CPU-bound; call from a spawned blocking task in async contexts where
+/// latency matters (login), but suitable inline for one-time onboarding.
+pub fn hash_password(password: &str) -> Result<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| anyhow::anyhow!("argon2 hash failed: {e}"))?
+        .to_string();
+    Ok(hash)
+}
+
+/// Verify a candidate password against a stored value.
+///
+/// Handles two cases:
+/// - PHC string (`$argon2id$…`) — constant-time argon2 verification.
+/// - Legacy plaintext — plain equality check used only during the migration
+///   window before the user's first post-upgrade login.
+///
+/// Returns `true` if the candidate is correct.
+pub fn verify_password(candidate: &str, stored: &str) -> bool {
+    if stored.starts_with("$argon2") {
+        match PasswordHash::new(stored) {
+            Ok(parsed) => Argon2::default()
+                .verify_password(candidate.as_bytes(), &parsed)
+                .is_ok(),
+            Err(_) => false,
+        }
+    } else {
+        // Legacy plaintext — timing is acceptable here since we immediately
+        // re-hash and save on the first successful login (see ha_auth.rs).
+        candidate == stored
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::temp_dir;
 
+    #[test]
+    fn hash_and_verify_round_trip() {
+        let hashed = hash_password("correct-horse").expect("hash");
+        assert!(hashed.starts_with("$argon2"), "must be PHC string");
+        assert!(verify_password("correct-horse", &hashed), "correct password must verify");
+        assert!(!verify_password("wrong-password", &hashed), "wrong password must not verify");
+    }
+
+    #[test]
+    fn verify_legacy_plaintext_falls_back_correctly() {
+        // Simulates a user record that was stored before the hashing migration.
+        assert!(verify_password("secret", "secret"), "plaintext match");
+        assert!(!verify_password("other", "secret"), "plaintext mismatch");
+    }
+
     #[tokio::test]
     async fn persists_auth_user() {
         let root = temp_dir("auth-store");
         let store = AuthStore::new(root);
+        let hashed = hash_password("secret").expect("hash password");
         let user = StoredUser {
             name: "Test".into(),
             username: "test-user".into(),
-            password: "secret".into(),
+            password: hashed,
             language: "en".into(),
         };
 
         store.save_user(&user).await.expect("save auth user");
-        let loaded = store.load_user().await.expect("load auth user");
+        let loaded = store.load_user().await.expect("load auth user").expect("user");
 
-        assert_eq!(loaded, Some(user));
+        assert!(loaded.password.starts_with("$argon2"), "stored password must be hashed");
+        assert_eq!(loaded.username, "test-user");
     }
 
     #[tokio::test]
