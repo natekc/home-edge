@@ -1,0 +1,75 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Overview
+    <span class="transport-badge {{ 'ble' if transport == 'BLE' else '' }}">{{ transport }}</span>
+  </h1>
+  <p>Connected devices and live sensor readings.</p>
+</div>
+
+<div class="page-body">
+  {% if devices | length == 0 %}
+  <div class="ha-card">
+    <div class="ha-card-body">
+      <div class="empty-state">
+        <svg><use href="#icon-devices"/></svg>
+        <h3>No devices connected yet</h3>
+        <p>
+          Open the <strong>Home Assistant</strong> app, go to
+          <em>Settings → Companion App → Server</em> and connect to this instance.
+        </p>
+        <div class="badge badge-info" style="font-size:.82rem;padding:6px 14px">{{ server_host }}:{{ server_port }}</div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+
+  <!-- Connected Devices -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header">
+      <h2>Connected Devices</h2>
+      <a href="/ble" style="display:flex;align-items:center;gap:5px;font-size:.82rem">
+        <svg width="16" height="16"><use href="#icon-plus"/></svg>
+        Pair new
+      </a>
+    </div>
+    <div class="ha-card-body">
+      <div class="device-grid">
+        {% for device in devices %}
+        <a href="/devices/{{ device.webhook_id }}" style="text-decoration:none;color:inherit">
+          <div class="device-card">
+            <div class="device-card-title">
+              <svg class="sensor-tile-icon" width="22" height="22"><use href="#icon-devices"/></svg>
+              <h3>{{ device.device_name }}</h3>
+              <span class="status-dot online" title="Registered"></span>
+            </div>
+            <div class="device-card-meta">{{ device.manufacturer }} {{ device.model }}</div>
+            <div class="device-card-stats">
+              <span class="badge badge-neutral">{{ device.entity_count }} sensor{% if device.entity_count != 1 %}s{% endif %}</span>
+              <span class="badge badge-neutral">{{ device.os_name }}</span>
+            </div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Sensor readings — HTMX-polled every 5 s -->
+  <div class="ha-card">
+    <div class="ha-card-header">
+      <h2>Sensors</h2>
+      <span class="text-muted" style="font-size:.77rem">Refreshes every 5 s</span>
+    </div>
+    <div class="ha-card-body"
+         id="sensor-grid"
+         hx-get="/fragments/dashboard-sensors"
+         hx-trigger="every 5s"
+         hx-swap="innerHTML">
+      {% include "fragments/sensors.html" %}
+    </div>
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

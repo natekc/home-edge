@@ -1,0 +1,80 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <div class="breadcrumb">
+    <a href="/">Overview</a>
+    <span class="breadcrumb-sep">›</span>
+    <a href="/devices/{{ device.webhook_id }}">{{ device.device_name }}</a>
+    <span class="breadcrumb-sep">›</span>
+    <span>{{ entity.display_name }}</span>
+  </div>
+  <h1>Edit Sensor</h1>
+  <p>{{ entity.entity_id }}</p>
+</div>
+
+<div class="page-body">
+  <div class="ha-card">
+    <div class="ha-card-header"><h2>Sensor Settings</h2></div>
+    <div class="ha-card-body">
+
+      {% if saved %}
+      <div style="background:#dcfce7;color:#166534;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:.88rem">
+        ✓ Changes saved
+      </div>
+      {% endif %}
+
+      <form method="post" action="/devices/{{ device.webhook_id }}/entities/{{ entity.entity_id }}/save">
+
+        <div class="form-group">
+          <label for="display_name">Display Name</label>
+          <input id="display_name" name="display_name" class="form-control"
+                 value="{{ entity.display_name }}" required>
+        </div>
+
+        <div class="form-group">
+          <label for="area_id">Room / Area</label>
+          <select id="area_id" name="area_id" class="form-control">
+            <option value="">— No area —</option>
+            {% for area in areas %}
+            <option value="{{ area }}" {% if entity.user_area_id == area %}selected{% endif %}>{{ area }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="unit_override">Unit Override</label>
+          <input id="unit_override" name="unit_override" class="form-control"
+                 value="{{ entity.unit_of_measurement | default('', true) }}"
+                 placeholder="e.g. °F, %, ppm — leave blank to keep original">
+        </div>
+
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer;font-weight:normal">
+            <label class="toggle" style="margin:0">
+              <input type="checkbox" name="disabled" value="true" {% if entity.disabled %}checked{% endif %}>
+              <span class="toggle-slider"></span>
+            </label>
+            <div>
+              <div style="font-weight:600;font-size:.9rem">Disabled</div>
+              <div class="text-muted">Hide this sensor from the dashboard</div>
+            </div>
+          </label>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:8px">
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+          <a href="/devices/{{ device.webhook_id }}" class="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+
+      {% if sparkline %}
+      <hr>
+      <h3 style="font-size:.95rem;margin:0 0 10px">Recent History</h3>
+      <div class="sparkline">{{ sparkline | safe }}</div>
+      <p class="text-muted" style="margin-top:4px">Last {{ history_count }} readings</p>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+{% endblock %}

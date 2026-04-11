@@ -7,6 +7,12 @@ use home_edge::{app, config, logging};
 struct Args {
     #[arg(long, env = "HOME_EDGE_CONFIG", default_value = "config/default.toml")]
     config: std::path::PathBuf,
+
+    /// Wipe all persisted state before starting: login credentials, OAuth tokens,
+    /// registered devices, and onboarding progress. The server will start in
+    /// first-run mode and require going through onboarding again.
+    #[arg(long)]
+    reset: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -15,5 +21,5 @@ async fn main() -> Result<()> {
     logging::init_logging();
 
     let config = config::AppConfig::load(&args.config).await?;
-    app::run(config).await
+    app::run(config, args.reset).await
 }

@@ -1,0 +1,21 @@
+{% if ble_devices | length == 0 %}
+<p class="text-muted">No BLE devices found nearby. Make sure your sensor is in pairing mode and try again.</p>
+{% else %}
+<p style="font-weight:600;margin:0 0 12px">
+  Found {{ ble_devices | length }} device{% if ble_devices | length != 1 %}s{% endif %}
+</p>
+{% for device in ble_devices %}
+<div class="ble-device-row">
+  <svg width="22" height="22" style="color:var(--ha-blue);fill:currentColor;flex-shrink:0"><use href="#icon-bluetooth"/></svg>
+  <span class="ble-device-name">{{ device.name }}</span>
+  <span class="ble-device-rssi">{{ device.rssi }} dBm</span>
+  <button class="btn btn-primary btn-sm"
+          hx-post="/api/ble/pair"
+          hx-vals='{"name":"{{ device.name }}"}'
+          hx-target="closest .ble-device-row"
+          hx-swap="outerHTML">
+    Pair
+  </button>
+</div>
+{% endfor %}
+{% endif %}

@@ -297,6 +297,13 @@ async fn register_sensor_command(
         return (StatusCode::BAD_REQUEST, Json(json!({"message": err}))).into_response();
     }
 
+    // Record numeric value to history for sparklines / history API.
+    if let Some(st) = state.states.get(&record.entity_id) {
+        if let Ok(v) = st.state.parse::<f64>() {
+            state.history.record(&record.entity_id, v).await;
+        }
+    }
+
     (StatusCode::CREATED, Json(json!({"success": true}))).into_response()
 }
 
@@ -381,6 +388,13 @@ async fn update_sensor_states_command(
                 }),
             );
             continue;
+        }
+
+        // Record numeric value to history for sparklines / history API.
+        if let Some(st) = state.states.get(&record.entity_id) {
+            if let Ok(v) = st.state.parse::<f64>() {
+                state.history.record(&record.entity_id, v).await;
+            }
         }
 
         let mut result = json!({"success": true});
@@ -546,6 +560,7 @@ mod tests {
             ui: UiConfig {
                 product_name: "Test Home".into(),
             },
+            areas: crate::config::AreasConfig::default(),
         };
         let storage = Storage::new_in_memory();
         let state = Arc::new(AppState::new(config, storage));
@@ -631,6 +646,7 @@ mod tests {
             ui: UiConfig {
                 product_name: "T".into(),
             },
+            areas: crate::config::AreasConfig::default(),
         };
         let webhooks = WebhookStore::new();
         let mut base = AppState::new(config, Storage::new_in_memory());

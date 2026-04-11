@@ -1,0 +1,56 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Profile</h1>
+  <p>Your account and instance details.</p>
+</div>
+
+<div class="page-body">
+
+  <!-- ── User card ──────────────────────────────────────────────────────── -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header">
+      <h2>Account</h2>
+    </div>
+    <div class="ha-card-body" style="padding:0">
+      <table>
+        <tr><th>Name</th><td>{{ user_name }}</td></tr>
+        <tr><th>Username</th><td>{{ user_username }}</td></tr>
+        <tr><th>Language</th><td>{{ language }}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Instance card ──────────────────────────────────────────────────── -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header">
+      <h2>Instance</h2>
+    </div>
+    <div class="ha-card-body" style="padding:0">
+      <table>
+        <tr><th>Location name</th><td>{{ location_name }}</td></tr>
+        <tr><th>Time zone</th><td>{{ time_zone }}</td></tr>
+        <tr><th>Unit system</th><td>{{ unit_system }}</td></tr>
+        <tr><th>Country</th><td>{{ country }}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Danger zone ────────────────────────────────────────────────────── -->
+  <div class="ha-card">
+    <div class="ha-card-header" style="color:var(--error,#e74c3c)">
+      <h2>Switch server</h2>
+    </div>
+    <div class="ha-card-body">
+      <p class="text-muted" style="margin:0 0 14px">
+        To connect to a different Home Assistant instance, use the server
+        switcher in the iOS app settings.
+      </p>
+      <button class="btn btn-secondary" onclick="openNativeSettings()">
+        Open server settings
+      </button>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

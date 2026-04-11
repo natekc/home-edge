@@ -1,0 +1,99 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <div class="breadcrumb">
+    <a href="/">Overview</a>
+    <span class="breadcrumb-sep">›</span>
+    <span>{{ device.device_name }}</span>
+  </div>
+  <h1>{{ device.device_name }}</h1>
+  <p>{{ device.manufacturer }} {{ device.model }} · {{ device.os_name }}{% if device.os_version %} {{ device.os_version }}{% endif %}</p>
+</div>
+
+<div class="page-body">
+
+  <!-- Rename -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header"><h2>Rename Device</h2></div>
+    <div class="ha-card-body">
+      <form hx-patch="/api/devices/{{ device.webhook_id }}"
+            hx-target="#rename-result"
+            hx-swap="innerHTML">
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <div class="form-group" style="flex:1;margin:0">
+            <label for="device_name">Display Name</label>
+            <input id="device_name" name="device_name" class="form-control"
+                   value="{{ device.device_name }}" required>
+          </div>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+      <div id="rename-result" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- Metadata -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header"><h2>Device Info</h2></div>
+    <div class="ha-card-body" style="padding:0">
+      <table>
+        <tr><th>App</th><td>{{ device.app_name }} {{ device.app_version }}</td></tr>
+        <tr><th>Webhook ID</th><td><code>{{ device.webhook_id }}</code></td></tr>
+        <tr><th>Encryption</th><td>{{ "Enabled" if device.supports_encryption else "Disabled" }}</td></tr>
+        {% if device.owner_username %}<tr><th>Owner</th><td>{{ device.owner_username }}</td></tr>{% endif %}
+      </table>
+    </div>
+  </div>
+
+  <!-- Entities -->
+  <div class="ha-card">
+    <div class="ha-card-header">
+      <h2>Sensors ({{ entities | length }})</h2>
+    </div>
+    <div class="ha-card-body" style="padding:0">
+      {% if entities | length == 0 %}
+      <div class="empty-state" style="padding:36px 24px">
+        <p class="text-muted">No sensors registered yet. Open the Home Assistant app to push sensor data.</p>
+      </div>
+      {% else %}
+      <table>
+        <thead>
+          <tr>
+            <th>Sensor</th>
+            <th>Class</th>
+            <th>Value</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entity in entities %}
+          <tr>
+            <td>
+              <div style="font-weight:600">{{ entity.display_name }}</div>
+              <div class="text-muted" style="font-size:.75rem">{{ entity.entity_id }}</div>
+            </td>
+            <td>{{ entity.device_class | default("—", true) }}</td>
+            <td>{{ entity.value }}{% if entity.unit %}<span class="text-muted"> {{ entity.unit }}</span>{% endif %}</td>
+            <td>
+              <span class="{{ 'badge badge-success' if not entity.disabled else 'badge badge-neutral' }}">
+                {{ "Active" if not entity.disabled else "Disabled" }}
+              </span>
+            </td>
+            <td>
+              <a href="/devices/{{ device.webhook_id }}/entities/{{ entity.entity_id }}"
+                 class="btn btn-secondary btn-sm">
+                <svg width="14" height="14"><use href="#icon-edit"/></svg>
+                Edit
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

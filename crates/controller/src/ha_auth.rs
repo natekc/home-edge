@@ -54,12 +54,15 @@ fn onboarding_required_response() -> Response {
 // Token store — holds short-lived access tokens and refresh tokens
 // ---------------------------------------------------------------------------
 
-/// On-disk representation — only refresh tokens survive restarts.
-/// Access tokens and auth codes are intentionally ephemeral.
+/// On-disk representation — refresh tokens and access tokens survive restarts.
+/// Auth codes are intentionally ephemeral (one-time use).
 #[derive(Default, Serialize, Deserialize)]
 struct PersistedTokens {
     /// refresh_token → client_id
     refresh_tokens: HashMap<String, String>,
+    /// access_token → client_id
+    #[serde(default)]
+    access_tokens: HashMap<String, String>,
 }
 
 /// Opaque token registry kept in AppState.
@@ -89,7 +92,7 @@ impl TokenStore {
         }
     }
 
-    /// Load persisted refresh tokens from disk into the in-memory store.
+    /// Load persisted tokens from disk into the in-memory store.
     /// Called once at startup in `AppState::new_initialized`.
     pub async fn load_persisted(&self) -> Result<()> {
         let path = self.root.join(TOKENS_FILE);
@@ -99,6 +102,7 @@ impl TokenStore {
                     serde_json::from_str(&contents).unwrap_or_default();
                 let mut inner = self.inner.lock().await;
                 inner.refresh_tokens = persisted.refresh_tokens;
+                inner.access_tokens = persisted.access_tokens;
                 Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -109,13 +113,14 @@ impl TokenStore {
         }
     }
 
-    /// Persist the current refresh token table to disk.
+    /// Persist the current token tables to disk.
     /// Errors are logged but not propagated — callers should not fail on persistence error.
     async fn save_persisted(&self) {
         let persisted = {
             let inner = self.inner.lock().await;
             PersistedTokens {
                 refresh_tokens: inner.refresh_tokens.clone(),
+                access_tokens: inner.access_tokens.clone(),
             }
         };
         let path = self.root.join(TOKENS_FILE);
@@ -163,30 +168,36 @@ impl TokenStore {
         client_id: Option<&str>,
         refresh_token: &str,
     ) -> Option<String> {
-        let mut inner = self.inner.lock().await;
-        let stored_client = inner.refresh_tokens.get(refresh_token)?.clone();
-        // Source: TokenView._async_handle_refresh_token
-        //   if refresh_token.client_id != client_id: → invalid_request
-        // client_id is optional for refresh; only check when provided.
-        if let Some(cid) = client_id {
-            if stored_client != cid {
-                tracing::warn!("client_id mismatch during token refresh");
-                return None;
+        let access_token = {
+            let mut inner = self.inner.lock().await;
+            let stored_client = inner.refresh_tokens.get(refresh_token)?.clone();
+            // Source: TokenView._async_handle_refresh_token
+            //   if refresh_token.client_id != client_id: → invalid_request
+            // client_id is optional for refresh; only check when provided.
+            if let Some(cid) = client_id {
+                if stored_client != cid {
+                    tracing::warn!("client_id mismatch during token refresh");
+                    return None;
+                }
             }
-        }
-        let access_token = new_token();
-        inner
-            .access_tokens
-            .insert(access_token.clone(), stored_client);
+            let access_token = new_token();
+            inner
+                .access_tokens
+                .insert(access_token.clone(), stored_client);
+            access_token
+        };
+        self.save_persisted().await;
         Some(access_token)
     }
 
-    /// Revoke a refresh token (and conceptually all its access tokens).
+    /// Revoke a refresh token and all associated access tokens for its client.
     /// Source: RevokeTokenView — returns 200 regardless of whether token existed.
     pub async fn revoke_refresh_token(&self, token: &str) {
         {
             let mut inner = self.inner.lock().await;
-            inner.refresh_tokens.remove(token);
+            if let Some(client_id) = inner.refresh_tokens.remove(token) {
+                inner.access_tokens.retain(|_, cid| cid != &client_id);
+            }
         }
         self.save_persisted().await;
     }
@@ -402,7 +413,7 @@ async fn auth_authorize(State(state): State<Arc<AppState>>, uri: Uri) -> Respons
     let request = parse_authorize_request(&uri);
     if authorize_request_error(&request).is_some() {
         return Html(render_authorize_page(
-            state.config.ui.product_name.as_str(),
+            &state,
             &request,
             onboarding.onboarded,
             Some("Invalid authorization request."),
@@ -411,7 +422,7 @@ async fn auth_authorize(State(state): State<Arc<AppState>>, uri: Uri) -> Respons
     }
 
     Html(render_authorize_page(
-        state.config.ui.product_name.as_str(),
+        &state,
         &request,
         onboarding.onboarded,
         None,
@@ -431,7 +442,7 @@ async fn auth_authorize_submit(
     };
     if let Some(error) = authorize_request_error(&request) {
         return Html(render_authorize_page(
-            state.config.ui.product_name.as_str(),
+            &state,
             &request,
             false,
             Some(error),
@@ -455,7 +466,7 @@ async fn auth_authorize_submit(
         let password = form.password.trim();
         if username.is_empty() || password.is_empty() {
             return Html(render_authorize_page(
-                state.config.ui.product_name.as_str(),
+                &state,
                 &request,
                 false,
                 Some("Username and password are required."),
@@ -506,7 +517,7 @@ async fn auth_authorize_submit(
         .is_some_and(|user| form.username == user.username && form.password == user.password);
     if !valid {
         return Html(render_authorize_page(
-            state.config.ui.product_name.as_str(),
+            &state,
             &request,
             true,
             Some("Invalid username or password."),
@@ -523,7 +534,7 @@ async fn auth_authorize_submit(
             (StatusCode::FOUND, headers).into_response()
         }
         Err(_) => Html(render_authorize_page(
-            state.config.ui.product_name.as_str(),
+            &state,
             &request,
             true,
             Some("Invalid redirect URI."),
@@ -900,44 +911,28 @@ fn build_authorize_redirect(redirect_uri: &str, code: &str, state: Option<&str>)
 }
 
 fn render_authorize_page(
-    product_name: &str,
+    state: &AppState,
     request: &AuthorizeRequest,
     onboarded: bool,
     error: Option<&str>,
 ) -> String {
-    let error_html = error.map_or_else(String::new, |message| {
-        format!(
-            "<p style=\"margin:0 0 1rem;color:#9b1c1c;background:#fde8e8;padding:.8rem 1rem;border-radius:10px;\">{message}</p>"
-        )
-    });
-    let response_type = html_escape(request.response_type.as_deref().unwrap_or("code"));
-    let client_id = html_escape(request.client_id.as_deref().unwrap_or(""));
-    let redirect_uri = html_escape(request.redirect_uri.as_deref().unwrap_or(""));
-    let state = html_escape(request.state.as_deref().unwrap_or(""));
-    let heading = if onboarded {
-        format!("Sign in to {product_name}")
-    } else {
-        format!("Set up {product_name}")
+    use minijinja::{context, value::Value};
+    // Manually escape URL values with html_escape (which does NOT encode /)
+    // and mark them safe so minijinja's auto-escape doesn't re-encode / as &#x2f;.
+    let ctx = context! {
+        product_name  => state.config.ui.product_name.as_str(),
+        response_type => Value::from_safe_string(html_escape(request.response_type.as_deref().unwrap_or("code"))),
+        client_id     => Value::from_safe_string(html_escape(request.client_id.as_deref().unwrap_or(""))),
+        redirect_uri  => Value::from_safe_string(html_escape(request.redirect_uri.as_deref().unwrap_or(""))),
+        state_param   => Value::from_safe_string(html_escape(request.state.as_deref().unwrap_or(""))),
+        onboarded     => onboarded,
+        error         => error,
     };
-    let intro = if onboarded {
-        "Authorize the Home Assistant app to connect to this Home Edge instance.".to_string()
-    } else {
-        "Create the first owner account for this Home Edge instance. After setup, the Home Assistant app will continue automatically.".to_string()
-    };
-    let onboarding_fields = if onboarded {
-        String::new()
-    } else {
-        "<label for=\"name\">Name</label><input id=\"name\" name=\"name\" autocomplete=\"name\" placeholder=\"Home Edge Owner\"><label for=\"location_name\">Location name</label><input id=\"location_name\" name=\"location_name\" autocomplete=\"organization\" placeholder=\"Home\"><input type=\"hidden\" name=\"language\" value=\"en\">".to_string()
-    };
-    let button_label = if onboarded {
-        "Authorize"
-    } else {
-        "Create account and authorize"
-    };
-
-    format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{product_name}</title><style>body{{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;margin:0;background:#f5f1e8;color:#1d2a2a}}main{{max-width:28rem;margin:4rem auto;padding:1.5rem}}section{{background:#fff;border-radius:16px;padding:2rem;box-shadow:0 10px 30px rgba(0,0,0,.08)}}h1{{font-size:1.8rem;margin:0 0 1rem}}p{{line-height:1.5}}label{{display:block;font-weight:600;margin:.9rem 0 .35rem}}input{{width:100%;box-sizing:border-box;border:1px solid #ccd5d7;border-radius:10px;padding:.85rem;font-size:1rem}}button{{margin-top:1.2rem;width:100%;background:#204030;color:#fff;border:0;border-radius:10px;padding:.95rem 1rem;font-weight:700;cursor:pointer}}</style></head><body><main><section><h1>{heading}</h1><p>{intro}</p>{error_html}<form method=\"post\" action=\"/auth/authorize\"><input type=\"hidden\" name=\"response_type\" value=\"{response_type}\"><input type=\"hidden\" name=\"client_id\" value=\"{client_id}\"><input type=\"hidden\" name=\"redirect_uri\" value=\"{redirect_uri}\"><input type=\"hidden\" name=\"state\" value=\"{state}\">{onboarding_fields}<label for=\"username\">Username</label><input id=\"username\" name=\"username\" autocomplete=\"username\" required><label for=\"password\">Password</label><input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><button type=\"submit\">{button_label}</button></form></section></main></body></html>"
-    )
+    state
+        .templates
+        .get_template("authorize.html")
+        .and_then(|t| t.render(ctx))
+        .unwrap_or_else(|e| format!("Template error: {e}"))
 }
 
 fn html_escape(value: &str) -> String {
@@ -1049,6 +1044,7 @@ mod tests {
             ui: UiConfig {
                 product_name: "Test Home".into(),
             },
+            areas: crate::config::AreasConfig::default(),
         };
         let storage = Storage::new_in_memory();
         storage
@@ -1080,6 +1076,7 @@ mod tests {
             ui: UiConfig {
                 product_name: "Test Home".into(),
             },
+            areas: crate::config::AreasConfig::default(),
         };
         let storage = Storage::new_in_memory();
         let state = Arc::new(AppState::new(config, storage));

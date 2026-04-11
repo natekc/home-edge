@@ -1,0 +1,62 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Bluetooth Pairing</h1>
+  <p>Discover and pair nearby BLE sensors.</p>
+</div>
+
+<div class="page-body">
+  {% if not is_ble_build %}
+
+  <div class="ha-card">
+    <div class="ha-card-body">
+      <div class="empty-state">
+        <svg><use href="#icon-bluetooth"/></svg>
+        <h3>WiFi Build</h3>
+        <p>
+          This instance was compiled with WiFi transport.
+          BLE pairing requires a BLE-enabled build
+          (<code>--features transport_ble</code>).
+        </p>
+        <span class="badge badge-neutral" style="font-size:.82rem;padding:5px 12px">transport_wifi</span>
+      </div>
+    </div>
+  </div>
+
+  {% else %}
+
+  <div class="ha-card">
+    <div class="ha-card-body" style="text-align:center;padding:32px 24px">
+
+      <div class="ble-scanner">
+        <div class="ble-ring"></div>
+        <div class="ble-ring"></div>
+        <div class="ble-ring"></div>
+        <div class="ble-center">
+          <svg><use href="#icon-bluetooth"/></svg>
+        </div>
+      </div>
+
+      <p class="text-muted" style="margin-bottom:20px">
+        Put your sensor into pairing mode, then press Scan.
+      </p>
+
+      <button class="btn btn-primary"
+              hx-post="/api/ble/scan"
+              hx-target="#ble-results"
+              hx-swap="innerHTML"
+              hx-indicator="#scan-spinner">
+        <span id="scan-spinner" class="spinner htmx-indicator"></span>
+        Scan for Devices
+      </button>
+
+      <div id="ble-results" style="margin-top:24px;text-align:left">
+        <p class="text-muted">Press Scan to discover nearby BLE sensors.</p>
+      </div>
+
+    </div>
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

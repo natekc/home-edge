@@ -11,7 +11,7 @@ version = "0.1.0"
 [workspace.dependencies]
 anyhow = "1.0.98"
 thiserror = "2"
-axum = { version = "0.8.4", default-features = false, features = ["form", "http1", "json", "tokio", "ws"] }
+axum = { version = "0.8.4", default-features = false, features = ["form", "http1", "json", "query", "tokio", "ws"] }
 axum-test = { version = "17", features = ["ws"] }
 clap = { version = "4.5.40", features = ["derive", "env"] }
 ha-types = { path = "crates/ha-types" }
@@ -24,4 +24,5 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
 local-ip-address = "0.6.3"
 mdns-sd = "0.18.2"
+minijinja = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }

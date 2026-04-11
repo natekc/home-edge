@@ -34,6 +34,27 @@ pub struct MobileEntityRecord {
     pub entity_category: Option<String>,
     pub state_class: Option<String>,
     pub disabled: bool,
+    /// User-set display name overriding the sensor-reported name.
+    #[serde(default)]
+    pub name_by_user: Option<String>,
+    /// Area/room assigned by the user at deploy time or via the UI.
+    #[serde(default)]
+    pub user_area_id: Option<String>,
+}
+
+impl MobileEntityRecord {
+    /// Display name shown in the UI: user override first, then sensor name.
+    pub fn display_name(&self) -> &str {
+        self.name_by_user.as_deref().unwrap_or(&self.sensor_name)
+    }
+}
+
+/// Partial update struct for entity metadata.
+pub struct EntityMetaUpdate {
+    pub name_by_user: Option<String>,
+    pub user_area_id: Option<Option<String>>,
+    pub unit_of_measurement: Option<Option<String>>,
+    pub disabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -87,6 +108,8 @@ impl MobileEntityStore {
             entity_category: registration.entity_category,
             state_class: registration.state_class,
             disabled: registration.disabled,
+            name_by_user: None,
+            user_area_id: None,
         };
 
         if data.entities.get(&key) == Some(&record) {
@@ -121,6 +144,42 @@ impl MobileEntityStore {
 
     pub async fn all(&self) -> Result<Vec<MobileEntityRecord>> {
         Ok(self.load_data().await?.entities.into_values().collect())
+    }
+
+    /// Look up an entity by its stable `entity_id` (e.g. `sensor.mobile_app_...`).
+    pub async fn get_by_entity_id(&self, entity_id: &str) -> Result<Option<MobileEntityRecord>> {
+        Ok(self
+            .load_data()
+            .await?
+            .entities
+            .into_values()
+            .find(|r| r.entity_id == entity_id))
+    }
+
+    /// Apply a partial metadata update to an entity identified by `entity_id`.
+    ///
+    /// Returns `Ok(true)` if found and updated, `Ok(false)` if not found.
+    pub async fn update_meta(&self, entity_id: &str, update: EntityMetaUpdate) -> Result<bool> {
+        let _guard = self.lock.lock().await;
+        let mut data = self.load_locked().await?;
+        let Some(record) = data.entities.values_mut().find(|r| r.entity_id == entity_id) else {
+            return Ok(false);
+        };
+        if let Some(name) = update.name_by_user {
+            record.name_by_user = Some(name);
+        }
+        if let Some(area) = update.user_area_id {
+            record.user_area_id = area;
+        }
+        if let Some(unit) = update.unit_of_measurement {
+            record.unit_of_measurement = unit;
+        }
+        if let Some(disabled) = update.disabled {
+            record.disabled = disabled;
+        }
+        save_json_atomic(&self.path(), &data).await?;
+        *self.cache.write().await = Some(data);
+        Ok(true)
     }
 
     fn path(&self) -> PathBuf {
