@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub ui: UiConfig,
     #[serde(default)]
     pub areas: AreasConfig,
+    #[serde(default)]
+    pub history: HistoryConfig,
 }
 
 /// Initial area names used to seed the area registry on first boot.
@@ -44,6 +46,12 @@ pub struct ServerConfig {
     pub host: IpAddr,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Tracing log level filter.  Accepts the same values as the `RUST_LOG`
+    /// environment variable, e.g. `"info"`, `"debug"`, `"warn"`, or
+    /// a target-scoped filter like `"home_edge=debug,tower_http=info"`.
+    /// `RUST_LOG` takes precedence when set.
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +62,31 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UiConfig {
     pub product_name: String,
+}
+
+/// History ring-buffer configuration.
+///
+/// ```toml
+/// [history]
+/// capacity = 1000   # max readings retained per entity
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct HistoryConfig {
+    /// Maximum number of sensor readings to retain per entity.
+    /// Oldest entries are evicted when the buffer is full.
+    /// Default: 1000.
+    #[serde(default = "default_history_capacity")]
+    pub capacity: usize,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self { capacity: default_history_capacity() }
+    }
+}
+
+fn default_history_capacity() -> usize {
+    1000
 }
 
 impl AppConfig {
@@ -84,4 +117,8 @@ fn default_host() -> IpAddr {
 
 fn default_port() -> u16 {
     8124
+}
+
+fn default_log_level() -> String {
+    "info".into()
 }

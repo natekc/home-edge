@@ -435,6 +435,7 @@ mod tests {
             server: ServerConfig {
                 host: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: 0,
+                log_level: "info".into(),
             },
             storage: StorageConfig {
                 data_dir: PathBuf::from("/tmp/ha-compat-test"),
@@ -443,6 +444,7 @@ mod tests {
                 product_name: "Test Home".into(),
             },
             areas: crate::config::AreasConfig::default(),
+            history: crate::config::HistoryConfig::default(),
         };
         let storage = Storage::new_in_memory();
         let state = Arc::new(AppState::new(config, storage));

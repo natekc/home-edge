@@ -66,6 +66,7 @@ impl AppState {
         let mobile_devices = MobileDeviceStore::new(storage.root().to_path_buf());
         let mobile_entities = MobileEntityStore::new(storage.root().to_path_buf());
         let tokens = TokenStore::new(storage.root().to_path_buf());
+        let history_capacity = config.history.capacity;
         Self {
             core: AppCore::new(),
             auth,
@@ -80,7 +81,7 @@ impl AppState {
             webhooks: WebhookStore::new(),
             services: ServiceRegistry::new(),
             templates: crate::templates::build_env(),
-            history: crate::history_store::HistoryStore::new(),
+            history: crate::history_store::HistoryStore::new(history_capacity),
         }
     }
 
@@ -184,6 +185,7 @@ mod tests {
             server: ServerConfig {
                 host: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: 0,
+                log_level: "info".into(),
             },
             storage: StorageConfig {
                 data_dir: PathBuf::from("/tmp/home-edge-app-test"),
@@ -192,6 +194,7 @@ mod tests {
                 product_name: "Test Home".into(),
             },
             areas: AreasConfig::default(),
+            history: crate::config::HistoryConfig::default(),
         }
     }
 

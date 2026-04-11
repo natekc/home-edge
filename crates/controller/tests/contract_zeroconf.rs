@@ -12,6 +12,7 @@ fn sample_config() -> AppConfig {
         server: ServerConfig {
             host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port: 8124,
+            log_level: "info".into(),
         },
         storage: StorageConfig {
             data_dir: PathBuf::from("/tmp/home-edge-test"),
@@ -20,6 +21,7 @@ fn sample_config() -> AppConfig {
             product_name: "Home Edge".into(),
         },
         areas: home_edge::config::AreasConfig::default(),
+        history: home_edge::config::HistoryConfig::default(),
     }
 }
 

@@ -122,6 +122,7 @@ async fn build_server_and_state(
         server: ServerConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            log_level: "info".into(),
         },
         storage: StorageConfig {
             data_dir: storage_root,
@@ -130,6 +131,7 @@ async fn build_server_and_state(
             product_name: "Test Home".into(),
         },
         areas: home_edge::config::AreasConfig::default(),
+        history: home_edge::config::HistoryConfig::default(),
     };
     let state = Arc::new(
         AppState::new_initialized(config, storage)

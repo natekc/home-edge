@@ -11,8 +11,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tokio::sync::RwLock;
 
-const DEFAULT_CAPACITY: usize = 1000;
-
 /// A single timestamped sensor reading.
 #[derive(Debug, Clone, Serialize)]
 pub struct HistoryEntry {
@@ -62,10 +60,13 @@ pub struct HistoryStore {
 }
 
 impl HistoryStore {
-    pub fn new() -> Self {
+    /// Create a new history store with the given per-entity ring-buffer capacity.
+    ///
+    /// `capacity` is typically sourced from `AppConfig.history.capacity`.
+    pub fn new(capacity: usize) -> Self {
         Self {
             inner: RwLock::new(HashMap::new()),
-            capacity: DEFAULT_CAPACITY,
+            capacity,
         }
     }
 
