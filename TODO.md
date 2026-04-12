@@ -53,31 +53,43 @@ Wave 1 is complete and merged. Remaining waves are gated as shown.
 
 ### Wave 2 — scaffold (needs Wave 1 merged ✅)
 
-- [ ] **`feat/card-templates-scaffold`** — prerequisite for all card branches
-  - Create `crates/controller/templates/cards/` directory
-  - Create `crates/controller/templates/rows/` directory
-  - Create `crates/controller/templates/more_info/` directory
-  - Add `<dialog id="more-info-dialog">` shell to `_base_app.html` (before `</body>`)
-  - Add `.more-info-dialog` CSS block to `_css.html`
+- [x] **`feat/card-templates-scaffold`** — complete (merged into `feat/dashboard-cards`)
+  - `crates/controller/templates/more_info/` directory + 11 domain templates + `_default.html`
+  - `<dialog id="more-info-dialog">` shell added to `_base_app.html`
+  - `.more-info-dialog` CSS block + `.glance-grid`, `.button-row`, `.entity-row`, `.mi-*` added to `_css.html`
 
-### Wave 3 — cards (all parallel, need scaffold merged)
+### Wave 3 — cards (all parallel, need scaffold merged ✅)
 
-- [ ] **`feat/card-tile`** — generic tile card (icon + state + tap action)
-- [ ] **`feat/card-entities`** — entities list card (rows of icon + name + state)
-- [ ] **`feat/card-glance-sensor`** — glance/sensor card (compact multi-value grid)
-- [ ] **`feat/card-button`** — button card (one-tap service call)
+- [x] **`feat/card-tile`** — inline in `fragments/sensors.html` tile grid (light, switch, fan, cover, lock, binary_sensor)
+- [x] **`feat/card-entities`** — entity row CSS + select rendering in area cards
+- [x] **`feat/card-glance-sensor`** — glance grid in area cards for sensor entities
+- [x] **`feat/card-button`** — button row in area cards for button/scene/script entities
 
-### Wave 4 — more-info dialogs (needs Wave 3 merged)
+### Wave 4 — more-info dialogs (needs Wave 3 merged ✅)
 
-- [ ] **`feat/more-info-domains`** — per-domain detail dialogs triggered from cards
-  - Domains: `light`, `switch`, `cover`, `lock`, `fan`, `sensor`,
-    `binary_sensor`, `button`, `scene`, `script`, `select`
+- [x] **`feat/more-info-domains`** — 12 templates covering all 11 domains + default fallback:
+  - `more_info/_light.html` — on/off toggle → `light/toggle`
+  - `more_info/_switch.html` — on/off toggle → `switch/toggle`
+  - `more_info/_fan.html` — on/off toggle → `fan/toggle`
+  - `more_info/_cover.html` — open/stop/close → `cover/{open,stop,close}_cover`
+  - `more_info/_lock.html` — lock/unlock → `lock/{lock,unlock}`
+  - `more_info/_sensor.html` — value + unit + 20-entry history list
+  - `more_info/_binary_sensor.html` — state + 20-entry history list
+  - `more_info/_button.html` — press → `button/press`
+  - `more_info/_scene.html` — activate → `scene/activate`
+  - `more_info/_script.html` — run/stop → `script/{trigger,turn_off}`
+  - `more_info/_select.html` — display current option (mutation coming)
+  - `more_info/_default.html` — fallback: name + state + device_class
 
-### Wave 5 — dashboard autogeneration (needs Wave 3 + Wave 4 merged)
+### Wave 5 — dashboard autogeneration (needs Wave 3 + Wave 4 merged ✅)
 
-- [ ] **`feat/dashboard-autogen`** — generate a default dashboard from entity registry
-  - Group entities by area, assign card type by domain
-  - Render via the card templates added in Wave 3
+- [x] **`feat/dashboard-autogen`** — area-grouped dashboard in `feat/dashboard-cards`
+  - `build_area_cards()` groups entities by `user_area_id` → resolved to area name
+  - Named areas sort alphabetically; "Unassigned" sorts last
+  - Card content partitioned by entity_type: tiles / glance / button-row / entity-row
+  - `id="area-cards"` container polls every 5 s and responds to `refresh` event
+  - Service calls via `POST /ui/services/{domain}/{service}` (form-encoded entity_id)
+    close dialog and trigger `refresh` on the area-cards container
 
 ---
 

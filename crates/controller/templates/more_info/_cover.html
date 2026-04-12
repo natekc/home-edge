@@ -1,0 +1,31 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+  <div>
+    <div class="mi-name">{{ entity.display_name }}</div>
+    <div class="mi-state">{{ entity.value }}</div>
+  </div>
+</div>
+<div class="mi-controls">
+  <div class="mi-row mi-row--buttons">
+    <button class="mi-action-btn"
+            hx-post="/ui/services/cover/open_cover"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="document.getElementById('more-info-dialog').close(); htmx.trigger(document.getElementById('area-cards'),'refresh')">
+      <svg><use href="#icon-window-shutter-open"/></svg> Open
+    </button>
+    <button class="mi-action-btn mi-action-btn--neutral"
+            hx-post="/ui/services/cover/stop_cover"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none">
+      Stop
+    </button>
+    <button class="mi-action-btn"
+            hx-post="/ui/services/cover/close_cover"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="document.getElementById('more-info-dialog').close(); htmx.trigger(document.getElementById('area-cards'),'refresh')">
+      <svg><use href="#icon-window-shutter"/></svg> Close
+    </button>
+  </div>
+</div>

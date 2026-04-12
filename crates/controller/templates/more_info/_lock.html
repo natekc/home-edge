@@ -1,0 +1,25 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+  <div>
+    <div class="mi-name">{{ entity.display_name }}</div>
+    <div class="mi-state mi-state--{{ entity.value }}">{{ entity.value }}</div>
+  </div>
+</div>
+<div class="mi-controls">
+  <div class="mi-row mi-row--buttons">
+    <button class="mi-action-btn{% if entity.value == 'unlocked' %} mi-action-btn--active{% endif %}"
+            hx-post="/ui/services/lock/unlock"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="document.getElementById('more-info-dialog').close(); htmx.trigger(document.getElementById('area-cards'),'refresh')">
+      <svg><use href="#icon-lock-open"/></svg> Unlock
+    </button>
+    <button class="mi-action-btn{% if entity.value == 'locked' %} mi-action-btn--active{% endif %}"
+            hx-post="/ui/services/lock/lock"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="document.getElementById('more-info-dialog').close(); htmx.trigger(document.getElementById('area-cards'),'refresh')">
+      <svg><use href="#icon-lock"/></svg> Lock
+    </button>
+  </div>
+</div>

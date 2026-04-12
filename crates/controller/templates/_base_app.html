@@ -190,5 +190,18 @@ document.addEventListener('htmx:afterRequest', function(evt) {
   }
 });
 </script>
+
+<!-- More-info dialog (loaded via HTMX into #more-info-body) -->
+<dialog id="more-info-dialog" class="more-info-dialog">
+  <div class="more-info-dialog-inner">
+    <button class="more-info-close" onclick="this.closest('dialog').close()" aria-label="Close">
+      <svg width="20" height="20"><use href="#icon-close"/></svg>
+    </button>
+    <div id="more-info-body" class="more-info-body">
+      <!-- Content injected by HTMX -->
+    </div>
+  </div>
+</dialog>
+
 </body>
 </html>

@@ -1,0 +1,13 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-palette"/></svg>
+  <div><div class="mi-name">{{ entity.display_name }}</div></div>
+</div>
+<div class="mi-controls">
+  <button class="mi-action-btn mi-action-btn--primary mi-action-btn--wide"
+          hx-post="/ui/services/scene/activate"
+          hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+          hx-swap="none"
+          hx-on::after-request="document.getElementById('more-info-dialog').close(); showToast('{{ entity.display_name }} activated', 2000); htmx.trigger(document.getElementById('area-cards'),'refresh')">
+    <svg><use href="#icon-palette"/></svg> Activate
+  </button>
+</div>

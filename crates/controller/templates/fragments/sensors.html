@@ -1,23 +1,104 @@
-{% for group in entity_groups %}
-<div style="margin-bottom:22px">
-  <div style="font-size:.78rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">
-    {{ group.device_name }}
-  </div>
-  <div class="sensor-grid">
-    {% for entity in group.entities %}
-    <a href="/devices/{{ entity.webhook_id }}/entities/{{ entity.entity_id }}"
-       class="sensor-tile{% if entity.entity_type == 'binary_sensor' %}{% if entity.value == 'on' %} binary-on{% else %} binary-off{% endif %}{% endif %}{% if entity.disabled %} disabled{% endif %}">
-      <svg class="sensor-tile-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
-      <div class="sensor-tile-value">
-        {{ entity.value }}<span class="sensor-tile-unit">{{ entity.unit }}</span>
-      </div>
-      <div class="sensor-tile-name">{{ entity.display_name }}</div>
-    </a>
-    {% endfor %}
-  </div>
-</div>
-{% else %}
+{% if area_cards | length == 0 %}
 <p class="text-muted" style="margin:0;padding:8px 0">
   No sensor readings yet. Register sensors from the Home Assistant app.
 </p>
+{% else %}
+{% for card in area_cards %}
+<div class="ha-card area-card">
+  <div class="ha-card-header">
+    <h2>{{ card.area_name }}</h2>
+  </div>
+  <div class="ha-card-body">
+
+    {# ---- Controllable tiles: light, switch, fan, cover, lock, binary_sensor ---- #}
+    {% set has_tiles = false %}
+    {% for entity in card.entities %}{% if entity.entity_type != "sensor" and entity.entity_type != "button" and entity.entity_type != "scene" and entity.entity_type != "script" and entity.entity_type != "select" %}{% set has_tiles = true %}{% endif %}{% endfor %}
+    {% if has_tiles %}
+    <div class="sensor-grid">
+      {% for entity in card.entities %}
+      {% if entity.entity_type != "sensor" and entity.entity_type != "button" and entity.entity_type != "scene" and entity.entity_type != "script" and entity.entity_type != "select" %}
+      <div class="sensor-tile
+            {%- if entity.entity_type == "light" or entity.entity_type == "switch" or entity.entity_type == "fan" %} {% if entity.value == "on" %}binary-on{% else %}binary-off{% endif %}
+            {%- elif entity.entity_type == "cover" %} {% if entity.value == "open" %}binary-on{% else %}binary-off{% endif %}
+            {%- elif entity.entity_type == "lock" %} {% if entity.value == "unlocked" %}binary-on{% else %}binary-off{% endif %}
+            {%- elif entity.entity_type == "binary_sensor" %} {% if entity.value == "on" %}binary-on{% else %}binary-off{% endif %}
+            {%- endif %}"
+           hx-get="/fragments/more-info/{{ entity.entity_id }}"
+           hx-target="#more-info-body"
+           hx-swap="innerHTML"
+           hx-on::after-request="document.getElementById('more-info-dialog').showModal()"
+           style="cursor:pointer"
+           title="{{ entity.display_name }}">
+        <svg class="sensor-tile-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+        <div class="sensor-tile-value">{{ entity.value }}</div>
+        <div class="sensor-tile-name">{{ entity.display_name }}</div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ---- Sensor readings: glance grid ---- #}
+    {% set has_sensors = false %}
+    {% for entity in card.entities %}{% if entity.entity_type == "sensor" %}{% set has_sensors = true %}{% endif %}{% endfor %}
+    {% if has_sensors %}
+    <div class="glance-grid{% if has_tiles %} glance-grid--mt{% endif %}">
+      {% for entity in card.entities %}
+      {% if entity.entity_type == "sensor" %}
+      <div class="glance-cell"
+           hx-get="/fragments/more-info/{{ entity.entity_id }}"
+           hx-target="#more-info-body"
+           hx-swap="innerHTML"
+           hx-on::after-request="document.getElementById('more-info-dialog').showModal()"
+           style="cursor:pointer"
+           title="{{ entity.display_name }}">
+        <svg class="glance-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+        <div class="glance-value">{{ entity.value }}<span class="glance-unit"> {{ entity.unit }}</span></div>
+        <div class="glance-name">{{ entity.display_name }}</div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ---- Activatables: button / scene / script ---- #}
+    {% set has_activatables = false %}
+    {% for entity in card.entities %}{% if entity.entity_type == "button" or entity.entity_type == "scene" or entity.entity_type == "script" %}{% set has_activatables = true %}{% endif %}{% endfor %}
+    {% if has_activatables %}
+    <div class="button-row{% if has_tiles or has_sensors %} button-row--mt{% endif %}">
+      {% for entity in card.entities %}
+      {% if entity.entity_type == "button" or entity.entity_type == "scene" or entity.entity_type == "script" %}
+      <button class="ha-button"
+              hx-post="/ui/services/{{ entity.entity_type }}/{{ entity.service_action }}"
+              hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+              hx-swap="none"
+              hx-on::after-request="showToast('{{ entity.display_name }}', 2000)">
+        <svg><use href="#icon-{{ entity.icon_name }}"/></svg>
+        {{ entity.display_name }}
+      </button>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ---- Select entities ---- #}
+    {% for entity in card.entities %}
+    {% if entity.entity_type == "select" %}
+    <div class="entity-row"
+         hx-get="/fragments/more-info/{{ entity.entity_id }}"
+         hx-target="#more-info-body"
+         hx-swap="innerHTML"
+         hx-on::after-request="document.getElementById('more-info-dialog').showModal()"
+         style="cursor:pointer">
+      <svg class="entity-row-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+      <span class="entity-row-name">{{ entity.display_name }}</span>
+      <span class="entity-row-state">{{ entity.value }}</span>
+    </div>
+    {% endif %}
+    {% endfor %}
+
+  </div>
+</div>
 {% endfor %}
+{% endif %}
+

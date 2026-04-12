@@ -69,5 +69,19 @@ pub fn build_env() -> Environment<'static> {
     )
     .expect("fragments/ble_results.html");
 
+    // More-info domain dialogs
+    env.add_template("more_info/_light.html",         include_str!("../templates/more_info/_light.html")).expect("more_info/_light.html");
+    env.add_template("more_info/_switch.html",        include_str!("../templates/more_info/_switch.html")).expect("more_info/_switch.html");
+    env.add_template("more_info/_cover.html",         include_str!("../templates/more_info/_cover.html")).expect("more_info/_cover.html");
+    env.add_template("more_info/_lock.html",          include_str!("../templates/more_info/_lock.html")).expect("more_info/_lock.html");
+    env.add_template("more_info/_fan.html",           include_str!("../templates/more_info/_fan.html")).expect("more_info/_fan.html");
+    env.add_template("more_info/_sensor.html",        include_str!("../templates/more_info/_sensor.html")).expect("more_info/_sensor.html");
+    env.add_template("more_info/_binary_sensor.html", include_str!("../templates/more_info/_binary_sensor.html")).expect("more_info/_binary_sensor.html");
+    env.add_template("more_info/_button.html",        include_str!("../templates/more_info/_button.html")).expect("more_info/_button.html");
+    env.add_template("more_info/_scene.html",         include_str!("../templates/more_info/_scene.html")).expect("more_info/_scene.html");
+    env.add_template("more_info/_script.html",        include_str!("../templates/more_info/_script.html")).expect("more_info/_script.html");
+    env.add_template("more_info/_select.html",        include_str!("../templates/more_info/_select.html")).expect("more_info/_select.html");
+    env.add_template("more_info/_default.html",       include_str!("../templates/more_info/_default.html")).expect("more_info/_default.html");
+
     env
 }

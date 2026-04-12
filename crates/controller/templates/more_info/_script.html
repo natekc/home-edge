@@ -1,0 +1,25 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-script-text"/></svg>
+  <div>
+    <div class="mi-name">{{ entity.display_name }}</div>
+    <div class="mi-state mi-state--{{ entity.value }}">{{ entity.value }}</div>
+  </div>
+</div>
+<div class="mi-controls">
+  <div class="mi-row mi-row--buttons">
+    <button class="mi-action-btn mi-action-btn--primary"
+            hx-post="/ui/services/script/trigger"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="document.getElementById('more-info-dialog').close(); showToast('{{ entity.display_name }} triggered', 2000); htmx.trigger(document.getElementById('area-cards'),'refresh')">
+      <svg><use href="#icon-script-text"/></svg> Run
+    </button>
+    <button class="mi-action-btn"
+            hx-post="/ui/services/script/turn_off"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="document.getElementById('more-info-dialog').close(); htmx.trigger(document.getElementById('area-cards'),'refresh')">
+      Stop
+    </button>
+  </div>
+</div>

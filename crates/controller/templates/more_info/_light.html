@@ -1,0 +1,19 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-lightbulb"/></svg>
+  <div>
+    <div class="mi-name">{{ entity.display_name }}</div>
+    <div class="mi-state mi-state--{{ entity.value }}">{{ entity.value }}</div>
+  </div>
+</div>
+<div class="mi-controls">
+  <div class="mi-row">
+    <span class="mi-label">Power</span>
+    <button class="mi-toggle{% if entity.value == 'on' %} mi-toggle--on{% endif %}"
+            hx-post="/ui/services/light/toggle"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="document.getElementById('more-info-dialog').close(); htmx.trigger(document.getElementById('area-cards'),'refresh')">
+      <span class="mi-toggle-thumb"></span>
+    </button>
+  </div>
+</div>

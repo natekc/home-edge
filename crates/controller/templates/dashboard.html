@@ -4,7 +4,7 @@
   <h1>Overview
     <span class="transport-badge {{ 'ble' if transport == 'BLE' else '' }}">{{ transport }}</span>
   </h1>
-  <p>Connected devices and live sensor readings.</p>
+  <p>Live entity state, grouped by area.</p>
 </div>
 
 <div class="page-body">
@@ -55,21 +55,15 @@
     </div>
   </div>
 
-  <!-- Sensor readings — HTMX-polled every 5 s -->
-  <div class="ha-card">
-    <div class="ha-card-header">
-      <h2>Sensors</h2>
-      <span class="text-muted" style="font-size:.77rem">Refreshes every 5 s</span>
-    </div>
-    <div class="ha-card-body"
-         id="sensor-grid"
-         hx-get="/fragments/dashboard-sensors"
-         hx-trigger="every 5s"
-         hx-swap="innerHTML">
-      {% include "fragments/sensors.html" %}
-    </div>
+  <!-- Area cards — HTMX-polled every 5 s -->
+  <div id="area-cards"
+       hx-get="/fragments/dashboard-sensors"
+       hx-trigger="every 5s, refresh"
+       hx-swap="innerHTML">
+    {% include "fragments/sensors.html" %}
   </div>
 
   {% endif %}
 </div>
 {% endblock %}
+
