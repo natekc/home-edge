@@ -20,6 +20,8 @@ use tracing::info;
 #[cfg(feature = "transport_wifi")]
 use crate::area_registry_store::AreaRegistryStore;
 #[cfg(feature = "transport_wifi")]
+use crate::notification_store::NotificationStore;
+#[cfg(feature = "transport_wifi")]
 use crate::auth_store::AuthStore;
 #[cfg(feature = "transport_wifi")]
 use crate::ha_auth::{LoginFlowStore, TokenStore};
@@ -59,6 +61,7 @@ pub struct AppState {
     pub templates: minijinja::Environment<'static>,
     pub history: crate::history_store::HistoryStore,
     pub logbook: crate::logbook_store::LogbookStore,
+    pub notifications: NotificationStore,
 }
 
 #[cfg(feature = "transport_wifi")]
@@ -86,6 +89,7 @@ impl AppState {
             templates: crate::templates::build_env(),
             history: crate::history_store::HistoryStore::new(history_capacity),
             logbook: crate::logbook_store::LogbookStore::new(history_capacity),
+            notifications: NotificationStore::new(),
         }
     }
 
