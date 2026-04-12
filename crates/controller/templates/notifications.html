@@ -2,14 +2,54 @@
 {% block content %}
 <div class="page-header">
   <h1>Notifications</h1>
-  <p>Alerts and push notifications.</p>
+  <p>Alerts and persistent notifications.</p>
 </div>
 <div class="page-body">
+{% if notifications | length == 0 %}
   <div class="ha-card">
     <div class="ha-card-body" style="text-align:center;padding:48px 24px">
       <svg width="48" height="48" style="color:var(--text-secondary);fill:currentColor;margin-bottom:16px"><use href="#icon-bell"/></svg>
-      <p style="color:var(--text-secondary);margin:0">No notifications yet.</p>
+      <p style="color:var(--text-secondary);margin:0">No notifications.</p>
     </div>
   </div>
+{% else %}
+  {% for n in notifications %}
+  <div class="ha-card" style="margin-bottom:12px">
+    <div class="ha-card-body" style="display:flex;align-items:flex-start;gap:16px">
+      <svg width="24" height="24" style="flex-shrink:0;margin-top:2px;color:var(--primary-color);fill:currentColor"><use href="#icon-bell"/></svg>
+      <div style="flex:1;min-width:0">
+        {% if n.title %}
+        <div style="font-weight:600;margin-bottom:4px">{{ n.title }}</div>
+        {% endif %}
+        <div style="color:var(--text-primary);word-break:break-word">{{ n.message }}</div>
+        <div style="font-size:.75rem;color:var(--text-secondary);margin-top:6px"
+             data-ts="{{ n.created_at }}">{{ n.created_at }}</div>
+      </div>
+      <button onclick="dismissNotification('{{ n.notification_id }}')"
+              class="btn btn-secondary"
+              style="flex-shrink:0;font-size:.8rem">Dismiss</button>
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
 </div>
+<script>
+function dismissNotification(id) {
+  var body = new URLSearchParams();
+  body.append('notification_id', id);
+  fetch('/ui/services/persistent_notification/dismiss', {
+    method: 'POST',
+    body: body,
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'}
+  }).then(function() { window.location.reload(); });
+}
+(function() {
+  document.querySelectorAll('[data-ts]').forEach(function(el) {
+    var ts = parseInt(el.getAttribute('data-ts'), 10);
+    if (ts) {
+      el.textContent = new Date(ts * 1000).toLocaleString();
+    }
+  });
+})();
+</script>
 {% endblock %}
