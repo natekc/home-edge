@@ -58,6 +58,9 @@ fn onboarding_required_response() -> Response {
 /// to clients).  Source: homeassistant/auth/__init__.py ACCESS_TOKEN_EXPIRATION
 const ACCESS_TOKEN_TTL_SECS: u64 = 1800;
 
+/// Source: homeassistant/components/auth/__init__.py  AUTH_CODE_EXPIRATION_TIME
+const AUTH_CODE_TTL_SECS: u64 = 60;
+
 /// Returns the current UTC time as Unix seconds.
 fn now_unix_secs() -> u64 {
     std::time::SystemTime::now()
@@ -105,9 +108,16 @@ struct AccessTokenEntry {
     issued_at: u64,
 }
 
+/// One-time authorization code with expiry timestamp.
+struct AuthCodeEntry {
+    client_id: String,
+    /// Unix timestamp (seconds) when this code was issued.
+    issued_at: u64,
+}
+
 struct TokenStoreInner {
-    /// auth_code → client_id (one-time use, expires quickly in production)
-    auth_codes: HashMap<String, String>,
+    /// auth_code → entry (one-time use, expires after AUTH_CODE_TTL_SECS)
+    auth_codes: HashMap<String, AuthCodeEntry>,
     /// refresh_token → client_id
     refresh_tokens: HashMap<String, String>,
     /// access_token → entry (client_id + issue timestamp)
@@ -181,8 +191,14 @@ impl TokenStore {
     /// Issue a one-time authorization code for the given client.
     pub async fn issue_auth_code(&self, client_id: &str) -> String {
         let code = new_token();
+        let now = now_unix_secs();
         let mut inner = self.inner.lock().await;
-        inner.auth_codes.insert(code.clone(), client_id.to_string());
+        // Lazy sweep: remove codes older than AUTH_CODE_TTL_SECS.
+        inner.auth_codes.retain(|_, entry| now.saturating_sub(entry.issued_at) <= AUTH_CODE_TTL_SECS);
+        inner.auth_codes.insert(code.clone(), AuthCodeEntry {
+            client_id: client_id.to_string(),
+            issued_at: now,
+        });
         code
     }
 
@@ -191,16 +207,24 @@ impl TokenStore {
     pub async fn exchange_code(&self, client_id: &str, code: &str) -> Option<(String, String)> {
         let (access_token, refresh_token) = {
             let mut inner = self.inner.lock().await;
-            let stored_client_id = inner.auth_codes.remove(code)?;
-            if stored_client_id != client_id {
-                tracing::warn!(expected = %stored_client_id, got = %client_id, "client_id mismatch during code exchange");
+            let entry = inner.auth_codes.remove(code)?;
+            // Reject expired codes (HA: invalid_grant).
+            let age = now_unix_secs().saturating_sub(entry.issued_at);
+            if age > AUTH_CODE_TTL_SECS {
+                tracing::debug!("Auth code expired (age={age}s, ttl={AUTH_CODE_TTL_SECS}s)");
+                return None;
+            }
+            if entry.client_id != client_id {
+                tracing::warn!(
+                    expected = %entry.client_id,
+                    got = %client_id,
+                    "client_id mismatch during code exchange"
+                );
                 return None;
             }
             let refresh_token = new_token();
             let access_token = new_token();
-            inner
-                .refresh_tokens
-                .insert(refresh_token.clone(), client_id.to_string());
+            inner.refresh_tokens.insert(refresh_token.clone(), client_id.to_string());
             inner.access_tokens.insert(access_token.clone(), AccessTokenEntry {
                 client_id: client_id.to_string(),
                 issued_at: now_unix_secs(),
@@ -271,6 +295,19 @@ impl TokenStore {
             return None;
         }
         Some(())
+    }
+
+    #[cfg(test)]
+    async fn backdate_auth_code(&self, code: &str, age_secs: u64) {
+        let mut inner = self.inner.lock().await;
+        if let Some(entry) = inner.auth_codes.get_mut(code) {
+            entry.issued_at = now_unix_secs().saturating_sub(age_secs);
+        }
+    }
+
+    #[cfg(test)]
+    async fn auth_code_count(&self) -> usize {
+        self.inner.lock().await.auth_codes.len()
     }
 
 }
@@ -1741,5 +1778,41 @@ mod token_store_tests {
     async fn unknown_token_is_rejected() {
         let store = temp_token_store();
         assert!(store.validate_access_token("unknown").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn exchange_code_rejects_expired_code() {
+        let store = temp_token_store();
+        let code = store.issue_auth_code("client1").await;
+        store.backdate_auth_code(&code, AUTH_CODE_TTL_SECS + 1).await;
+        assert!(
+            store.exchange_code("client1", &code).await.is_none(),
+            "expired code must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn exchange_code_rejects_wrong_client_id() {
+        let store = temp_token_store();
+        let code = store.issue_auth_code("client1").await;
+        assert!(
+            store.exchange_code("wrong_client", &code).await.is_none(),
+            "wrong client_id must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn issue_auth_code_sweeps_expired_codes() {
+        let store = temp_token_store();
+        // Issue a code and make it appear expired.
+        let old_code = store.issue_auth_code("client1").await;
+        store.backdate_auth_code(&old_code, AUTH_CODE_TTL_SECS + 1).await;
+        // Issue a new code — the lazy sweep should remove old_code.
+        let _new_code = store.issue_auth_code("client2").await;
+        assert_eq!(
+            store.auth_code_count().await,
+            1,
+            "expired code should have been swept, leaving only the new code"
+        );
     }
 }
