@@ -15,7 +15,7 @@ flowchart TD
     BROWSER([Browser visits HA])
     BROWSER --> IS_ONBOARDED
 
-    IS_ONBOARDED{"Onboarded?\ncomponents/onboarding/views.py:113\nGET /api/onboarding\nreturns step status list"}
+    IS_ONBOARDED{"Onboarded?\ncomponents/onboarding/views.py:100\nGET /api/onboarding\nreturns step status list"}
     IS_ONBOARDED -- "Not all 4 steps done" --> ONB_STATUS
     IS_ONBOARDED -- "All steps done" --> AUTH_START
 
@@ -25,10 +25,10 @@ flowchart TD
     subgraph ONBOARDING["Onboarding Flow — REST API, no auth required"]
         direction TB
 
-        ONB_STATUS["GET /api/onboarding\nOnboardingStatusView — views.py:113\nReturns: [{step, done}] for 4 steps\nNo auth: requires_auth = False"]
+        ONB_STATUS["GET /api/onboarding\nOnboardingStatusView — views.py:100 (class), get:111\nReturns: [{step, done}] for 4 steps\nNo auth: requires_auth = False"]
         ONB_STATUS --> ONB_INSTALLATION
 
-        ONB_INSTALLATION["GET /api/onboarding/installation_type\nInstallationTypeOnboardingView — views.py:131\nGuard: if already onboarded → HTTP 401\nReturns: {installation_type}"]
+        ONB_INSTALLATION["GET /api/onboarding/installation_type\nInstallationTypeOnboardingView — views.py:118 (class), get:124\nGuard: if any step done → HTTP 401 — views.py:126\nReturns: {installation_type}"]
         ONB_INSTALLATION --> ONB_USER
 
         ONB_USER["POST /api/onboarding/users  ★ STEP_USER\nUserOnboardingView — views.py:181\nInput: {name, username, password, client_id, language}\nCreates admin user + credentials + person entity\nCreates default areas from translations\nCalls create_auth_code(hass, client_id, credentials)\nReturns: {auth_code}"]
@@ -43,9 +43,9 @@ flowchart TD
         ONB_ANALYTICS -- "step already done" --> ONB_403C["HTTP 403 abort"]
         ONB_ANALYTICS --> ONB_INTEGRATION
 
-        ONB_INTEGRATION["POST /api/onboarding/integration  ★ STEP_INTEGRATION\nIntegrationOnboardingView — views.py:283\nRequires auth\nInput: {client_id, redirect_uri}\nValidates IndieAuth redirect_uri\nCalls create_auth_code(hass, client_id, refresh_token.credential)\nReturns: {auth_code}"]
-        ONB_INTEGRATION -- "No refresh token → 403\nBad redirect_uri → 400\nStep done → 403" --> ONB_4XXD["HTTP 4xx abort"]
-        ONB_INTEGRATION -- "All 4 steps complete\nviews.py:160-163" --> ONB_COMPLETE
+        ONB_INTEGRATION["POST /api/onboarding/integration  ★ STEP_INTEGRATION\nIntegrationOnboardingView — views.py:283\nRequires auth\nInput: {client_id, redirect_uri}\nCode order: no-token 403 (L286) → step-done 403 (L292)\n  → mark_done → bad redirect_uri 400 (L304)\n  → no-credential 403 (L307-310)\nCalls create_auth_code(hass, client_id, refresh_token.credential)\nReturns: {auth_code}"]
+        ONB_INTEGRATION -- "No refresh token/credential → 403\nBad redirect_uri → 400\nStep already done → 403" --> ONB_4XXD["HTTP 4xx abort"]
+        ONB_INTEGRATION -- "All 4 steps complete\nviews.py:157" --> ONB_COMPLETE
 
         ONB_WAIT["POST /api/onboarding/integration/wait\nWaitIntegrationOnboardingView — views.py:335\nInput: {domain}\nReturns: {integration_loaded: bool}"]
 
@@ -60,7 +60,7 @@ flowchart TD
     subgraph AUTH_FLOW["Auth Login Flow — components/auth/login_flow.py"]
         direction TB
 
-        AUTH_START["POST /auth/login_flow\nLoginFlowIndexView — login_flow.py:~318\nInput: {client_id, handler=[type,id], redirect_uri, type}\nValidates indieauth client_id\nCalls AuthManagerFlowManager.async_init()\nauth/__init__.py:100"]
+        AUTH_START["POST /auth/login_flow\nLoginFlowIndexView — login_flow.py:336 (class), post:359\nInput: {client_id, handler=[type,id], redirect_uri, type}\nValidates indieauth client_id\nCalls AuthManagerFlowManager.async_init()\nauth/__init__.py:100"]
         AUTH_START -- "Unknown handler → 404\nInvalid client_id → 400" --> AUTH_ERR(["HTTP error"])
         AUTH_START --> AUTH_PROV_DISPATCH
 
@@ -71,11 +71,11 @@ flowchart TD
         AUTH_PROV_DISPATCH -- "command_line" --> CL_INIT
         AUTH_PROV_DISPATCH -- "insecure_example" --> IE_INIT
 
-        subgraph HA_PROVIDER["homeassistant provider — providers/homeassistant.py:412"]
-            HA_INIT["async_step_init\nShow form: {username, password}\nhomeassistant.py:430"]
-            HA_INIT -- "InvalidAuth\nerrors.base=invalid_auth\nhomeassistant.py:430" --> HA_INIT
+        subgraph HA_PROVIDER["homeassistant provider — providers/homeassistant.py:409"]
+            HA_INIT["async_step_init — homeassistant.py:412\nShow form: {username, password}"]
+            HA_INIT -- "InvalidAuth\nerrors.base=invalid_auth — homeassistant.py:424" --> HA_INIT
             HA_INIT -- "Valid credentials\nbcrypt check in thread" --> HA_FINISH
-            HA_FINISH["async_finish()\nStrips password field\nasync_create_entry(data={username})\nproviders/__init__.py:300"]
+            HA_FINISH["async_finish()\nStrips password field\nasync_create_entry(data={username})\nproviders/__init__.py:302"]
         end
 
         subgraph TN_PROVIDER["trusted_networks provider — providers/trusted_networks.py:235"]
@@ -85,14 +85,14 @@ flowchart TD
             TN_INIT -- "Multiple available users" --> TN_FORM
             TN_FORM["Show form: {user: vol.In(available_users)}\ntrusted_networks.py:253"]
             TN_FORM -- "User selected" --> TN_AUTO
-            TN_AUTO["Auto-complete: async_finish({user_id})\nsupport_mfa = False → MFA skipped\ntrusted_networks.py:84"]
+            TN_AUTO["Auto-complete: async_finish({user_id})\nsupport_mfa = False → MFA skipped\ntrusted_networks.py:103"]
         end
 
         subgraph CL_PROVIDER["command_line provider — providers/command_line.py:141"]
             CL_INIT["async_step_init\nShow form: {username, password}\ncommand_line.py:160"]
             CL_INIT -- "InvalidAuthError\nerrors.base=invalid_auth" --> CL_INIT
             CL_INIT -- "Valid (subprocess call)" --> CL_FINISH
-            CL_FINISH["async_finish()\nStrips password field\nasync_create_entry({username})\nproviders/__init__.py:300"]
+            CL_FINISH["async_finish()\nStrips password field\nasync_create_entry({username})\nproviders/__init__.py:302"]
         end
 
         subgraph IE_PROVIDER["insecure_example provider — providers/insecure_example.py:100"]
@@ -117,7 +117,7 @@ flowchart TD
 
             MFA_VERIFY["async_step_mfa\nproviders/__init__.py:248\nShow form: data_schema = auth_module.input_schema\n(notify module: sends OTP first via async_initialize_login_mfa_step)"]
             MFA_VERIFY -- "Session expired\nproviders/__init__.py:276" --> MFA_LOGIN_EXPIRED(["async_abort(reason=login_expired)"])
-            MFA_VERIFY -- "Invalid code\nincrement invalid_mfa_times\nproviders/__init__.py:280" --> MFA_RETRY_CHECK
+            MFA_VERIFY -- "Invalid code\nincrement invalid_mfa_times\nproviders/__init__.py:281" --> MFA_RETRY_CHECK
             MFA_RETRY_CHECK{"retries < MAX_RETRY_TIME?\nproviders/__init__.py:283"}
             MFA_RETRY_CHECK -- "YES" --> MFA_VERIFY
             MFA_RETRY_CHECK -- "NO (MAX_RETRY_TIME > 0)" --> MFA_TOO_MANY(["async_abort(reason=too_many_retry)"])
@@ -128,7 +128,7 @@ flowchart TD
         MFA_GATE -- "Has MFA modules" --> MFA_SEL
         MFA_OK --> AUTH_COMPLETE_NODE
 
-        AUTH_COMPLETE_NODE["CREATE_ENTRY — credentials stored\nauth_code minted via store_result()\nlogin_flow.py:~264\nClient exchanges auth_code at POST /auth/token\n→ receives access_token + refresh_token"]
+        AUTH_COMPLETE_NODE["CREATE_ENTRY — credentials stored\nauth_code minted via store_result()\n_async_flow_result_to_response — login_flow.py:285\nClient exchanges auth_code at POST /auth/token\n→ receives access_token + refresh_token"]
     end
 
     HA_INIT & TN_INIT & CL_INIT & IE_INIT -.->|"POST /auth/login_flow/{flow_id}\nLoginFlowResourceView\nIP validation: must match original"| AUTH_PROV_DISPATCH
@@ -162,7 +162,7 @@ flowchart TD
         P_TODO["/todo\ncomponent=todo\ncomponents/todo/__init__.py:127\nmdi:clipboard-list"]
         P_MEDIA["/media-browser\ncomponent=media-browser\ncomponents/media_source/http.py:27\nmdi:play-box-multiple"]
         P_CALENDAR["/calendar\ncomponent=calendar\ncomponents/calendar/__init__.py:321\nmdi:calendar"]
-        P_MAP["/map — Lovelace map dashboard\ncomponents/lovelace/__init__.py:365\n_create_map_dashboard()"]
+        P_MAP["/map — Lovelace map dashboard\ncomponents/lovelace/__init__.py:366\n_create_map_dashboard()"]
         P_CONFIG["/config  (admin required)\ncomponent=config\ncomponents/config/__init__.py:51\nmdi:cog"]
         P_PROFILE["/profile\ncomponent=profile\ncomponents/frontend/__init__.py:603\n(no sidebar)"]
         P_APP["/app — Supervisor shell\ncomponent=app\ncomponents/hassio/__init__.py:211"]
@@ -246,7 +246,7 @@ flowchart TD
     subgraph CONFIG_FLOW["Config Flow Framework\ndata_entry_flow.py + config_entries.py"]
         direction TB
 
-        CF_INIT["POST /api/config/config_entries/flow\nconfig/config_entries.py:163\nConfigEntriesFlowManager.async_init(domain)\nValidates source in context — config_entries.py:1462\nGuard: reauth/reconfigure require entry_id — L1464\nGuard: single_instance_allowed — L1473\ninit_step = context.source\ne.g. 'user', 'bluetooth', 'dhcp', 'homekit',\n     'mqtt', 'ssdp', 'usb', 'zeroconf', 'hassio',\n     'integration_discovery', 'reauth', 'reconfigure'"]
+        CF_INIT["POST /api/config/config_entries/flow\nconfig/config_entries.py:163\nConfigEntriesFlowManager.async_init(domain)\nValidates source in context — config_entries.py:1463\nGuard: reauth/reconfigure require entry_id — L1466\nGuard: single_instance_allowed — L1493\ninit_step = context.source\ne.g. 'user', 'bluetooth', 'dhcp', 'homekit',\n     'mqtt', 'ssdp', 'usb', 'zeroconf', 'hassio',\n     'integration_discovery', 'reauth', 'reconfigure'"]
 
         CF_INIT --> CF_SOURCE_DISPATCH
 
@@ -259,15 +259,15 @@ flowchart TD
 
         CF_STEP_USER["async_step_user(init_data)\nIntegration-defined\n(default: async_abort(reason=not_implemented)\nconfig_entries.py:3186)"]
         CF_STEP_DISCOVERY["async_step_{source}(discovery_info)\nDefault delegates to\n_async_step_discovery_without_unique_id()\n→ async_step_user()\nconfig_entries.py:3226-3282"]
-        CF_STEP_REAUTH["async_step_reauth(entry_data)\nIntegration-defined\nHelper: _get_reauth_entry()\nconfig_entries.py:3520"]
-        CF_STEP_RECONFIGURE["async_step_reconfigure(user_input)\nIntegration-defined\nHelper: _get_reconfigure_entry()\nconfig_entries.py:3535"]
+        CF_STEP_REAUTH["async_step_reauth(entry_data)\nIntegration-defined\nHelper: _get_reauth_entry()\nconfig_entries.py:3507"]
+        CF_STEP_RECONFIGURE["async_step_reconfigure(user_input)\nIntegration-defined\nHelper: _get_reconfigure_entry()\nconfig_entries.py:3519"]
 
         CF_STEP_USER --> CF_RES_DISPATCH
         CF_STEP_DISCOVERY --> CF_RES_DISPATCH
         CF_STEP_REAUTH --> CF_RES_DISPATCH
         CF_STEP_RECONFIGURE --> CF_RES_DISPATCH
 
-        CF_RES_DISPATCH{"FlowResultType\ndata_entry_flow.py:27"}
+        CF_RES_DISPATCH{"FlowResultType\ndata_entry_flow.py:28"}
 
         CF_RES_DISPATCH -- "FORM" --> CF_FORM
         CF_RES_DISPATCH -- "MENU" --> CF_MENU
@@ -276,31 +276,31 @@ flowchart TD
         CF_RES_DISPATCH -- "CREATE_ENTRY" --> CF_CREATE
         CF_RES_DISPATCH -- "ABORT" --> CF_ABORT
 
-        CF_FORM["FORM — async_show_form()\ndata_entry_flow.py:697\nRender data_schema as UI form\nShow errors dict (field → i18n key)\nlast_step: bool — Submit vs Next button\npreview: str — optional preview component"]
-        CF_FORM -- "POST /api/config/config_entries/flow/{id}\nasync_configure(flow_id, user_input)\nvalidated against data_schema\ndata_entry_flow.py:353" --> CF_RES_DISPATCH
+        CF_FORM["FORM — async_show_form()\ndata_entry_flow.py:696\nRender data_schema as UI form\nShow errors dict (field → i18n key)\nlast_step: bool — Submit vs Next button\npreview: str — optional preview component"]
+        CF_FORM -- "POST /api/config/config_entries/flow/{id}\nasync_configure(flow_id, user_input)\nvalidated against data_schema\ndata_entry_flow.py:357" --> CF_RES_DISPATCH
 
         CF_MENU["MENU — async_show_menu()\ndata_entry_flow.py:860\nShow labelled list of next-step choices\nmenu_options: list of step IDs\nsort: bool (alphabetical order)"]
-        CF_MENU -- "user_input={next_step_id: X}\ndata_entry_flow.py:380-385" --> CF_RES_DISPATCH
+        CF_MENU -- "user_input={next_step_id: X}\ndata_entry_flow.py:378-381" --> CF_RES_DISPATCH
 
-        CF_EXT["EXTERNAL_STEP — async_external_step()\ndata_entry_flow.py:757\nOpen URL in browser (OAuth / external auth)\nNext result MUST be EXTERNAL_STEP\n  or EXTERNAL_STEP_DONE — enforced\ndata_entry_flow.py:394-401"]
+        CF_EXT["EXTERNAL_STEP — async_external_step()\ndata_entry_flow.py:761\nOpen URL in browser (OAuth / external auth)\nNext result MUST be EXTERNAL_STEP\n  or EXTERNAL_STEP_DONE — enforced\ndata_entry_flow.py:391-400"]
         CF_EXT -- "External callback fires\nasync_configure() called by OAuth handler" --> CF_EXT_DONE
-        CF_EXT_DONE["EXTERNAL_STEP_DONE — async_external_step_done()\ndata_entry_flow.py:773\nAuto-advance to next_step_id\nNo user interaction needed"]
+        CF_EXT_DONE["EXTERNAL_STEP_DONE — async_external_step_done()\ndata_entry_flow.py:781\nAuto-advance to next_step_id\nNo user interaction needed"]
         CF_EXT_DONE --> CF_RES_DISPATCH
 
-        CF_PROG["SHOW_PROGRESS — async_show_progress()\ndata_entry_flow.py:781\nShow progress indicator\nprogress_action: i18n description key\nprogress_task: asyncio.Task\nNext result MUST be SHOW_PROGRESS\n  or SHOW_PROGRESS_DONE — enforced\ndata_entry_flow.py:402-411\nasync_update_progress(float) fires\nEVENT_DATA_ENTRY_FLOW_PROGRESS_UPDATE — L829"]
-        CF_PROG -- "progress_task.done_callback\n→ schedule async_configure()\ndata_entry_flow.py:468-486" --> CF_PROG_DONE
-        CF_PROG_DONE["SHOW_PROGRESS_DONE — async_show_progress_done()\ndata_entry_flow.py:851\nAuto-loop: manager advances immediately\ndata_entry_flow.py:316-323\nNo user interaction needed"]
+        CF_PROG["SHOW_PROGRESS — async_show_progress()\ndata_entry_flow.py:791\nShow progress indicator\nprogress_action: i18n description key\nprogress_task: asyncio.Task\nNext result MUST be SHOW_PROGRESS\n  or SHOW_PROGRESS_DONE — enforced\ndata_entry_flow.py:401-409\nasync_update_progress(float) fires\nEVENT_DATA_ENTRY_FLOW_PROGRESS_UPDATE — L831"]
+        CF_PROG -- "progress_task.done_callback\n→ schedule async_configure()\ndata_entry_flow.py:511-528" --> CF_PROG_DONE
+        CF_PROG_DONE["SHOW_PROGRESS_DONE — async_show_progress_done()\ndata_entry_flow.py:850\nAuto-loop: manager advances immediately\ndata_entry_flow.py:335\nNo user interaction needed"]
         CF_PROG_DONE --> CF_RES_DISPATCH
 
         CF_CREATE["CREATE_ENTRY — terminal success\nConfigEntriesFlowManager.async_finish_flow\nconfig_entries.py:1611\nConfigEntry created and stored\nIntegration set up\n(blocked if source=reauth or reconfigure\nconfig_entries.py:3316)"]
-        CF_ABORT["ABORT — terminal failure\nasync_abort(reason, description_placeholders)\ndata_entry_flow.py:744\nAbort reason displayed then dialog closed\nFlow removed from _progress\nAbortFlow exception auto-converted — L454"]
+        CF_ABORT["ABORT — terminal failure\nasync_abort(reason, description_placeholders)\ndata_entry_flow.py:745\nAbort reason displayed then dialog closed\nFlow removed from _progress\nAbortFlow exception auto-converted — L484"]
         CF_ABORT -- "next_flow: tuple[FlowType, str] set\nconfig_entries.py:3300" --> CF_INIT
 
         CF_CREATE --> CF_OPTS_AVAILABLE
 
-        CF_OPTS_AVAILABLE{"Options flow available?\nasync_supports_options_flow()\nconfig_entries.py:2960\n(True iff subclass overrides\nasync_get_options_flow)"}
+        CF_OPTS_AVAILABLE{"Options flow available?\nasync_supports_options_flow()\nconfig_entries.py:2962\n(True iff subclass overrides\nasync_get_options_flow)"}
 
-        CF_SPECIAL["Special abort helpers:\n_abort_if_unique_id_configured — L3072\n_abort_if_unique_id_mismatch — L3055\n_async_abort_entries_match — L2998\nasync_set_unique_id → abort dup flows — L3099\nasync_update_and_abort — L3383\nasync_update_reload_and_abort — L3431"]
+        CF_SPECIAL["Special abort helpers:\n_abort_if_unique_id_configured — L3037\n_abort_if_unique_id_mismatch — L3016\n_async_abort_entries_match — L2998\nasync_set_unique_id → abort dup flows — L3086\nasync_update_and_abort — L3383\nasync_update_reload_and_abort — L3431"]
 
         CF_STEP_DISCOVERY -- "async_step_ignore()\nCreates SOURCE_IGNORE entry\nconfig_entries.py:3168" --> CF_IGNORE(["Source ignored"])
     end
@@ -337,11 +337,11 @@ flowchart TD
         SUB_SOURCE -- "SOURCE_USER" --> SUB_STEP_USER
         SUB_SOURCE -- "SOURCE_RECONFIGURE\n(subentry_id in context)" --> SUB_STEP_RECONFIG
 
-        SUB_STEP_USER["async_step_user (integration-defined)\nCreate new subentry\nasync_create_entry(title, data, unique_id)\nconfig_entries.py:3623"]
-        SUB_STEP_RECONFIG["async_step_reconfigure (integration-defined)\nEdit existing subentry\n_get_reconfigure_subentry()\nconfig_entries.py:3738"]
+        SUB_STEP_USER["async_step_user (integration-defined)\nCreate new subentry\nasync_create_entry(title, data, unique_id)\nconfig_entries.py:3621\nNote: raises ValueError if source != SOURCE_USER"]
+        SUB_STEP_RECONFIG["async_step_reconfigure (integration-defined)\nEdit existing subentry\n_get_reconfigure_subentry()\nconfig_entries.py:3761"]
 
         SUB_STEP_USER -- "CREATE_ENTRY" --> SUB_CREATE
-        SUB_STEP_RECONFIG -- "async_update_and_abort()\nconfig_entries.py:3660" --> SUB_UPDATE_ABORT(["Subentry updated\nasync_update_reload_and_abort if reload needed\nconfig_entries.py:3685"])
+        SUB_STEP_RECONFIG -- "async_update_and_abort()\nconfig_entries.py:3674" --> SUB_UPDATE_ABORT(["Subentry updated\nasync_update_reload_and_abort if reload needed\nconfig_entries.py:3703"])
         SUB_STEP_USER & SUB_STEP_RECONFIG -- "FORM/MENU/PROGRESS\n(same as ConfigFlow framework)" --> SUB_STEP_USER
 
         SUB_CREATE["CREATE_ENTRY\nConfigSubentryFlowManager.async_finish_flow\nconfig_entries.py:3572\nasync_add_subentry(entry, ConfigSubentry(\n  data, subentry_type, title, unique_id))"]
@@ -353,7 +353,7 @@ flowchart TD
     subgraph REPAIRS_FLOW["Repairs Flow — components/repairs/"]
         direction TB
 
-        REP_INIT["POST /api/repairs/issues/fix\nRepairsFlowIndexView — websocket_api.py:108  @require_admin\nRepairsFlowManager.async_init(domain, {issue_id})\nLooks up issue in IssueRegistry\nissue_handler.py:52"]
+        REP_INIT["POST /api/repairs/issues/fix\nRepairsFlowIndexView — websocket_api.py:110  @require_admin\nRepairsFlowManager.async_init(domain, {issue_id})\nLooks up issue in IssueRegistry\nissue_handler.py:52"]
         REP_INIT --> REP_IS_FIXABLE
 
         REP_IS_FIXABLE{"issue.is_fixable?\n& platform available?"}
@@ -362,16 +362,16 @@ flowchart TD
         REP_IS_FIXABLE -- "Built-in (no platform)" --> REP_CONFIRM_INIT
 
         REP_CUSTOM["platform.async_create_fix_flow(hass, issue_id, data)\nissue_handler.py:52\nIssue-specific multi-step repair flow\nMay use FORM/MENU/PROGRESS states"]
-        REP_CONFIRM_INIT["ConfirmRepairFlow.async_step_init()\nissue_handler.py:23\nDelegates to async_step_confirm()"]
+        REP_CONFIRM_INIT["ConfirmRepairFlow.async_step_init()\nissue_handler.py:24\nDelegates to async_step_confirm()"]
         REP_CONFIRM_INIT --> REP_CONFIRM
 
-        REP_CONFIRM["async_step_confirm(user_input)\nissue_handler.py:29\nShow confirm form (no data_schema)\nOn non-None user_input → async_create_entry(data={})"]
+        REP_CONFIRM["async_step_confirm(user_input)\nissue_handler.py:30\nShow confirm form (with issue translation_placeholders)\nOn non-None user_input → async_create_entry(data={})"]
         REP_CONFIRM -- "POST /api/repairs/issues/fix/{flow_id}\nuser confirms (empty user_input)" --> REP_DONE
         REP_CUSTOM --> REP_DONE
 
-        REP_DONE["CREATE_ENTRY\nRepairsFlowManager.async_finish_flow()\nissue_handler.py:86\nir.async_delete_issue() → issue removed from registry"]
+        REP_DONE["CREATE_ENTRY\nRepairsFlowManager.async_finish_flow()\nissue_handler.py:82\nir.async_delete_issue() → issue removed from registry"]
 
-        REP_WS["WebSocket helpers:\nrepairs/list_issues — websocket_api.py:73\nrepairs/ignore_issue — websocket_api.py:55\nrepairs/get_issue_data — websocket_api.py:37"]
+        REP_WS["WebSocket helpers:\nrepairs/list_issues — websocket_api.py:84\nrepairs/ignore_issue — websocket_api.py:69\nrepairs/get_issue_data — websocket_api.py:45"]
     end
 
     %% =========================================================
@@ -380,19 +380,19 @@ flowchart TD
     subgraph MFA_SETUP["MFA Module Setup Flow — components/auth/mfa_setup_flow.py"]
         direction TB
 
-        MFAS_ENTRYPOINT["WS: auth/setup_mfa\nmfa_setup_flow.py:83\nMfaFlowManager.async_init(mfa_module_id, {user_id})\nContinued via flow_id: flow_manager.async_configure()"]
+        MFAS_ENTRYPOINT["WS: auth/setup_mfa\nmfa_setup_flow.py:87 (websocket_setup_mfa)\nGuard: module must exist — mfa_setup_flow.py:108\nMfaFlowManager.async_init(mfa_module_id, {user_id}) — L112\nContinued via flow_id: flow_manager.async_configure() — L97"]
         MFAS_ENTRYPOINT --> MFAS_MOD_DISPATCH
 
         MFAS_MOD_DISPATCH{"Which MFA module?"}
 
-        subgraph TOTP_SETUP["TOTP Setup — auth/mfa_modules/totp.py:194"]
-            TOTP_INIT["async_step_init (user_input=None)\nGenerate (ota_secret, url, qr_image)\n  via _generate_secret_and_qr_code() in executor\nShow form: {code: str}\nwith QR code + url placeholders\ntotp.py:228"]
+        subgraph TOTP_SETUP["TOTP Setup — auth/mfa_modules/totp.py:180"]
+            TOTP_INIT["async_step_init — totp.py:194\nGenerate (ota_secret, url, qr_image)\n  via _generate_secret_and_qr_code() in executor\nShow form: {code: str}\nwith QR code + url placeholders"]
             TOTP_INIT -- "pyotp.TOTP.verify() fails\nerrors.base=invalid_code\ntotp.py:228" --> TOTP_INIT
             TOTP_INIT -- "Valid TOTP code confirmed" --> TOTP_DONE
             TOTP_DONE["async_create_entry(data={result: ota_secret})\ntotp.py:214\nasync_setup_user(user_id, {secret: ota_secret})"]
         end
 
-        subgraph NOTIFY_SETUP["Notify MFA Setup — auth/mfa_modules/notify.py:288"]
+        subgraph NOTIFY_SETUP["Notify MFA Setup — auth/mfa_modules/notify.py:270"]
             NOTIF_INIT["async_step_init (user_input=None)\nCheck available notify services\nnotify.py:304"]
             NOTIF_INIT -- "No services available\nnotify.py:304" --> NOTIF_ABORT(["async_abort(reason=no_available_service)"])
             NOTIF_INIT -- "Services exist\nShow form: {notify_service, target?}\nnotify.py:313" --> NOTIF_SVC_FORM
@@ -479,10 +479,10 @@ flowchart TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> FORM : async_show_form() ― data_entry_flow.py:697
+    [*] --> FORM : async_show_form() ― data_entry_flow.py:696
     [*] --> MENU : async_show_menu() ― data_entry_flow.py:860
-    [*] --> EXTERNAL_STEP : async_external_step() ― data_entry_flow.py:757
-    [*] --> SHOW_PROGRESS : async_show_progress() ― data_entry_flow.py:781
+    [*] --> EXTERNAL_STEP : async_external_step() ― data_entry_flow.py:761
+    [*] --> SHOW_PROGRESS : async_show_progress() ― data_entry_flow.py:791
 
     FORM --> FORM : user submits → validation error\nasync_configure() same step_id
     FORM --> MENU : step logic routes to menu
@@ -496,21 +496,21 @@ stateDiagram-v2
     MENU --> CREATE_ENTRY : user picks finish option
     MENU --> ABORT : user picks abort option
 
-    EXTERNAL_STEP --> EXTERNAL_STEP : waiting for callback (enforced)\ndata_entry_flow.py:394
+    EXTERNAL_STEP --> EXTERNAL_STEP : waiting for callback (enforced)\ndata_entry_flow.py:391
     EXTERNAL_STEP --> EXTERNAL_STEP_DONE : external callback fires
 
     EXTERNAL_STEP_DONE --> FORM : auto-advance to next_step_id
     EXTERNAL_STEP_DONE --> CREATE_ENTRY : auto-advance to create
     EXTERNAL_STEP_DONE --> ABORT : auto-advance to abort
 
-    SHOW_PROGRESS --> SHOW_PROGRESS : task still running (enforced)\ndata_entry_flow.py:402
+    SHOW_PROGRESS --> SHOW_PROGRESS : task still running (enforced)\ndata_entry_flow.py:401
     SHOW_PROGRESS --> SHOW_PROGRESS_DONE : progress_task.done_callback fires
 
-    SHOW_PROGRESS_DONE --> FORM : auto-loop to next_step_id\ndata_entry_flow.py:316-323
+    SHOW_PROGRESS_DONE --> FORM : auto-loop to next_step_id\ndata_entry_flow.py:335
     SHOW_PROGRESS_DONE --> CREATE_ENTRY : auto-loop to create
     SHOW_PROGRESS_DONE --> ABORT : auto-loop to abort
 
     CREATE_ENTRY --> [*] : flow finished — ConfigEntry stored\nconfig_entries.py:1611
-    ABORT --> [*] : flow finished — dialog closed\ndata_entry_flow.py:744
+    ABORT --> [*] : flow finished — dialog closed\ndata_entry_flow.py:745
     ABORT --> [*] : next_flow set → new flow started\nconfig_entries.py:3300
 ```
