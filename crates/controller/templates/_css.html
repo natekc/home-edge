@@ -824,3 +824,36 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
   .mi-action-btn        { border-color: rgba(255,255,255,.15); }
   .mi-action-btn:hover  { background: #252525; }
 }
+
+/* ==========================================================================
+   Climate more-info controls
+   ========================================================================== */
+
+/* Inline form for target temperature input */
+.mi-inline-form { display: flex; align-items: center; gap: 6px; flex: 1; }
+.mi-temp-input {
+  padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--divider-color);
+  background: var(--card-background-color); color: var(--primary-text-color);
+  font-size: .9rem;
+}
+.mi-action-btn--small { padding: 4px 10px; font-size: .8rem; }
+
+/* HVAC mode select */
+.mi-select {
+  flex: 1; padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--divider-color);
+  background: var(--card-bg); color: var(--primary-text);
+  font-size: .9rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mi-temp-input {
+    background: #2a2a2a;
+    border-color: var(--input-border);
+  }
+  .mi-select {
+    background: #2a2a2a;
+    border-color: var(--input-border);
+  }
+}

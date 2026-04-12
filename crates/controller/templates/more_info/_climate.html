@@ -1,0 +1,43 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+  <div>
+    <div class="mi-name">{{ entity.display_name }}</div>
+    <div class="mi-state mi-state--{{ entity.value }}">{{ entity.value }}</div>
+  </div>
+</div>
+{% if entity.current_temperature %}
+<div class="mi-meta">Current: <strong>{{ entity.current_temperature }}°</strong></div>
+{% endif %}
+<div class="mi-controls">
+  <div class="mi-row">
+    <span class="mi-label">HVAC mode</span>
+    {% if entity.hvac_modes | length > 0 %}
+    <select class="mi-select"
+            hx-post="/ui/services/climate/set_hvac_mode"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-trigger="change"
+            hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')"
+            name="hvac_mode">
+      {% for mode in entity.hvac_modes %}
+      <option value="{{ mode }}"{% if mode == entity.value %} selected{% endif %}>{{ mode }}</option>
+      {% endfor %}
+    </select>
+    {% else %}
+    <span class="mi-value">{{ entity.value }}</span>
+    {% endif %}
+  </div>
+  <div class="mi-row">
+    <span class="mi-label">Target temp</span>
+    <form class="mi-inline-form"
+          hx-post="/ui/services/climate/set_temperature"
+          hx-swap="none"
+          hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')">
+      <input type="hidden" name="entity_id" value="{{ entity.entity_id }}">
+      <input class="mi-temp-input" type="number" name="temperature" step="0.5"
+             value="{{ entity.target_temperature | default(21) }}"
+             min="-40" max="100" style="width:5rem">
+      <button class="mi-action-btn mi-action-btn--small" type="submit">Set</button>
+    </form>
+  </div>
+</div>
