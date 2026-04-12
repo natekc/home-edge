@@ -337,8 +337,8 @@ async fn history_page(State(state): State<Arc<AppState>>) -> Response {
             "entity_type": e.entity_type,
         }))
         .collect();
-    entity_list.sort_by(|a, b| {
-        a["display_name"].as_str().unwrap_or("").cmp(b["display_name"].as_str().unwrap_or(""))
+    entity_list.sort_by(|lhs, rhs| {
+        lhs["display_name"].as_str().unwrap_or("").cmp(rhs["display_name"].as_str().unwrap_or(""))
     });
     let ctx = app_ctx!(state, "history", location_name.as_str(), &areas,
         entities => Value::from_serialize(&entity_list),
@@ -360,18 +360,17 @@ async fn developer_tools_page(State(state): State<Arc<AppState>>) -> Response {
         Ok(e) => e,
         Err(err) => return internal_error(&err),
     };
-    // Include disabled entities intentionally — developer tools shows the full picture
+    // Include disabled entities intentionally — developer tools shows the full picture.
+    // Reuse entity_to_view so the state fallback logic is not duplicated here.
     let entity_states: Vec<serde_json::Value> = all_entities
         .iter()
         .map(|e| {
-            let value = state.states.get(&e.entity_id)
-                .map(|s| s.state.clone())
-                .unwrap_or_else(|| "unavailable".to_string());
+            let view = entity_to_view(e, &state);
             json!({
-                "entity_id": e.entity_id,
-                "display_name": e.display_name(),
-                "entity_type": e.entity_type,
-                "state": value,
+                "entity_id": view.entity_id,
+                "display_name": view.display_name,
+                "entity_type": view.entity_type,
+                "state": view.value,
             })
         })
         .collect();
