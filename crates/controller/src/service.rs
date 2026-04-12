@@ -468,6 +468,14 @@ impl BuiltinServiceDefinition {
                             selector: Some(json!({"number": {"min": 0, "max": 255}})),
                         },
                     ),
+                    (
+                        // Source: homeassistant/components/light/__init__.py ATTR_COLOR_TEMP_KELVIN
+                        "color_temp_kelvin".into(),
+                        ServiceField {
+                            required: false,
+                            selector: Some(json!({"number": {"min": 2000, "max": 6535}})),
+                        },
+                    ),
                 ]),
                 supports_response: SupportsResponse::None,
             },
@@ -561,6 +569,30 @@ impl BuiltinServiceDefinition {
                 fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "fan"}})) })]),
                 supports_response: SupportsResponse::None,
             },
+            BuiltinServiceKind::FanSetPercentage => ServiceDescription {
+                service: self.service.into(),
+                name: "Set speed".into(),
+                // Source: homeassistant/components/fan/__init__.py SERVICE_SET_PERCENTAGE
+                description: "Set fan speed as a percentage (0\u{2013}100).".into(),
+                fields: BTreeMap::from([
+                    (
+                        "entity_id".into(),
+                        ServiceField {
+                            required: false,
+                            selector: Some(json!({"entity": {"domain": "fan"}})),
+                        },
+                    ),
+                    (
+                        // Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE, vol.Required
+                        "percentage".into(),
+                        ServiceField {
+                            required: true,
+                            selector: Some(json!({"number": {"min": 0, "max": 100}})),
+                        },
+                    ),
+                ]),
+                supports_response: SupportsResponse::None,
+            },
             BuiltinServiceKind::SelectSelectOption => ServiceDescription {
                 service: self.service.into(),
                 name: "Select option".into(),
@@ -620,6 +652,20 @@ impl BuiltinServiceDefinition {
                     ("entity_id".into(), ServiceField { required: true, selector: Some(json!({"entity": {"domain": "climate"}})) }),
                     ("temperature".into(), ServiceField { required: true, selector: Some(json!({"number": {"min": -40, "max": 100, "step": 0.5}})) }),
                 ]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::CoverToggle => ServiceDescription {
+                service: self.service.into(),
+                name: "Toggle".into(),
+                // Source: homeassistant/components/cover/__init__.py SERVICE_TOGGLE
+                description: "Toggle cover entities (open if closed, close if open).".into(),
+                fields: BTreeMap::from([(
+                    "entity_id".into(),
+                    ServiceField {
+                        required: false,
+                        selector: Some(json!({"entity": {"domain": "cover"}})),
+                    },
+                )]),
                 supports_response: SupportsResponse::None,
             },
         }
@@ -738,6 +784,49 @@ impl BuiltinServiceDefinition {
                 changed_states: vec![],
                 response: None,
             }),
+            BuiltinServiceKind::FanSetPercentage => {
+                // Source: homeassistant/components/fan/__init__.py SERVICE_SET_PERCENTAGE
+                // percentage is Required for set_percentage (unlike turn_on where it's Optional)
+                let pct = request
+                    .data
+                    .percentage
+                    .ok_or_else(|| ServiceError::InvalidFormat("percentage field required".into()))?;
+                let entity_ids = request.target.entity_ids.clone();
+                if entity_ids.is_empty() {
+                    return Err(ServiceError::InvalidFormat("entity_id required".into()));
+                }
+                let mut changed_states = Vec::new();
+                for entity_id in &entity_ids {
+                    let mut attributes = states
+                        .get(entity_id)
+                        .map(|s| s.attributes)
+                        .unwrap_or_default();
+                    attributes.insert("percentage".into(), json!(pct));
+                    let new_state = make_state_with_context(
+                        entity_id.clone(),
+                        states.get(entity_id).map(|s| s.state.clone()).unwrap_or_else(|| "on".to_string()),
+                        StateAttributes::from_hash(attributes),
+                        request.context.clone(),
+                    );
+                    states.set(new_state.clone())?;
+                    changed_states.push(new_state);
+                }
+                Ok(ServiceOutcome { context: request.context, changed_states, response: None })
+            }
+            BuiltinServiceKind::CoverToggle => {
+                // Source: homeassistant/components/cover/__init__.py SERVICE_TOGGLE
+                // Opens if closed, closes if open
+                let entity_id = request
+                    .target
+                    .primary_entity_id()
+                    .ok_or_else(|| ServiceError::InvalidFormat("entity_id required".into()))?;
+                let current = states.get(entity_id).map(|s| s.state.clone()).unwrap_or_default();
+                if current == "closed" {
+                    set_cover_state(request, states, "open", Some(100))
+                } else {
+                    set_cover_state(request, states, "closed", Some(0))
+                }
+            }
         }
     }
 }
@@ -753,11 +842,13 @@ enum BuiltinServiceKind {
     FanTurnOn,
     FanTurnOff,
     FanToggle,
+    FanSetPercentage,
     SelectSelectOption,
     CoverSetPosition,
     CoverOpenCover,
     CoverCloseCover,
     CoverStopCover,
+    CoverToggle,
     ClimateSetHvacMode,
     ClimateSetTemperature,
 }
@@ -788,11 +879,15 @@ const BUILTIN_SERVICES: &[BuiltinServiceDefinition] = &[
     BuiltinServiceDefinition { domain: "fan",     service: "turn_on",            kind: BuiltinServiceKind::FanTurnOn },
     BuiltinServiceDefinition { domain: "fan",     service: "turn_off",           kind: BuiltinServiceKind::FanTurnOff },
     BuiltinServiceDefinition { domain: "fan",     service: "toggle",             kind: BuiltinServiceKind::FanToggle },
+    // Source: homeassistant/components/fan/__init__.py SERVICE_SET_PERCENTAGE
+    BuiltinServiceDefinition { domain: "fan",     service: "set_percentage",     kind: BuiltinServiceKind::FanSetPercentage },
     BuiltinServiceDefinition { domain: "select",  service: "select_option",      kind: BuiltinServiceKind::SelectSelectOption },
     BuiltinServiceDefinition { domain: "cover",   service: "set_cover_position", kind: BuiltinServiceKind::CoverSetPosition },
     BuiltinServiceDefinition { domain: "cover",   service: "open_cover",         kind: BuiltinServiceKind::CoverOpenCover },
     BuiltinServiceDefinition { domain: "cover",   service: "close_cover",        kind: BuiltinServiceKind::CoverCloseCover },
     BuiltinServiceDefinition { domain: "cover",   service: "stop_cover",         kind: BuiltinServiceKind::CoverStopCover },
+    // Source: homeassistant/components/cover/__init__.py SERVICE_TOGGLE
+    BuiltinServiceDefinition { domain: "cover",   service: "toggle",             kind: BuiltinServiceKind::CoverToggle },
     BuiltinServiceDefinition { domain: "climate", service: "set_hvac_mode",      kind: BuiltinServiceKind::ClimateSetHvacMode },
     BuiltinServiceDefinition { domain: "climate", service: "set_temperature",    kind: BuiltinServiceKind::ClimateSetTemperature },
 ];

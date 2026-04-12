@@ -21,7 +21,7 @@
     <span class="mi-label">Speed</span>
     <input class="mi-slider" type="range" name="percentage" min="0" max="100"
            value="{{ entity.fan_percentage | default(50) }}"
-           hx-post="/ui/services/fan/turn_on"
+           hx-post="/ui/services/fan/set_percentage"
            hx-include="closest .mi-controls"
            hx-swap="none"
            hx-trigger="change"
