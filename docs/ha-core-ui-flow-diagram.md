@@ -209,7 +209,7 @@ flowchart TD
         CFG_ROOT --> CFG_REPAIRS
         CFG_ROOT --> CFG_DEVTOOLS
 
-        CFG_INTEGRATIONS["/config/integrations\nHTTP: POST /api/config/config_entries/flow\nHTTP: /api/config/config_entries/options/flow\nHTTP: /api/config/config_entries/subentries/flow\nconfig/config_entries.py:163,263,299"]
+        CFG_INTEGRATIONS["/config/integrations\nHTTP: POST /api/config/config_entries/flow\nHTTP: /api/config/config_entries/options/flow\nHTTP: /api/config/config_entries/subentries/flow\nconfig/config_entries.py:168,263,299"]
         CFG_DEVICES["/config/devices\nWS: config/device_registry/list,update,\n    remove_config_entry\nconfig/device_registry.py:19"]
         CFG_ENTITIES["/config/entities\nWS: config/entity_registry/list,get,\n    update,remove,get_entities\nconfig/entity_registry.py:26"]
         CFG_AREAS["/config/areas\nWS: config/area_registry/list,create,\n    delete,update,reorder\nconfig/area_registry.py:16"]
@@ -288,7 +288,7 @@ flowchart TD
         CF_EXT_DONE --> CF_RES_DISPATCH
 
         CF_PROG["SHOW_PROGRESS — async_show_progress()\ndata_entry_flow.py:791\nShow progress indicator\nprogress_action: i18n description key\nprogress_task: asyncio.Task\nNext result MUST be SHOW_PROGRESS\n  or SHOW_PROGRESS_DONE — enforced\ndata_entry_flow.py:401-409\nasync_update_progress(float) fires\nEVENT_DATA_ENTRY_FLOW_PROGRESS_UPDATE — L831"]
-        CF_PROG -- "progress_task.done_callback\n→ schedule async_configure()\ndata_entry_flow.py:511-528" --> CF_PROG_DONE
+        CF_PROG -- "progress_task.done_callback\n→ schedule async_configure()\ndata_entry_flow.py:512-528" --> CF_PROG_DONE
         CF_PROG_DONE["SHOW_PROGRESS_DONE — async_show_progress_done()\ndata_entry_flow.py:850\nAuto-loop: manager advances immediately\ndata_entry_flow.py:335\nNo user interaction needed"]
         CF_PROG_DONE --> CF_RES_DISPATCH
 
@@ -300,7 +300,7 @@ flowchart TD
 
         CF_OPTS_AVAILABLE{"Options flow available?\nasync_supports_options_flow()\nconfig_entries.py:2962\n(True iff subclass overrides\nasync_get_options_flow)"}
 
-        CF_SPECIAL["Special abort helpers:\n_abort_if_unique_id_configured — L3037\n_abort_if_unique_id_mismatch — L3016\n_async_abort_entries_match — L2998\nasync_set_unique_id → abort dup flows — L3086\nasync_update_and_abort — L3383\nasync_update_reload_and_abort — L3431"]
+        CF_SPECIAL["Special abort helpers:\n_abort_if_unique_id_configured — L3037\n_abort_if_unique_id_mismatch — L3016\n_async_abort_entries_match — L2998\nasync_set_unique_id → abort dup flows — L3086\nasync_update_and_abort — L3378\nasync_update_reload_and_abort — L3420"]
 
         CF_STEP_DISCOVERY -- "async_step_ignore()\nCreates SOURCE_IGNORE entry\nconfig_entries.py:3168" --> CF_IGNORE(["Source ignored"])
     end
