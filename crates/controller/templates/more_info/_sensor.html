@@ -7,16 +7,29 @@
     </div>
   </div>
 </div>
+{% if sparkline %}
+<div class="mi-sparkline">{{ sparkline | safe }}</div>
+{% endif %}
 {% if history | length > 0 %}
 <div class="mi-history">
   <div class="mi-section-title">Recent readings</div>
   <div class="mi-history-list">
     {% for entry in history %}
     <div class="mi-history-row">
-      <span class="mi-history-ts">{{ entry.ts }}</span>
+      <span class="mi-history-ts" data-ts="{{ entry.ts }}">{{ entry.ts }}</span>
       <span class="mi-history-val">{{ entry.value }}{% if entity.unit %}&nbsp;{{ entity.unit }}{% endif %}</span>
     </div>
     {% endfor %}
   </div>
 </div>
+<script>
+(function(){
+  document.querySelectorAll('.mi-history-ts[data-ts]').forEach(function(el){
+    var ts = parseInt(el.dataset.ts, 10);
+    if(!isNaN(ts)){
+      el.textContent = new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    }
+  });
+})();
+</script>
 {% endif %}

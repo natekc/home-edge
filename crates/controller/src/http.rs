@@ -430,9 +430,15 @@ async fn fragment_more_info(
         "select"        => "more_info/_select.html",
         _               => "more_info/_default.html",
     };
+    let sparkline: Option<String> = if entity.entity_type == "sensor" && history.len() >= 2 {
+        Some(crate::history_store::render_sparkline(&history, 300, 56))
+    } else {
+        None
+    };
     let ctx = context! {
-        entity  => Value::from_serialize(&view),
-        history => Value::from_serialize(&history),
+        entity    => Value::from_serialize(&view),
+        history   => Value::from_serialize(&history),
+        sparkline => sparkline,
     };
     render_template(&state, template_name, ctx)
 }
