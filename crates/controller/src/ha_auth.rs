@@ -108,11 +108,14 @@ struct AccessTokenEntry {
     issued_at: u64,
 }
 
-/// One-time authorization code with expiry timestamp.
+/// One-time authorization code with monotonic issue time.
+///
+/// Uses `Instant` rather than wall-clock time so the TTL is correct even when
+/// the server is not synced to NTP.  Auth codes are never persisted, so
+/// process-local monotonic time is sufficient.
 struct AuthCodeEntry {
     client_id: String,
-    /// Unix timestamp (seconds) when this code was issued.
-    issued_at: u64,
+    issued_at: std::time::Instant,
 }
 
 struct TokenStoreInner {
@@ -191,10 +194,11 @@ impl TokenStore {
     /// Issue a one-time authorization code for the given client.
     pub async fn issue_auth_code(&self, client_id: &str) -> String {
         let code = new_token();
-        let now = now_unix_secs();
+        let now = std::time::Instant::now();
+        let ttl = std::time::Duration::from_secs(AUTH_CODE_TTL_SECS);
         let mut inner = self.inner.lock().await;
-        // Lazy sweep: remove codes older than AUTH_CODE_TTL_SECS.
-        inner.auth_codes.retain(|_, entry| now.saturating_sub(entry.issued_at) <= AUTH_CODE_TTL_SECS);
+        // Lazy sweep: remove codes whose age exceeds AUTH_CODE_TTL_SECS.
+        inner.auth_codes.retain(|_, entry| now.duration_since(entry.issued_at) <= ttl);
         inner.auth_codes.insert(code.clone(), AuthCodeEntry {
             client_id: client_id.to_string(),
             issued_at: now,
@@ -209,9 +213,9 @@ impl TokenStore {
             let mut inner = self.inner.lock().await;
             let entry = inner.auth_codes.remove(code)?;
             // Reject expired codes (HA: invalid_grant).
-            let age = now_unix_secs().saturating_sub(entry.issued_at);
-            if age > AUTH_CODE_TTL_SECS {
-                tracing::debug!("Auth code expired (age={age}s, ttl={AUTH_CODE_TTL_SECS}s)");
+            let age = entry.issued_at.elapsed();
+            if age > std::time::Duration::from_secs(AUTH_CODE_TTL_SECS) {
+                tracing::debug!("Auth code expired (age={age:.1?}, ttl={AUTH_CODE_TTL_SECS}s)");
                 return None;
             }
             if entry.client_id != client_id {
@@ -301,7 +305,9 @@ impl TokenStore {
     async fn backdate_auth_code(&self, code: &str, age_secs: u64) {
         let mut inner = self.inner.lock().await;
         if let Some(entry) = inner.auth_codes.get_mut(code) {
-            entry.issued_at = now_unix_secs().saturating_sub(age_secs);
+            // Shift issued_at back in time by subtracting a duration from now.
+            entry.issued_at = std::time::Instant::now()
+                - std::time::Duration::from_secs(age_secs);
         }
     }
 
