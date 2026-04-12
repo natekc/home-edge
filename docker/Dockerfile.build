@@ -27,11 +27,13 @@ RUN apt-get update \
 COPY --from=build /out /opt/home-edge
 ENTRYPOINT ["/opt/home-edge/home-edge", "--config", "/opt/home-edge/default.toml"]
 
-FROM runtime AS smoke
+FROM --platform=linux/arm/v7 debian:bookworm-slim AS smoke
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
         wget \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out /opt/home-edge
 COPY docker/smoke-test.sh /usr/local/bin/smoke-test.sh
 RUN chmod +x /usr/local/bin/smoke-test.sh
 ENTRYPOINT ["/usr/local/bin/smoke-test.sh"]

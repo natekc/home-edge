@@ -1,0 +1,23 @@
+[Unit]
+Description=Home Edge Milestone 0
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=home-edge
+Group=home-edge
+WorkingDirectory=/var/lib/home-edge
+ExecStart=/usr/local/bin/home-edge --config /etc/home-edge/config.toml
+Restart=on-failure
+RestartSec=2
+StateDirectory=home-edge
+RuntimeDirectory=home-edge
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/home-edge /var/log/home-edge /etc/home-edge
+
+[Install]
+WantedBy=multi-user.target

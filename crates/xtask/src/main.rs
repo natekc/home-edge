@@ -61,7 +61,11 @@ fn cmd_dist() -> Result<()> {
     fs::create_dir_all("dist").context("failed to create dist/")?;
 
     // Evict any stale container from a prior aborted run (ignore failure; nothing may exist).
-    let _ = Command::new("docker").args(["rm", "-f", CONTAINER]).status();
+    let _ = Command::new("docker")
+        .args(["rm", "-f", CONTAINER])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 
     // Always remove the staging container, even on error.
     let copy_result = (|| -> Result<()> {
