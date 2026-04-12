@@ -91,6 +91,36 @@ Wave 1 is complete and merged. Remaining waves are gated as shown.
   - Service calls via `POST /ui/services/{domain}/{service}` (form-encoded entity_id)
     close dialog and trigger `refresh` on the area-cards container
 
+### Wave 6 — navigation & UX parity (all parallel, need Wave 5 merged ✅)
+
+Merge order: `feat/nav-pages` → `feat/nav-sidebar` + `feat/nav-settings` (can merge in either order after nav-pages).
+
+- [x] **`feat/nav-pages`** — new page handlers + templates + CSS + area registry type change
+  - `load_area_names` → `load_areas` returning `Vec<StoredArea>` at all `app_ctx!` call sites
+  - New routes + handlers: `/history`, `/logbook`, `/developer-tools`, `/notifications`, `/system`
+  - New area CRUD routes: `GET /areas`, `POST /areas`, `POST /areas/{area_id}/delete`
+  - New per-area detail route: `GET /areas/{area_id}`, `GET /fragments/area-sensors/{area_id}`
+  - New templates: `history.html`, `logbook.html`, `developer_tools.html`, `notifications.html`,
+    `system.html`, `areas.html`, `area_detail.html`
+  - CSS: `.nav-badge`, `.settings-list`, `.settings-row`, `.settings-row-icon/text/title/sub/chevron`
+  - `_icons.html`: added `icon-history`, `icon-hammer`, `icon-cellphone-cog`, `icon-home-account`
+
+- [x] **`feat/nav-sidebar`** — `_base_app.html` sidebar restructured to match HA Core layout
+  - Before-spacer: Overview → per-area auto-generated items (using `area.icon` + fallback) → BLE → Logbook → History
+  - After-spacer group 1: Developer tools → Settings
+  - Inline `<hr>`-style divider
+  - After-spacer group 2: Notifications (bell) → Profile (avatar, `user_name` initial)
+  - Removes "Switch Server" nav item
+
+- [x] **`feat/nav-settings`** — settings page redesigned to HA-style list layout
+  - `settings.html`: HA-style full-width list rows with colored icon circles
+    - Devices & services (blue) → `/devices`
+    - Areas, labels & zones (orange) → `/areas`
+    - Companion app (purple) → `openNativeSettings()` — canonical entry replaces "Switch Server"
+    - People (teal) → `/profile`
+    - System (grey) → `/system`
+  - `profile.html`: "Switch server" danger zone card removed
+
 ---
 
 ## Infrastructure / housekeeping
