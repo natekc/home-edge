@@ -43,7 +43,7 @@ flowchart TD
         ONB_ANALYTICS -- "step already done" --> ONB_403C["HTTP 403 abort"]
         ONB_ANALYTICS --> ONB_INTEGRATION
 
-        ONB_INTEGRATION["POST /api/onboarding/integration  ★ STEP_INTEGRATION\nIntegrationOnboardingView — views.py:283\nRequires auth\nInput: {client_id, redirect_uri}\nCode order: no-token 403 (L286) → step-done 403 (L292)\n  → mark_done → bad redirect_uri 400 (L304)\n  → no-credential 403 (L307-310)\nCalls create_auth_code(hass, client_id, refresh_token.credential)\nReturns: {auth_code}"]
+        ONB_INTEGRATION["POST /api/onboarding/integration  ★ STEP_INTEGRATION\nIntegrationOnboardingView — views.py:283\nRequires auth\nInput: {client_id, redirect_uri}\nCode order: no-token 403 (L286) → step-done 403 (L292)\n  → mark_done → bad redirect_uri 400 (L303-305)\n  → no-credential 403 (L308-311)\nCalls create_auth_code(hass, client_id, refresh_token.credential)\nReturns: {auth_code}"]
         ONB_INTEGRATION -- "No refresh token/credential → 403\nBad redirect_uri → 400\nStep already done → 403" --> ONB_4XXD["HTTP 4xx abort"]
         ONB_INTEGRATION -- "All 4 steps complete\nviews.py:157" --> ONB_COMPLETE
 
@@ -156,14 +156,14 @@ flowchart TD
         SIDEBAR_ENTRY --> P_APP
 
         P_LOVELACE["/ — Overview / Lovelace\ncomponent=lovelace (builtin)\ncomponents/lovelace/__init__.py:345\nDynamic url_path per dashboard"]
-        P_ENERGY["/energy\ncomponent=energy\ncomponents/energy/__init__.py:28\nmdi:lightning-bolt"]
-        P_HISTORY["/history\ncomponent=history\ncomponents/history/__init__.py:48\nmdi:chart-box"]
-        P_LOGBOOK["/logbook\ncomponent=logbook\ncomponents/logbook/__init__.py:116\nmdi:format-list-bulleted-type"]
+        P_ENERGY["/energy\ncomponent=energy\ncomponents/energy/__init__.py:29\nmdi:lightning-bolt"]
+        P_HISTORY["/history\ncomponent=history\ncomponents/history/__init__.py:49\nmdi:chart-box"]
+        P_LOGBOOK["/logbook\ncomponent=logbook\ncomponents/logbook/__init__.py:117\nmdi:format-list-bulleted-type"]
         P_TODO["/todo\ncomponent=todo\ncomponents/todo/__init__.py:127\nmdi:clipboard-list"]
         P_MEDIA["/media-browser\ncomponent=media-browser\ncomponents/media_source/http.py:27\nmdi:play-box-multiple"]
         P_CALENDAR["/calendar\ncomponent=calendar\ncomponents/calendar/__init__.py:321\nmdi:calendar"]
         P_MAP["/map — Lovelace map dashboard\ncomponents/lovelace/__init__.py:366\n_create_map_dashboard()"]
-        P_CONFIG["/config  (admin required)\ncomponent=config\ncomponents/config/__init__.py:50\nmdi:cog"]
+        P_CONFIG["/config  (admin required)\ncomponent=config\ncomponents/config/__init__.py:51\nmdi:cog"]
         P_PROFILE["/profile\ncomponent=profile\ncomponents/frontend/__init__.py:603\n(no sidebar)"]
         P_APP["/app — Supervisor shell\ncomponent=app\ncomponents/hassio/__init__.py:211"]
 
@@ -319,7 +319,7 @@ flowchart TD
         OPT_MORE_STEPS["...additional integration-defined steps...\n(FORM / MENU / EXTERNAL_STEP / SHOW_PROGRESS)"]
         OPT_MORE_STEPS --> OPT_DONE
 
-        OPT_DONE["CREATE_ENTRY — OptionsFlowManager.async_finish_flow\nconfig_entries.py:3793\nasync_update_entry(entry, options=result.data)\n[OptionsFlowWithReload]\n  automatic_reload=True → async_schedule_reload()\nconfig_entries.py:3917"]
+        OPT_DONE["CREATE_ENTRY — OptionsFlowManager.async_finish_flow\nconfig_entries.py:3793\nasync_update_entry(entry, options=result.data)\n[OptionsFlowWithReload]\n  automatic_reload=True → async_schedule_reload()\nconfig_entries.py:3828"]
     end
 
     CF_OPTS_AVAILABLE -- "User opens options gear icon" --> OPT_INIT
@@ -387,7 +387,7 @@ flowchart TD
 
         subgraph TOTP_SETUP["TOTP Setup — auth/mfa_modules/totp.py:180"]
             TOTP_INIT["async_step_init — totp.py:194\nGenerate (ota_secret, url, qr_image)\n  via _generate_secret_and_qr_code() in executor\nShow form: {code: str}\nwith QR code + url placeholders"]
-            TOTP_INIT -- "pyotp.TOTP.verify() fails\nerrors.base=invalid_code\ntotp.py:228" --> TOTP_INIT
+            TOTP_INIT -- "pyotp.TOTP.verify() fails\nerrors.base=invalid_code\ntotp.py:216" --> TOTP_INIT
             TOTP_INIT -- "Valid TOTP code confirmed" --> TOTP_DONE
             TOTP_DONE["async_create_entry(data={result: ota_secret})\ntotp.py:214\nasync_setup_user(user_id, {secret: ota_secret})"]
         end
@@ -436,7 +436,7 @@ flowchart TD
     subgraph HTTP_REDIRECTS["HTTP Redirects — components/frontend/__init__.py"]
         R1["/.well-known/change-password → /profile\nfrontend/__init__.py:546  HTTP 302"]
         R2["/shopping-list → /todo\nfrontend/__init__.py:556"]
-        R3["/developer-tools → /config/developer-tools\nfrontend/__init__.py:558"]
+        R3["/developer-tools → /config/developer-tools\nfrontend/__init__.py:559"]
         R3b["/developer-tools/yaml → /config/developer-tools/yaml"]
         R3c["/developer-tools/state → /config/developer-tools/state"]
         R3d["/developer-tools/action → /config/developer-tools/action"]
@@ -455,7 +455,7 @@ flowchart TD
     %% =========================================================
     %% _my_redirect PANEL
     %% =========================================================
-    P_MY_REDIRECT["/_my_redirect\ncomponent=my\ncomponents/my/__init__.py:15\nRoutes deep-links from my.home-assistant.io\nMap of logical targets to /config/* pages"]
+    P_MY_REDIRECT["/_my_redirect\ncomponent=my\ncomponents/my/__init__.py:16\nRoutes deep-links from my.home-assistant.io\nMap of logical targets to /config/* pages"]
     SIDEBAR_ENTRY -.-> P_MY_REDIRECT
 ```
 
