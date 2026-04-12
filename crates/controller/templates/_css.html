@@ -199,12 +199,13 @@ button { cursor: pointer; font-family: inherit; }
 .sidebar.collapsed .nav-item { display: flex; justify-content: center; }
 .main-content.sidebar-collapsed    { margin-left: 56px; }
 
-/* Mobile: full-width overlay drawer */
+/* Mobile: full-width overlay drawer + HA-style top app bar */
 @media (max-width: 640px) {
   .sidebar {
     transform: translateX(-100%);
     transition: transform .25s ease;
     width: var(--sidebar-width);
+    top: 56px;  /* slide in below the app bar */
     box-shadow: 2px 0 16px rgba(0,0,0,.15);
   }
   .sidebar.mobile-open { transform: translateX(0) !important; }
@@ -213,19 +214,34 @@ button { cursor: pointer; font-family: inherit; }
     background: rgba(0,0,0,.25); z-index: 99;
   }
   .sidebar-backdrop.visible { display: block; }
-  .main-content { margin-left: 0 !important; }
-  .mobile-menu-fab {
-    display: flex; position: fixed; top: 14px; left: 14px;
-    width: 40px; height: 40px;
-    align-items: center; justify-content: center;
-    background: var(--primary-color); color: #fff;
-    border-radius: 50%; border: none;
-    box-shadow: 0 3px 10px rgba(0,0,0,.2); z-index: 98;
+  .main-content { margin-left: 0 !important; padding-top: 56px; }
+  /* Top app bar — matches HA ha-top-app-bar on narrow screens */
+  .app-header {
+    display: flex;
+    position: fixed; top: 0; left: 0; right: 0;
+    height: 56px;
+    background: var(--primary-color);
+    color: #fff;
+    align-items: center;
+    padding: 0 4px;
+    gap: 4px;
+    z-index: 101;
+    box-shadow: 0 2px 4px rgba(0,0,0,.2);
   }
-  .mobile-menu-fab svg { width: 22px; height: 22px; fill: #fff; }
+  .app-header-btn {
+    width: 48px; height: 48px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: none; cursor: pointer;
+    border-radius: 50%; color: #fff; flex-shrink: 0;
+  }
+  .app-header-btn:hover { background: rgba(255,255,255,.12); }
+  .app-header-btn svg { fill: #fff; }
+  .app-header-title {
+    font-size: 20px; font-weight: 400; color: #fff; flex: 1;
+  }
 }
 @media (min-width: 641px) {
-  .mobile-menu-fab { display: none; }
+  .app-header { display: none; }
   .sidebar-backdrop { display: none !important; }
 }
 
@@ -465,10 +481,10 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
   .page-body   { padding: 12px 16px 28px; }
   .wizard-card { padding: 24px 20px; }
 }
-/* On narrow screens the sidebar hides and the FAB appears fixed top-left;
-   shift the page-header title right so it doesn't sit under the button. */
+/* On narrow screens the sidebar hides and the top app bar covers the top 56px;
+   restore normal horizontal padding for the page-header. */
 @media (max-width: 640px) {
-  .page-header { padding-left: 64px; }
+  .page-header { padding: 16px 16px 0; }
 }
 
 /* --- Dark theme --------------------------------------------------------
