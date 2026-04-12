@@ -886,3 +886,57 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
     border-color: var(--input-border);
   }
 }
+
+/* ===== Nav badge (for Notifications bell icon) ======================== */
+.nav-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--accent-color, #ff9800);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  padding: 0 4px;
+  pointer-events: none;
+}
+.nav-item { position: relative; }
+
+/* ===== Settings list (HA-style full-width rows with icon circles) ===== */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  background: var(--card-bg);
+  transition: background 0.15s;
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-row:hover { background: var(--sidebar-hover-bg, rgba(3,169,244,.08)); }
+.settings-row-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+}
+.settings-row-icon svg { width: 22px; height: 22px; fill: currentColor; }
+.settings-row-text { flex: 1; min-width: 0; }
+.settings-row-title { font-size: .95rem; font-weight: 500; }
+.settings-row-sub { font-size: .8rem; color: var(--text-secondary); margin-top: 2px; }
+.settings-row-chevron { color: var(--text-secondary); font-size: 1.2rem; flex-shrink: 0; }

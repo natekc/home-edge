@@ -72,15 +72,8 @@ fn local_host() -> String {
         .unwrap_or_else(|_| "localhost".to_string())
 }
 
-async fn load_area_names(state: &AppState) -> Vec<String> {
-    state
-        .area_registry
-        .list()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|a| a.name)
-        .collect()
+async fn load_areas(state: &AppState) -> Vec<crate::area_registry_store::StoredArea> {
+    state.area_registry.list().await.unwrap_or_default()
 }
 
 /// Load the configured location name («Nathan's Home») for the sidebar header.
@@ -137,8 +130,18 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/devices/{webhook_id}/entities/{entity_id}/save",
             post(entity_edit_save),
         )
+        // New UI pages
+        .route("/history",                                           get(history_page))
+        .route("/logbook",                                           get(logbook_page))
+        .route("/developer-tools",                                   get(developer_tools_page))
+        .route("/notifications",                                     get(notifications_page))
+        .route("/system",                                            get(system_page))
+        .route("/areas",                                             get(areas_page).post(areas_create))
+        .route("/areas/{area_id}",                                   get(area_detail_page))
+        .route("/areas/{area_id}/delete",                            post(area_delete))
         // HTMX fragments
         .route("/fragments/dashboard-sensors",                   get(fragment_dashboard_sensors))
+        .route("/fragments/area-sensors/{area_id}",              get(fragment_area_sensors))
         .route("/fragments/more-info/{entity_id}",               get(fragment_more_info))
         // UI service call (form-encoded, returns 204 for hx-swap="none")
         .route("/ui/services/{domain}/{service}",                post(ui_service_call))
@@ -197,8 +200,8 @@ async fn profile_page(State(state): State<Arc<AppState>>) -> Response {
         .location_name
         .clone()
         .unwrap_or_else(|| state.config.ui.product_name.clone());
-    let area_names = load_area_names(&state).await;
-    let ctx = app_ctx!(state, "profile", location_name.as_str(), &area_names,
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "profile", location_name.as_str(), &areas,
         user_name     => user.as_ref().map(|u| u.name.as_str()).unwrap_or("—"),
         user_username => user.as_ref().map(|u| u.username.as_str()).unwrap_or("—"),
         language      => onboarding.language.as_deref().unwrap_or("—"),
@@ -237,8 +240,8 @@ async fn dashboard_response(state: &AppState) -> Response {
         .collect();
     let area_cards = build_area_cards(state, &all_entities).await;
     let location_name = load_location_name(state).await;
-    let area_names = load_area_names(state).await;
-    let ctx = app_ctx!(state, "dashboard", location_name.as_str(), &area_names,
+    let areas = load_areas(state).await;
+    let ctx = app_ctx!(state, "dashboard", location_name.as_str(), &areas,
         devices    => Value::from_serialize(&device_summaries),
         area_cards => Value::from_serialize(&area_cards),
     );
@@ -269,8 +272,8 @@ async fn onboarding_page(State(state): State<Arc<AppState>>) -> Response {
 async fn settings_page(State(state): State<Arc<AppState>>) -> Response {
     let mode = format!("{:?}", state.core.runtime_mode());
     let location_name = load_location_name(&state).await;
-    let area_names = load_area_names(&state).await;
-    let ctx = app_ctx!(state, "settings", location_name.as_str(), &area_names,
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "settings", location_name.as_str(), &areas,
         version      => env!("CARGO_PKG_VERSION"),
         runtime_mode => mode.as_str(),
     );
@@ -304,8 +307,8 @@ async fn devices_list_page(State(state): State<Arc<AppState>>) -> Response {
         })
         .collect();
     let location_name = load_location_name(&state).await;
-    let area_names = load_area_names(&state).await;
-    let ctx = app_ctx!(state, "settings", location_name.as_str(), &area_names,
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "settings", location_name.as_str(), &areas,
         devices => Value::from_serialize(&device_summaries),
     );
     render_template(&state, "devices.html", ctx)
@@ -313,9 +316,176 @@ async fn devices_list_page(State(state): State<Arc<AppState>>) -> Response {
 
 async fn ble_scan_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
-    let area_names = load_area_names(&state).await;
-    let ctx = app_ctx!(state, "ble", location_name.as_str(), &area_names,);
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "ble", location_name.as_str(), &areas,);
     render_template(&state, "ble_scan.html", ctx)
+}
+
+async fn history_page(State(state): State<Arc<AppState>>) -> Response {
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let all_entities = match state.mobile_entities.all().await {
+        Ok(e) => e,
+        Err(err) => return internal_error(&err),
+    };
+    let mut entity_list: Vec<serde_json::Value> = all_entities
+        .iter()
+        .filter(|e| !e.disabled)
+        .map(|e| json!({
+            "entity_id": e.entity_id,
+            "display_name": e.display_name(),
+            "entity_type": e.entity_type,
+        }))
+        .collect();
+    entity_list.sort_by(|a, b| {
+        a["display_name"].as_str().unwrap_or("").cmp(b["display_name"].as_str().unwrap_or(""))
+    });
+    let ctx = app_ctx!(state, "history", location_name.as_str(), &areas,
+        entities => Value::from_serialize(&entity_list),
+    );
+    render_template(&state, "history.html", ctx)
+}
+
+async fn logbook_page(State(state): State<Arc<AppState>>) -> Response {
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "logbook", location_name.as_str(), &areas,);
+    render_template(&state, "logbook.html", ctx)
+}
+
+async fn developer_tools_page(State(state): State<Arc<AppState>>) -> Response {
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let all_entities = match state.mobile_entities.all().await {
+        Ok(e) => e,
+        Err(err) => return internal_error(&err),
+    };
+    let entity_states: Vec<serde_json::Value> = all_entities
+        .iter()
+        .map(|e| {
+            let value = state.states.get(&e.entity_id)
+                .map(|s| s.state.clone())
+                .unwrap_or_else(|| "unavailable".to_string());
+            json!({
+                "entity_id": e.entity_id,
+                "display_name": e.display_name(),
+                "entity_type": e.entity_type,
+                "state": value,
+            })
+        })
+        .collect();
+    let ctx = app_ctx!(state, "developer-tools", location_name.as_str(), &areas,
+        entity_states => Value::from_serialize(&entity_states),
+    );
+    render_template(&state, "developer_tools.html", ctx)
+}
+
+async fn notifications_page(State(state): State<Arc<AppState>>) -> Response {
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "notifications", location_name.as_str(), &areas,);
+    render_template(&state, "notifications.html", ctx)
+}
+
+async fn system_page(State(state): State<Arc<AppState>>) -> Response {
+    let mode = format!("{:?}", state.core.runtime_mode());
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "system", location_name.as_str(), &areas,
+        version      => env!("CARGO_PKG_VERSION"),
+        runtime_mode => mode.as_str(),
+    );
+    render_template(&state, "system.html", ctx)
+}
+
+async fn areas_page(State(state): State<Arc<AppState>>) -> Response {
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,);
+    render_template(&state, "areas.html", ctx)
+}
+
+#[derive(Deserialize)]
+struct AreaCreateForm {
+    name: String,
+}
+
+async fn areas_create(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Form(form): axum::extract::Form<AreaCreateForm>,
+) -> Response {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return redirect("/areas");
+    }
+    if let Err(err) = state.area_registry.create(name).await {
+        return internal_error(&err);
+    }
+    redirect("/areas")
+}
+
+async fn area_delete(
+    State(state): State<Arc<AppState>>,
+    Path(area_id): Path<String>,
+) -> Response {
+    let _ = state.area_registry.delete(&area_id).await;
+    redirect("/areas")
+}
+
+async fn area_detail_page(
+    State(state): State<Arc<AppState>>,
+    Path(area_id): Path<String>,
+) -> Response {
+    let area = match state.area_registry.list().await {
+        Ok(list) => list.into_iter().find(|a| a.area_id == area_id),
+        Err(err) => return internal_error(&err),
+    };
+    let area = match area {
+        Some(a) => a,
+        None => return (StatusCode::NOT_FOUND, "Area not found").into_response(),
+    };
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let all_entities = match state.mobile_entities.all().await {
+        Ok(e) => e,
+        Err(err) => return internal_error(&err),
+    };
+    let all_cards = build_area_cards(&state, &all_entities).await;
+    let area_cards: Vec<AreaCard> = all_cards.into_iter()
+        .filter(|c| c.area_name == area.name)
+        .collect();
+    let active_key = format!("area:{}", area_id);
+    let ctx = app_ctx!(state, active_key.as_str(), location_name.as_str(), &areas,
+        area       => Value::from_serialize(&area),
+        area_cards => Value::from_serialize(&area_cards),
+    );
+    render_template(&state, "area_detail.html", ctx)
+}
+
+async fn fragment_area_sensors(
+    State(state): State<Arc<AppState>>,
+    Path(area_id): Path<String>,
+) -> Response {
+    let area = match state.area_registry.list().await {
+        Ok(list) => list.into_iter().find(|a| a.area_id == area_id),
+        Err(err) => return internal_error(&err),
+    };
+    let area = match area {
+        Some(a) => a,
+        None => return (StatusCode::NOT_FOUND, Html("<p>Area not found</p>".to_string())).into_response(),
+    };
+    let all_entities = match state.mobile_entities.all().await {
+        Ok(e) => e,
+        Err(err) => return internal_error(&err),
+    };
+    let all_cards = build_area_cards(&state, &all_entities).await;
+    let area_cards: Vec<AreaCard> = all_cards.into_iter()
+        .filter(|c| c.area_name == area.name)
+        .collect();
+    let ctx = context! {
+        area_cards => Value::from_serialize(&area_cards),
+    };
+    render_template(&state, "fragments/sensors.html", ctx)
 }
 
 async fn device_detail_page(
@@ -336,8 +506,8 @@ async fn device_detail_page(
         .map(|e| entity_to_view(e, &state))
         .collect();
     let location_name = load_location_name(&state).await;
-    let area_names = load_area_names(&state).await;
-    let ctx = app_ctx!(state, "devices", location_name.as_str(), &area_names,
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
         device   => Value::from_serialize(&device),
         entities => Value::from_serialize(&entities),
     );
@@ -367,8 +537,8 @@ async fn entity_edit_page(
     };
     let entity_view = entity_to_view(&entity_record, &state);
     let location_name = load_location_name(&state).await;
-    let area_names = load_area_names(&state).await;
-    let ctx = app_ctx!(state, "devices", location_name.as_str(), &area_names,
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
         device        => Value::from_serialize(&device),
         entity        => Value::from_serialize(&entity_view),
         saved         => params.saved.unwrap_or(false),

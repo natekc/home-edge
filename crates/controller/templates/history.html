@@ -1,0 +1,55 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>History</h1>
+  <p>State history for your entities.</p>
+</div>
+<div class="page-body">
+  {% if entities | length == 0 %}
+  <div class="ha-card">
+    <div class="ha-card-body text-muted">No entities registered yet.</div>
+  </div>
+  {% else %}
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-body">
+      <label for="history-entity-select" style="display:block;font-size:.85rem;margin-bottom:8px;color:var(--text-secondary)">Select entity</label>
+      <select id="history-entity-select" class="form-control"
+              onchange="loadHistoryFor(this.value)">
+        <option value="">— choose an entity —</option>
+        {% for e in entities %}
+        <option value="{{ e.entity_id }}">{{ e.display_name }} ({{ e.entity_type }})</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div id="history-chart" class="ha-card">
+    <div class="ha-card-body text-muted" style="text-align:center;padding:40px 20px">
+      Select an entity above to view its history.
+    </div>
+  </div>
+  {% endif %}
+</div>
+<script>
+function loadHistoryFor(entityId) {
+  if (!entityId) return;
+  var target = document.getElementById('history-chart');
+  target.innerHTML = '<div class="ha-card-body text-muted" style="text-align:center">Loading...</div>';
+  fetch('/api/edge/history/' + encodeURIComponent(entityId) + '?last=100')
+    .then(function(r) { return r.json(); })
+    .then(function(entries) {
+      if (!entries || entries.length === 0) {
+        target.innerHTML = '<div class="ha-card-body text-muted" style="text-align:center;padding:40px">No history available.</div>';
+        return;
+      }
+      var rows = entries.map(function(e) {
+        var d = new Date(e.recorded_at * 1000);
+        return '<tr><td style="color:var(--text-secondary);font-size:.8rem;white-space:nowrap">' + d.toLocaleString() + '</td><td style="font-weight:500">' + e.state + '</td></tr>';
+      }).join('');
+      target.innerHTML = '<div class="ha-card-body" style="padding:0"><table style="width:100%;border-collapse:collapse">' + rows + '</table></div>';
+    })
+    .catch(function() {
+      target.innerHTML = '<div class="ha-card-body" style="color:var(--error)">Failed to load history.</div>';
+    });
+}
+</script>
+{% endblock %}

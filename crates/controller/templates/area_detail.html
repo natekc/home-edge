@@ -1,0 +1,21 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ area.name }}</h1>
+  <p>Entities in this area.</p>
+</div>
+<div class="page-body">
+  <div id="area-cards"
+       hx-get="/fragments/area-sensors/{{ area.area_id }}"
+       hx-trigger="load, every 5s, refresh from:body"
+       hx-swap="innerHTML">
+    {% if area_cards | length > 0 %}
+    {% include "fragments/sensors.html" %}
+    {% else %}
+    <div class="ha-card">
+      <div class="ha-card-body text-muted" style="text-align:center;padding:36px">No entities assigned to this area yet.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
