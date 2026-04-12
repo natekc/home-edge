@@ -147,7 +147,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/ble/scan",                                  post(api_ble_scan))
         .route("/api/ble/pair",                                  post(api_ble_pair))
         // History JSON
-        .route("/api/history/{entity_id}",                       get(api_history))
+        // Edge-internal history API. Not a replica of HA's /api/history/period endpoint
+        // (which uses compressed-state wire format: {"s", "a", "lu"}).
+        .route("/api/edge/history/{entity_id}",                  get(api_history))
         // Health + onboarding REST API
         .route("/api/health",                                    get(health))
         .route("/api/onboarding",                                get(onboarding_status))
@@ -431,9 +433,15 @@ async fn fragment_more_info(
         "climate"       => "more_info/_climate.html",
         _               => "more_info/_default.html",
     };
+    let sparkline: Option<String> = if entity.entity_type == "sensor" && history.len() >= 2 {
+        Some(crate::history_store::render_sparkline(&history, 300, 56))
+    } else {
+        None
+    };
     let ctx = context! {
-        entity  => Value::from_serialize(&view),
-        history => Value::from_serialize(&history),
+        entity    => Value::from_serialize(&view),
+        history   => Value::from_serialize(&history),
+        sparkline => sparkline,
     };
     render_template(&state, template_name, ctx)
 }
