@@ -69,7 +69,7 @@
           {% for area in areas %}
           <li class="nav-item {{ 'selected' if active_page == 'area:' ~ area.area_id else '' }}">
             <a href="/areas/{{ area.area_id }}" role="listitem">
-              <svg class="nav-icon"><use href="#icon-home"/></svg>
+              <svg class="nav-icon"><use href="{{ ('#icon-' ~ area.icon) if area.icon else '#icon-home' }}"/></svg>
               <span class="item-text">{{ area.name }}</span>
             </a>
           </li>
@@ -86,7 +86,7 @@
 
           <li class="nav-item {{ 'selected' if active_page == 'logbook' else '' }}">
             <a href="/logbook" role="listitem">
-              <svg class="nav-icon"><use href="#icon-format-list-bulleted"/></svg>
+              <svg class="nav-icon"><use href="#icon-format-list"/></svg>
               <span class="item-text">Logbook</span>
             </a>
           </li>
