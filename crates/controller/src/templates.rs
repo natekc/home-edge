@@ -81,6 +81,7 @@ pub fn build_env() -> Environment<'static> {
     env.add_template("more_info/_scene.html",         include_str!("../templates/more_info/_scene.html")).expect("more_info/_scene.html");
     env.add_template("more_info/_script.html",        include_str!("../templates/more_info/_script.html")).expect("more_info/_script.html");
     env.add_template("more_info/_select.html",        include_str!("../templates/more_info/_select.html")).expect("more_info/_select.html");
+    env.add_template("more_info/_climate.html",       include_str!("../templates/more_info/_climate.html")).expect("more_info/_climate.html");
     env.add_template("more_info/_default.html",       include_str!("../templates/more_info/_default.html")).expect("more_info/_default.html");
 
     env

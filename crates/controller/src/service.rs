@@ -116,9 +116,11 @@ impl ServiceTarget {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ServiceData {
     pub brightness: Option<i64>,
+    pub temperature: Option<f64>,
+    pub hvac_mode: Option<String>,
 }
 
 impl ServiceData {
@@ -132,12 +134,21 @@ impl ServiceData {
                 ));
             }
         };
-
-        Ok(Self { brightness })
+        let temperature = match data.get("temperature") {
+            Some(Value::Number(n)) => n.as_f64(),
+            Some(Value::Null) | None => None,
+            Some(_) => return Err(ServiceError::InvalidFormat("temperature must be a number".into())),
+        };
+        let hvac_mode = match data.get("hvac_mode") {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Null) | None => None,
+            Some(_) => return Err(ServiceError::InvalidFormat("hvac_mode must be a string".into())),
+        };
+        Ok(Self { brightness, temperature, hvac_mode })
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ServiceCall {
     pub domain: String,
     pub service: String,
@@ -434,6 +445,50 @@ impl BuiltinServiceDefinition {
                 )]),
                 supports_response: SupportsResponse::None,
             },
+            BuiltinServiceKind::ClimateSetHvacMode => ServiceDescription {
+                service: self.service.into(),
+                name: "Set HVAC mode".into(),
+                description: "Set the HVAC mode for climate entities.".into(),
+                fields: BTreeMap::from([
+                    (
+                        "entity_id".into(),
+                        ServiceField {
+                            required: true,
+                            selector: Some(json!({"entity": {"domain": "climate"}})),
+                        },
+                    ),
+                    (
+                        "hvac_mode".into(),
+                        ServiceField {
+                            required: true,
+                            selector: Some(json!({"select": {"options": ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"]}})),
+                        },
+                    ),
+                ]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::ClimateSetTemperature => ServiceDescription {
+                service: self.service.into(),
+                name: "Set temperature".into(),
+                description: "Set the target temperature for climate entities.".into(),
+                fields: BTreeMap::from([
+                    (
+                        "entity_id".into(),
+                        ServiceField {
+                            required: true,
+                            selector: Some(json!({"entity": {"domain": "climate"}})),
+                        },
+                    ),
+                    (
+                        "temperature".into(),
+                        ServiceField {
+                            required: true,
+                            selector: Some(json!({"number": {"min": -40, "max": 100, "step": 0.5}})),
+                        },
+                    ),
+                ]),
+                supports_response: SupportsResponse::None,
+            },
         }
     }
 
@@ -453,6 +508,39 @@ impl BuiltinServiceDefinition {
             BuiltinServiceKind::LightTurnOff | BuiltinServiceKind::SwitchTurnOff => {
                 set_entities_state(request, states, "off")
             }
+            BuiltinServiceKind::ClimateSetHvacMode => {
+                let mode = request.data.hvac_mode.clone()
+                    .ok_or_else(|| ServiceError::InvalidFormat("hvac_mode field required".into()))?;
+                set_entities_state(request, states, &mode)
+            }
+            BuiltinServiceKind::ClimateSetTemperature => {
+                let temp = request.data.temperature
+                    .ok_or_else(|| ServiceError::InvalidFormat("temperature field required".into()))?;
+                let entity_ids = request.target.entity_ids.clone();
+                if entity_ids.is_empty() {
+                    return Err(ServiceError::InvalidFormat("entity_id required".into()));
+                }
+                let mut changed_states = Vec::new();
+                for entity_id in &entity_ids {
+                    let existing = states.get(entity_id);
+                    let current_state = existing.as_ref()
+                        .map(|s| s.state.clone())
+                        .unwrap_or_else(|| "off".to_string());
+                    let mut attributes = existing
+                        .map(|s| s.attributes)
+                        .unwrap_or_default();
+                    attributes.insert("temperature".into(), serde_json::json!(temp));
+                    let new_state = make_state_with_context(
+                        entity_id.clone(),
+                        current_state,
+                        StateAttributes::from_hash(attributes),
+                        request.context.clone(),
+                    );
+                    states.set(new_state.clone())?;
+                    changed_states.push(new_state);
+                }
+                Ok(ServiceOutcome { context: request.context, changed_states, response: None })
+            }
         }
     }
 }
@@ -463,6 +551,8 @@ enum BuiltinServiceKind {
     LightTurnOff,
     SwitchTurnOn,
     SwitchTurnOff,
+    ClimateSetHvacMode,
+    ClimateSetTemperature,
 }
 
 const BUILTIN_SERVICES: &[BuiltinServiceDefinition] = &[
@@ -485,6 +575,16 @@ const BUILTIN_SERVICES: &[BuiltinServiceDefinition] = &[
         domain: "switch",
         service: "turn_off",
         kind: BuiltinServiceKind::SwitchTurnOff,
+    },
+    BuiltinServiceDefinition {
+        domain: "climate",
+        service: "set_hvac_mode",
+        kind: BuiltinServiceKind::ClimateSetHvacMode,
+    },
+    BuiltinServiceDefinition {
+        domain: "climate",
+        service: "set_temperature",
+        kind: BuiltinServiceKind::ClimateSetTemperature,
     },
 ];
 

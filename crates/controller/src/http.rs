@@ -428,6 +428,7 @@ async fn fragment_more_info(
         "scene"         => "more_info/_scene.html",
         "script"        => "more_info/_script.html",
         "select"        => "more_info/_select.html",
+        "climate"       => "more_info/_climate.html",
         _               => "more_info/_default.html",
     };
     let ctx = context! {
@@ -440,6 +441,10 @@ async fn fragment_more_info(
 #[derive(Deserialize)]
 struct UiServiceForm {
     entity_id: String,
+    #[serde(default)]
+    hvac_mode: Option<String>,
+    #[serde(default)]
+    temperature: Option<String>,
 }
 
 async fn ui_service_call(
@@ -449,6 +454,14 @@ async fn ui_service_call(
 ) -> Response {
     let mut data: Map<String, serde_json::Value> = Map::new();
     data.insert("entity_id".to_string(), serde_json::Value::String(form.entity_id));
+    if let Some(m) = form.hvac_mode.as_deref().filter(|s| !s.is_empty()) {
+        data.insert("hvac_mode".into(), serde_json::json!(m));
+    }
+    if let Some(t) = form.temperature.as_deref().filter(|s| !s.is_empty()) {
+        if let Ok(f) = t.parse::<f64>() {
+            data.insert("temperature".into(), serde_json::json!(f));
+        }
+    }
     let target = match ServiceTarget::from_parts(None, Some(&data)) {
         Ok(t) => t,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
@@ -809,6 +822,9 @@ struct EntityView {
     /// The HA service action for this entity (e.g. "toggle", "press", "activate");
     /// empty string for read-only entities such as sensor and binary_sensor.
     service_action: String,
+    current_temperature: Option<f64>,
+    target_temperature: Option<f64>,
+    hvac_modes: Vec<String>,
 }
 
 /// Area-grouped card view passed to dashboard templates.
@@ -824,6 +840,18 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         .get(&entity.entity_id)
         .map(|s| s.state.clone())
         .unwrap_or_else(|| "unavailable".to_string());
+    let attrs = state
+        .states
+        .get(&entity.entity_id)
+        .map(|s| s.attributes)
+        .unwrap_or_default();
+    let current_temperature = attrs.get("current_temperature").and_then(|v| v.as_f64());
+    let target_temperature = attrs.get("temperature").and_then(|v| v.as_f64());
+    let hvac_modes = attrs
+        .get("hvac_modes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
     EntityView {
         entity_id: entity.entity_id.clone(),
         webhook_id: entity.webhook_id.clone(),
@@ -837,6 +865,9 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         unit_of_measurement: entity.unit_of_measurement.clone(),
         disabled: entity.disabled,
         service_action: service_action_for(&entity.entity_type).to_owned(),
+        current_temperature,
+        target_temperature,
+        hvac_modes,
     }
 }
 
@@ -847,6 +878,7 @@ fn service_action_for(entity_type: &str) -> &'static str {
         "button"                   => "press",
         "scene"                    => "activate",
         "script"                   => "trigger",
+        "climate"                  => "",
         _                          => "",
     }
 }
@@ -854,16 +886,17 @@ fn service_action_for(entity_type: &str) -> &'static str {
 /// Returns the icon name appropriate for an entity's current state.
 fn entity_icon_name_with_state(entity: &MobileEntityRecord, value: &str) -> &'static str {
     match entity.entity_type.as_str() {
-        "light"  => "lightbulb",
-        "switch" => if value == "on" { "toggle-switch" } else { "toggle-switch-off" },
-        "cover"  => if value == "open" { "window-shutter-open" } else { "window-shutter" },
-        "lock"   => if value == "unlocked" { "lock-open" } else { "lock" },
-        "fan"    => "fan",
-        "button" => "power",
-        "scene"  => "palette",
-        "script" => "script-text",
-        "select" => "format-list",
-        _        => entity_icon_name(entity),
+        "light"   => "lightbulb",
+        "switch"  => if value == "on" { "toggle-switch" } else { "toggle-switch-off" },
+        "cover"   => if value == "open" { "window-shutter-open" } else { "window-shutter" },
+        "lock"    => if value == "unlocked" { "lock-open" } else { "lock" },
+        "fan"     => "fan",
+        "button"  => "power",
+        "scene"   => "palette",
+        "script"  => "script-text",
+        "select"  => "format-list",
+        "climate" => "thermometer",
+        _         => entity_icon_name(entity),
     }
 }
 
