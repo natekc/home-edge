@@ -1,0 +1,88 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <div class="breadcrumb">
+    <a href="/">Overview</a>
+    <span class="breadcrumb-sep">›</span>
+    <a href="/settings">Settings</a>
+    <span class="breadcrumb-sep">›</span>
+    <span>Devices</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <div>
+      <h1>Devices</h1>
+      <p>Registered companion app devices.</p>
+    </div>
+    <a href="/ble" style="display:flex;align-items:center;gap:5px;font-size:.82rem">
+      <svg width="16" height="16"><use href="#icon-plus"/></svg>
+      Pair new
+    </a>
+  </div>
+</div>
+
+<div class="page-body">
+  {% if devices | length == 0 %}
+  <div class="ha-card">
+    <div class="ha-card-body">
+      <div class="empty-state">
+        <svg><use href="#icon-devices"/></svg>
+        <h3>No devices registered yet</h3>
+        <p>
+          Open the <strong>Home Assistant</strong> app, go to
+          <em>Settings → Companion App → Server</em> and connect to this instance.
+        </p>
+        <div class="badge badge-info" style="font-size:.82rem;padding:6px 14px">{{ server_host }}:{{ server_port }}</div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+
+  <input type="search" id="device-search" class="form-control"
+         placeholder="Search devices…"
+         style="margin-bottom:16px;max-width:320px">
+
+  <div class="ha-card">
+    <div class="ha-card-header">
+      <h2>Connected Devices</h2>
+      <span style="font-size:.82rem;color:var(--secondary-text-color)">{{ devices | length }} device{% if devices | length != 1 %}s{% endif %}</span>
+    </div>
+    <div class="ha-card-body">
+      <div class="device-grid">
+        {% for device in devices %}
+        <a href="/devices/{{ device.webhook_id }}"
+           data-name="{{ device.device_name }}"
+           style="text-decoration:none;color:inherit">
+          <div class="device-card">
+            <div class="device-card-title">
+              <svg class="sensor-tile-icon" width="22" height="22"><use href="#icon-devices"/></svg>
+              <h3>{{ device.device_name }}</h3>
+              <span class="status-dot online" title="Registered"></span>
+            </div>
+            <div class="device-card-meta">{{ device.manufacturer }} {{ device.model }}</div>
+            <div class="device-card-stats">
+              <span class="badge badge-neutral">{{ device.entity_count }} sensor{% if device.entity_count != 1 %}s{% endif %}</span>
+              <span class="badge badge-neutral">{{ device.os_name }}</span>
+            </div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    var input = document.getElementById('device-search');
+    if (!input) return;
+    input.addEventListener('input', function () {
+      var q = this.value.toLowerCase();
+      document.querySelectorAll('a[data-name]').forEach(function (a) {
+        a.style.display = a.dataset.name.toLowerCase().indexOf(q) !== -1 ? '' : 'none';
+      });
+    });
+  })();
+  </script>
+
+  {% endif %}
+</div>
+{% endblock %}
