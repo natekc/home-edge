@@ -1,0 +1,14 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-format-list"/></svg>
+  <div>
+    <div class="mi-name">{{ entity.display_name }}</div>
+    <div class="mi-state">{{ entity.value }}</div>
+  </div>
+</div>
+<div class="mi-controls">
+  <div class="mi-row">
+    <span class="mi-label">Current option</span>
+    <span class="mi-value">{{ entity.value }}</span>
+  </div>
+  <p class="mi-hint">Option selection requires a WebSocket connection — coming soon.</p>
+</div>

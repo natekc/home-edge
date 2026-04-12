@@ -1,23 +1,69 @@
-{% for group in entity_groups %}
-<div style="margin-bottom:22px">
-  <div style="font-size:.78rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">
-    {{ group.device_name }}
-  </div>
-  <div class="sensor-grid">
-    {% for entity in group.entities %}
-    <a href="/devices/{{ entity.webhook_id }}/entities/{{ entity.entity_id }}"
-       class="sensor-tile{% if entity.entity_type == 'binary_sensor' %}{% if entity.value == 'on' %} binary-on{% else %} binary-off{% endif %}{% endif %}{% if entity.disabled %} disabled{% endif %}">
-      <svg class="sensor-tile-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
-      <div class="sensor-tile-value">
-        {{ entity.value }}<span class="sensor-tile-unit">{{ entity.unit }}</span>
-      </div>
-      <div class="sensor-tile-name">{{ entity.display_name }}</div>
-    </a>
-    {% endfor %}
-  </div>
-</div>
-{% else %}
+{% if area_cards | length == 0 %}
 <p class="text-muted" style="margin:0;padding:8px 0">
   No sensor readings yet. Register sensors from the Home Assistant app.
 </p>
+{% else %}
+{% for card in area_cards %}
+<div class="entities-card">
+  <div class="entities-card-title">{{ card.area_name }}</div>
+
+  {% for entity in card.entities %}
+  {# --- Determine extra row class for colouring active states --- #}
+  {% set row_class = "" %}
+  {% if entity.value == "on" or entity.value == "open" or entity.value == "unlocked" %}
+    {% set row_class = "state-on" %}
+  {% endif %}
+
+  <div class="entity-list-row {{ row_class }}"
+       hx-get="/fragments/more-info/{{ entity.entity_id }}"
+       hx-target="#more-info-body"
+       hx-swap="innerHTML"
+       hx-on::after-request="document.getElementById('more-info-dialog').showModal()">
+
+    <svg class="entity-list-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+
+    <span class="entity-list-name">{{ entity.display_name }}</span>
+
+    {# Right side: toggle for controllable binary entities, button for activatables, state text for the rest #}
+    {% if entity.entity_type == "light" or entity.entity_type == "switch" or entity.entity_type == "fan" %}
+    <button class="entity-list-toggle{% if entity.value == 'on' %} is-on{% endif %}"
+            hx-post="/ui/services/{{ entity.entity_type }}/toggle"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')"
+            onclick="event.stopPropagation()"
+            aria-label="Toggle {{ entity.display_name }}">
+      <span class="entity-list-toggle-thumb"></span>
+    </button>
+
+    {% elif entity.entity_type == "cover" %}
+    <span class="entity-list-state">{{ entity.value }}</span>
+
+    {% elif entity.entity_type == "lock" %}
+    <span class="entity-list-state">{{ entity.value }}</span>
+
+    {% elif entity.entity_type == "button" or entity.entity_type == "scene" or entity.entity_type == "script" %}
+    <button class="entity-list-btn"
+            hx-post="/ui/services/{{ entity.entity_type }}/{{ entity.service_action }}"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="showToast('{{ entity.display_name }}', 2000); htmx.trigger(document.getElementById('area-cards'),'refresh')"
+            onclick="event.stopPropagation()">
+      {{ entity.service_action | capitalize }}
+    </button>
+
+    {% elif entity.entity_type == "sensor" %}
+    <span class="entity-list-state">{{ entity.value }}{% if entity.unit %}&nbsp;{{ entity.unit }}{% endif %}</span>
+
+    {% else %}
+    <span class="entity-list-state">{{ entity.value }}</span>
+    {% endif %}
+
+  </div>
+  {% endfor %}
+
+</div>
 {% endfor %}
+{% endif %}
+
+

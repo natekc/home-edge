@@ -199,12 +199,13 @@ button { cursor: pointer; font-family: inherit; }
 .sidebar.collapsed .nav-item { display: flex; justify-content: center; }
 .main-content.sidebar-collapsed    { margin-left: 56px; }
 
-/* Mobile: full-width overlay drawer */
+/* Mobile: full-width overlay drawer + HA-style top app bar */
 @media (max-width: 640px) {
   .sidebar {
     transform: translateX(-100%);
     transition: transform .25s ease;
     width: var(--sidebar-width);
+    top: 56px;  /* slide in below the app bar */
     box-shadow: 2px 0 16px rgba(0,0,0,.15);
   }
   .sidebar.mobile-open { transform: translateX(0) !important; }
@@ -213,19 +214,34 @@ button { cursor: pointer; font-family: inherit; }
     background: rgba(0,0,0,.25); z-index: 99;
   }
   .sidebar-backdrop.visible { display: block; }
-  .main-content { margin-left: 0 !important; }
-  .mobile-menu-fab {
-    display: flex; position: fixed; top: 14px; left: 14px;
-    width: 40px; height: 40px;
-    align-items: center; justify-content: center;
-    background: var(--primary-color); color: #fff;
-    border-radius: 50%; border: none;
-    box-shadow: 0 3px 10px rgba(0,0,0,.2); z-index: 98;
+  .main-content { margin-left: 0 !important; padding-top: 56px; }
+  /* Top app bar — matches HA ha-top-app-bar on narrow screens */
+  .app-header {
+    display: flex;
+    position: fixed; top: 0; left: 0; right: 0;
+    height: 56px;
+    background: var(--primary-color);
+    color: #fff;
+    align-items: center;
+    padding: 0 4px;
+    gap: 4px;
+    z-index: 101;
+    box-shadow: 0 2px 4px rgba(0,0,0,.2);
   }
-  .mobile-menu-fab svg { width: 22px; height: 22px; fill: #fff; }
+  .app-header-btn {
+    width: 48px; height: 48px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: none; cursor: pointer;
+    border-radius: 50%; color: #fff; flex-shrink: 0;
+  }
+  .app-header-btn:hover { background: rgba(255,255,255,.12); }
+  .app-header-btn svg { fill: #fff; }
+  .app-header-title {
+    font-size: 20px; font-weight: 400; color: #fff; flex: 1;
+  }
 }
 @media (min-width: 641px) {
-  .mobile-menu-fab { display: none; }
+  .app-header { display: none; }
   .sidebar-backdrop { display: none !important; }
 }
 
@@ -465,6 +481,11 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
   .page-body   { padding: 12px 16px 28px; }
   .wizard-card { padding: 24px 20px; }
 }
+/* On narrow screens the sidebar hides and the top app bar covers the top 56px;
+   restore normal horizontal padding for the page-header. */
+@media (max-width: 640px) {
+  .page-header { padding: 16px 16px 0; }
+}
 
 /* --- Dark theme --------------------------------------------------------
    Mirrors Home Assistant's default dark theme token values.
@@ -535,4 +556,271 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 
   /* Spinner border on dark */
   .spinner              { border-color: rgba(255,255,255,.18); border-top-color: var(--primary-color); }
+}
+
+/* ==========================================================================
+   HA-parity entity list rows  (icon | name | state/control)
+   Replaces tile-grid + glance-grid with a single consistent row layout
+   matching homeassistant/components/lovelace "entities" card style.
+   ========================================================================== */
+
+/* One entities card per area (replaces .area-card) */
+.entities-card {
+  background: var(--card-bg);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.entities-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 16px 20px 10px;
+  color: var(--primary-text);
+}
+
+/* Individual entity row */
+.entity-list-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 20px;
+  border-top: 1px solid var(--border);
+  min-height: 48px;
+  cursor: pointer;
+  transition: background .12s;
+  text-decoration: none;
+  color: inherit;
+}
+.entity-list-row:first-of-type { border-top: none; }
+.entity-list-row:hover          { background: rgba(0,0,0,.03); }
+.entity-list-icon {
+  width: 24px; height: 24px;
+  fill: var(--secondary-text);
+  flex-shrink: 0;
+}
+/* Active / on states get the primary colour */
+.entity-list-row.state-on  .entity-list-icon { fill: var(--primary-color); }
+.entity-list-row.state-on  .entity-list-state { color: var(--primary-color); }
+.entity-list-name {
+  flex: 1;
+  font-size: .9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--primary-text);
+}
+.entity-list-state {
+  font-size: .9rem;
+  font-weight: 500;
+  color: var(--secondary-text);
+  white-space: nowrap;
+  text-align: right;
+}
+/* Inline toggle matching HA light/switch toggle in entity rows */
+.entity-list-toggle {
+  position: relative;
+  width: 44px; height: 26px;
+  border: none; border-radius: 13px;
+  background: var(--border);
+  cursor: pointer;
+  transition: background .2s;
+  flex-shrink: 0;
+}
+.entity-list-toggle.is-on       { background: var(--primary-color); }
+.entity-list-toggle-thumb {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  transition: transform .2s;
+}
+.entity-list-toggle.is-on .entity-list-toggle-thumb { transform: translateX(18px); }
+
+/* Button activatables (button/scene/script) inside entity rows */
+.entity-list-btn {
+  padding: 4px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  font-size: .82rem; font-weight: 500; font-family: inherit;
+  cursor: pointer;
+  color: var(--primary-color);
+  white-space: nowrap;
+  transition: background .13s;
+}
+.entity-list-btn:hover { background: var(--ha-blue-bg); }
+
+@media (prefers-color-scheme: dark) {
+  .entity-list-row:hover { background: rgba(255,255,255,.04); }
+}
+
+/* Glance grid — compact sensor readings */
+.glance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 8px;
+}
+.glance-grid--mt { margin-top: 14px; }
+.glance-cell {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 10px 8px; border-radius: 10px;
+  background: var(--page-bg); text-align: center;
+  transition: background .15s;
+}
+.glance-cell:hover { background: #eeeeee; }
+.glance-icon  { width: 22px; height: 22px; fill: var(--secondary-text); margin-bottom: 4px; }
+.glance-value { font-size: 1.1rem; font-weight: 700; color: var(--primary-text); line-height: 1.1; }
+.glance-unit  { font-size: .68rem; color: var(--secondary-text); font-weight: 500; }
+.glance-name  { font-size: .68rem; color: var(--secondary-text); margin-top: 2px;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px; }
+
+/* Button row — activatable entities (scene / script / button) */
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.button-row--mt { margin-top: 14px; }
+.ha-button {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 16px; border: 1.5px solid var(--border);
+  border-radius: 999px; background: var(--card-bg);
+  color: var(--primary-text); font-size: .85rem; font-weight: 500;
+  font-family: inherit; cursor: pointer; transition: background .15s, box-shadow .15s;
+}
+.ha-button:hover { background: var(--page-bg); box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+.ha-button svg   { width: 16px; height: 16px; fill: var(--primary-color); flex-shrink: 0; }
+
+/* Entity row — select and other generic entities */
+.entity-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 4px; border-bottom: 1px solid var(--border);
+  transition: background .12s;
+}
+.entity-row:last-child  { border-bottom: none; }
+.entity-row:hover       { background: var(--page-bg); border-radius: 8px; }
+.entity-row-icon  { width: 22px; height: 22px; fill: var(--secondary-text); flex-shrink: 0; }
+.entity-row-name  { flex: 1; font-size: .9rem; }
+.entity-row-state { font-size: .88rem; color: var(--secondary-text); font-weight: 500; }
+
+/* ==========================================================================
+   More-info dialog  (HA ha-more-info-dialog parity)
+   ========================================================================== */
+.more-info-dialog {
+  padding: 0; border: none;
+  border-radius: 16px;
+  box-shadow: 0 16px 56px rgba(0,0,0,.22);
+  max-width: 420px; width: 92vw;
+  background: var(--card-bg);
+}
+.more-info-dialog::backdrop {
+  background: rgba(0,0,0,.45);
+  backdrop-filter: blur(2px);
+}
+.more-info-dialog-inner {
+  padding: 20px 24px 28px;
+  position: relative;
+}
+.more-info-close {
+  position: absolute; top: 12px; right: 12px;
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; cursor: pointer;
+  border-radius: 50%; color: var(--secondary-text);
+  transition: background .15s;
+}
+.more-info-close:hover { background: var(--page-bg); }
+.more-info-close svg   { width: 20px; height: 20px; fill: currentColor; }
+.more-info-body        { min-height: 60px; }
+
+/* --- More-info header -------------------------------------------------- */
+.mi-header {
+  display: flex; align-items: center; gap: 16px;
+  margin-bottom: 20px;
+}
+.mi-icon  { width: 40px; height: 40px; fill: var(--primary-color); flex-shrink: 0; }
+.mi-name  { font-size: 1.05rem; font-weight: 600; }
+.mi-state { font-size: .88rem; color: var(--secondary-text); margin-top: 2px; text-transform: capitalize; }
+.mi-unit  { font-size: .78rem; }
+.mi-meta  { font-size: .8rem; color: var(--secondary-text); margin-bottom: 14px; text-transform: capitalize; }
+.mi-hint  { font-size: .8rem; color: var(--secondary-text); margin-top: 12px; font-style: italic; }
+.mi-value { font-weight: 600; }
+.mi-label { color: var(--secondary-text); font-size: .88rem; }
+
+/* State colour classes */
+.mi-state--on       { color: var(--success); }
+.mi-state--off      { color: var(--secondary-text); }
+.mi-state--unlocked { color: var(--success); }
+.mi-state--locked   { color: var(--danger); }
+.mi-state--open     { color: var(--success); }
+.mi-state--closed   { color: var(--secondary-text); }
+
+/* --- More-info controls ------------------------------------------------ */
+.mi-controls { display: flex; flex-direction: column; gap: 14px; }
+.mi-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.mi-row:last-child   { border-bottom: none; }
+.mi-row--buttons     { justify-content: flex-start; gap: 10px; border-bottom: none; }
+.mi-section-title    { font-size: .78rem; font-weight: 600; color: var(--secondary-text);
+                       text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+
+/* HA-style toggle button */
+.mi-toggle {
+  position: relative; width: 50px; height: 28px;
+  border: none; border-radius: 14px;
+  background: var(--border); cursor: pointer;
+  transition: background .2s; flex-shrink: 0;
+}
+.mi-toggle--on            { background: var(--primary-color); }
+.mi-toggle-thumb {
+  position: absolute; top: 3px; left: 3px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; transition: transform .2s;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+}
+.mi-toggle--on .mi-toggle-thumb { transform: translateX(22px); }
+
+/* Action buttons (open/close, lock/unlock, etc.) */
+.mi-action-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 20px; border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: var(--card-bg); color: var(--primary-text);
+  font-size: .88rem; font-weight: 500; font-family: inherit;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.mi-action-btn:hover           { background: var(--page-bg); }
+.mi-action-btn svg             { width: 16px; height: 16px; fill: var(--primary-color); }
+.mi-action-btn--primary        { background: var(--primary-color); color: #fff; border-color: var(--primary-color); }
+.mi-action-btn--primary:hover  { background: var(--primary-dark); border-color: var(--primary-dark); }
+.mi-action-btn--primary svg    { fill: #fff; }
+.mi-action-btn--active         { border-color: var(--primary-color); color: var(--primary-color); }
+.mi-action-btn--neutral        { border-style: dashed; }
+.mi-action-btn--wide           { width: 100%; justify-content: center; margin-top: 4px; }
+
+/* --- More-info sensor history ------------------------------------------ */
+.mi-history { margin-top: 16px; }
+.mi-history-list {
+  max-height: 200px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.mi-history-row {
+  display: flex; justify-content: space-between;
+  padding: 7px 12px; border-bottom: 1px solid var(--border);
+  font-size: .82rem;
+}
+.mi-history-row:last-child { border-bottom: none; }
+.mi-history-ts  { color: var(--secondary-text); font-variant-numeric: tabular-nums; }
+.mi-history-val { font-weight: 600; }
+
+/* ==========================================================================
+   Dark mode overrides for new components
+   ========================================================================== */
+@media (prefers-color-scheme: dark) {
+  .glance-cell:hover    { background: #252525; }
+  .ha-button            { border-color: rgba(255,255,255,.15); }
+  .ha-button:hover      { background: #252525; }
+  .mi-action-btn        { border-color: rgba(255,255,255,.15); }
+  .mi-action-btn:hover  { background: #252525; }
 }

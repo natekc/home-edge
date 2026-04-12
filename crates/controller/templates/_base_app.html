@@ -27,10 +27,13 @@
 <body>
 {% include "_icons.html" %}
 
-<!-- Mobile hamburger FAB (visible only when sidebar is hidden on narrow screens) -->
-<button class="mobile-menu-fab" id="mobile-fab" onclick="openMobileSidebar()" aria-label="Open menu">
-  <svg><use href="#icon-menu"/></svg>
-</button>
+<!-- Mobile top app bar (HA-style sticky header; hidden on desktop, shown on narrow screens) -->
+<header class="app-header" id="app-header">
+  <button class="app-header-btn" onclick="openMobileSidebar()" aria-label="Open menu">
+    <svg width="24" height="24"><use href="#icon-menu"/></svg>
+  </button>
+  <span class="app-header-title">{{ location_name }}</span>
+</header>
 <!-- Backdrop for mobile overlay -->
 <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
 
@@ -190,5 +193,18 @@ document.addEventListener('htmx:afterRequest', function(evt) {
   }
 });
 </script>
+
+<!-- More-info dialog (loaded via HTMX into #more-info-body) -->
+<dialog id="more-info-dialog" class="more-info-dialog">
+  <div class="more-info-dialog-inner">
+    <button class="more-info-close" onclick="this.closest('dialog').close()" aria-label="Close">
+      <svg width="20" height="20"><use href="#icon-close"/></svg>
+    </button>
+    <div id="more-info-body" class="more-info-body">
+      <!-- Content injected by HTMX -->
+    </div>
+  </div>
+</dialog>
+
 </body>
 </html>

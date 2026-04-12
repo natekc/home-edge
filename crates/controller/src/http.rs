@@ -9,12 +9,13 @@ use axum::routing::{get, patch, post};
 use minijinja::context;
 use minijinja::Value;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Map, json};
 
 use crate::app::AppState;
 use crate::core::{
     CompleteAnalyticsOutcome, CompleteIntegrationOutcome, CompleteCoreConfigOutcome,
-    CreateOnboardingUserOutcome, OnboardingCoreConfigInput, OnboardingUserInput,
+    Consistency, CoreDeps, DeadlineClass, CreateOnboardingUserOutcome, OnboardingCoreConfigInput,
+    OnboardingUserInput, OperationError, OperationMeta, OperationRequest, OperationResult,
 };
 use crate::ha_api;
 use crate::ha_auth;
@@ -23,6 +24,7 @@ use crate::ha_webhook;
 use crate::ha_ws;
 use crate::history_store;
 use crate::mobile_entity_store::{EntityMetaUpdate, MobileEntityRecord};
+use crate::service::{ServiceCall, ServiceData, ServiceTarget};
 
 const STEP_USER: &str = "user";
 const STEP_CORE_CONFIG: &str = "core_config";
@@ -136,6 +138,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         // HTMX fragments
         .route("/fragments/dashboard-sensors",                   get(fragment_dashboard_sensors))
+        .route("/fragments/more-info/{entity_id}",               get(fragment_more_info))
+        // UI service call (form-encoded, returns 204 for hx-swap="none")
+        .route("/ui/services/{domain}/{service}",                post(ui_service_call))
         // Mutation API (HTMX)
         .route("/api/devices/{webhook_id}",                      patch(api_device_rename))
         // BLE stubs
@@ -227,12 +232,12 @@ async fn dashboard_response(state: &AppState) -> Response {
             })
         })
         .collect();
-    let entity_groups = build_entity_groups(&devices, &all_entities, state);
+    let area_cards = build_area_cards(state, &all_entities).await;
     let location_name = load_location_name(state).await;
     let area_names = load_area_names(state).await;
     let ctx = app_ctx!(state, "dashboard", location_name.as_str(), &area_names,
-        devices       => Value::from_serialize(&device_summaries),
-        entity_groups => Value::from_serialize(&entity_groups),
+        devices    => Value::from_serialize(&device_summaries),
+        area_cards => Value::from_serialize(&area_cards),
     );
     render_template(state, "dashboard.html", ctx)
 }
@@ -391,17 +396,82 @@ async fn entity_edit_save(
 // ---------------------------------------------------------------------------
 
 async fn fragment_dashboard_sensors(State(state): State<Arc<AppState>>) -> Response {
-    let devices = match state.mobile_devices.all().await {
-        Ok(d) => d,
-        Err(err) => return internal_error(&err),
-    };
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
         Err(err) => return internal_error(&err),
     };
-    let entity_groups = build_entity_groups(&devices, &all_entities, &state);
-    let ctx = context! { entity_groups => Value::from_serialize(&entity_groups) };
+    let area_cards = build_area_cards(&state, &all_entities).await;
+    let ctx = context! { area_cards => Value::from_serialize(&area_cards) };
     render_template(&state, "fragments/sensors.html", ctx)
+}
+
+async fn fragment_more_info(
+    State(state): State<Arc<AppState>>,
+    Path(entity_id): Path<String>,
+) -> Response {
+    let entity = match state.mobile_entities.get_by_entity_id(&entity_id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => return (StatusCode::NOT_FOUND, Html("<p class='text-muted'>Entity not found</p>".to_string())).into_response(),
+        Err(err) => return internal_error(&err),
+    };
+    let view = entity_to_view(&entity, &state);
+    let history = state.history.last_n(&entity_id, 20).await;
+    let template_name = match entity.entity_type.as_str() {
+        "light"         => "more_info/_light.html",
+        "switch"        => "more_info/_switch.html",
+        "cover"         => "more_info/_cover.html",
+        "lock"          => "more_info/_lock.html",
+        "fan"           => "more_info/_fan.html",
+        "sensor"        => "more_info/_sensor.html",
+        "binary_sensor" => "more_info/_binary_sensor.html",
+        "button"        => "more_info/_button.html",
+        "scene"         => "more_info/_scene.html",
+        "script"        => "more_info/_script.html",
+        "select"        => "more_info/_select.html",
+        _               => "more_info/_default.html",
+    };
+    let ctx = context! {
+        entity  => Value::from_serialize(&view),
+        history => Value::from_serialize(&history),
+    };
+    render_template(&state, template_name, ctx)
+}
+
+#[derive(Deserialize)]
+struct UiServiceForm {
+    entity_id: String,
+}
+
+async fn ui_service_call(
+    State(state): State<Arc<AppState>>,
+    Path((domain, service)): Path<(String, String)>,
+    axum::extract::Form(form): axum::extract::Form<UiServiceForm>,
+) -> Response {
+    let mut data: Map<String, serde_json::Value> = Map::new();
+    data.insert("entity_id".to_string(), serde_json::Value::String(form.entity_id));
+    let target = match ServiceTarget::from_parts(None, Some(&data)) {
+        Ok(t) => t,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let service_data = ServiceData::from_json(&data).unwrap_or_default();
+    let meta = OperationMeta {
+        request_id: 0,
+        consistency: Consistency::LivePreferred,
+        deadline: DeadlineClass::Interactive,
+        allow_cached: true,
+        allow_deferred: false,
+    };
+    match state.core.execute(
+        CoreDeps { config: &state.config, states: &state.states, services: &state.services },
+        OperationRequest::CallService {
+            call: ServiceCall { domain, service, target, data: service_data, return_response: false },
+            meta,
+        },
+    ) {
+        OperationResult::ServiceCallCompleted(_) => StatusCode::NO_CONTENT.into_response(),
+        OperationResult::Error(OperationError::NotFound) => StatusCode::NOT_FOUND.into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -736,6 +806,16 @@ struct EntityView {
     user_area_id: String,
     unit_of_measurement: Option<String>,
     disabled: bool,
+    /// The HA service action for this entity (e.g. "toggle", "press", "activate");
+    /// empty string for read-only entities such as sensor and binary_sensor.
+    service_action: String,
+}
+
+/// Area-grouped card view passed to dashboard templates.
+#[derive(Serialize)]
+struct AreaCard {
+    area_name: String,
+    entities: Vec<EntityView>,
 }
 
 fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
@@ -749,14 +829,80 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         webhook_id: entity.webhook_id.clone(),
         display_name: entity.display_name().to_string(),
         entity_type: entity.entity_type.clone(),
-        icon_name: entity_icon_name(entity).to_string(),
+        icon_name: entity_icon_name_with_state(entity, &value).to_owned(),
         value,
         unit: entity.unit_of_measurement.clone().unwrap_or_default(),
         device_class: entity.device_class.clone().unwrap_or_default(),
         user_area_id: entity.user_area_id.clone().unwrap_or_default(),
         unit_of_measurement: entity.unit_of_measurement.clone(),
         disabled: entity.disabled,
+        service_action: service_action_for(&entity.entity_type).to_owned(),
     }
+}
+
+/// Returns the HA service action string for a given entity type.
+fn service_action_for(entity_type: &str) -> &'static str {
+    match entity_type {
+        "light" | "switch" | "fan" => "toggle",
+        "button"                   => "press",
+        "scene"                    => "activate",
+        "script"                   => "trigger",
+        _                          => "",
+    }
+}
+
+/// Returns the icon name appropriate for an entity's current state.
+fn entity_icon_name_with_state(entity: &MobileEntityRecord, value: &str) -> &'static str {
+    match entity.entity_type.as_str() {
+        "light"  => "lightbulb",
+        "switch" => if value == "on" { "toggle-switch" } else { "toggle-switch-off" },
+        "cover"  => if value == "open" { "window-shutter-open" } else { "window-shutter" },
+        "lock"   => if value == "unlocked" { "lock-open" } else { "lock" },
+        "fan"    => "fan",
+        "button" => "power",
+        "scene"  => "palette",
+        "script" => "script-text",
+        "select" => "format-list",
+        _        => entity_icon_name(entity),
+    }
+}
+
+async fn build_area_cards(state: &AppState, all_entities: &[MobileEntityRecord]) -> Vec<AreaCard> {
+    let areas = state.area_registry.list().await.unwrap_or_default();
+    let area_name_map: std::collections::HashMap<&str, &str> = areas
+        .iter()
+        .map(|a| (a.area_id.as_str(), a.name.as_str()))
+        .collect();
+
+    let mut area_map: std::collections::HashMap<String, Vec<EntityView>> =
+        std::collections::HashMap::new();
+    for entity in all_entities {
+        if entity.disabled {
+            continue;
+        }
+        let area_name = entity
+            .user_area_id
+            .as_deref()
+            .and_then(|id| area_name_map.get(id).copied())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "Unassigned".to_string());
+        area_map
+            .entry(area_name)
+            .or_default()
+            .push(entity_to_view(entity, state));
+    }
+
+    let mut cards: Vec<AreaCard> = area_map
+        .into_iter()
+        .map(|(area_name, entities)| AreaCard { area_name, entities })
+        .collect();
+    // Named areas sort alphabetically; "Unassigned" goes last.
+    cards.sort_by(|a, b| match (a.area_name.as_str(), b.area_name.as_str()) {
+        ("Unassigned", _) => std::cmp::Ordering::Greater,
+        (_, "Unassigned") => std::cmp::Ordering::Less,
+        _                 => a.area_name.cmp(&b.area_name),
+    });
+    cards
 }
 
 #[derive(Serialize)]

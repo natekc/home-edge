@@ -1,0 +1,22 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+  <div>
+    <div class="mi-name">{{ entity.display_name }}</div>
+    <div class="mi-state">
+      {{ entity.value }}{% if entity.unit %}&nbsp;<span class="mi-unit">{{ entity.unit }}</span>{% endif %}
+    </div>
+  </div>
+</div>
+{% if history | length > 0 %}
+<div class="mi-history">
+  <div class="mi-section-title">Recent readings</div>
+  <div class="mi-history-list">
+    {% for entry in history %}
+    <div class="mi-history-row">
+      <span class="mi-history-ts">{{ entry.ts }}</span>
+      <span class="mi-history-val">{{ entry.value }}{% if entity.unit %}&nbsp;{{ entity.unit }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

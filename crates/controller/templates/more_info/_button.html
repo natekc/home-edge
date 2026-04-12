@@ -1,0 +1,13 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-power"/></svg>
+  <div><div class="mi-name">{{ entity.display_name }}</div></div>
+</div>
+<div class="mi-controls">
+  <button class="mi-action-btn mi-action-btn--primary mi-action-btn--wide"
+          hx-post="/ui/services/button/press"
+          hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+          hx-swap="none"
+          hx-on::after-request="document.getElementById('more-info-dialog').close(); showToast('{{ entity.display_name }} pressed', 2000)">
+    <svg><use href="#icon-power"/></svg> Press
+  </button>
+</div>

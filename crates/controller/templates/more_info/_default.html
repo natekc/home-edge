@@ -1,0 +1,10 @@
+<div class="mi-header">
+  <svg class="mi-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
+  <div>
+    <div class="mi-name">{{ entity.display_name }}</div>
+    <div class="mi-state">{{ entity.value }}{% if entity.unit %}&nbsp;<span class="mi-unit">{{ entity.unit }}</span>{% endif %}</div>
+  </div>
+</div>
+{% if entity.device_class %}
+<div class="mi-meta">Class: {{ entity.device_class }}</div>
+{% endif %}
