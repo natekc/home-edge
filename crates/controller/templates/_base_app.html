@@ -66,6 +66,15 @@
             </a>
           </li>
 
+          {% for area in areas %}
+          <li class="nav-item {{ 'selected' if active_page == 'area:' ~ area.area_id else '' }}">
+            <a href="/areas/{{ area.area_id }}" role="listitem">
+              <svg class="nav-icon"><use href="#icon-home"/></svg>
+              <span class="item-text">{{ area.name }}</span>
+            </a>
+          </li>
+          {% endfor %}
+
           {% if is_ble_build %}
           <li class="nav-item {{ 'selected' if active_page == 'ble' else '' }}">
             <a href="/ble" role="listitem">
@@ -75,14 +84,36 @@
           </li>
           {% endif %}
 
+          <li class="nav-item {{ 'selected' if active_page == 'logbook' else '' }}">
+            <a href="/logbook" role="listitem">
+              <svg class="nav-icon"><use href="#icon-format-list-bulleted"/></svg>
+              <span class="item-text">Logbook</span>
+            </a>
+          </li>
+
+          <li class="nav-item {{ 'selected' if active_page == 'history' else '' }}">
+            <a href="/history" role="listitem">
+              <svg class="nav-icon"><use href="#icon-history"/></svg>
+              <span class="item-text">History</span>
+            </a>
+          </li>
+
         </ul>
       </div><!-- /before-spacer-wrapper -->
 
       <div class="spacer"></div>
 
-      <!-- after-spacer: fixed bottom items (Settings, Switch Server, User) -->
+      <!-- after-spacer: fixed bottom items (Developer tools, Settings | Notifications, Profile) -->
       <div class="after-spacer-wrapper">
+
         <ul class="nav-list" role="list">
+
+          <li class="nav-item {{ 'selected' if active_page == 'developer-tools' else '' }}">
+            <a href="/developer-tools" role="listitem">
+              <svg class="nav-icon"><use href="#icon-hammer"/></svg>
+              <span class="item-text">Developer tools</span>
+            </a>
+          </li>
 
           <li class="nav-item {{ 'selected' if active_page == 'settings' else '' }}">
             <a href="/settings" role="listitem">
@@ -91,23 +122,29 @@
             </a>
           </li>
 
-          <!-- Switch Server — maps to HA's mdiCellphoneCog / external_app_configuration -->
-          <li class="nav-item">
-            <button class="nav-btn" onclick="openNativeSettings()">
+        </ul>
+
+        <div style="height:1px;background:var(--border,rgba(0,0,0,.12));margin:4px 16px;"></div>
+
+        <ul class="nav-list" role="list">
+
+          <li class="nav-item {{ 'selected' if active_page == 'notifications' else '' }}">
+            <a href="/notifications" role="listitem">
               <svg class="nav-icon"><use href="#icon-bell"/></svg>
-              <span class="item-text">Switch Server</span>
-            </button>
+              <span class="item-text">Notifications</span>
+            </a>
           </li>
 
           <!-- User item — coloured avatar circle, HA ha-user-badge style -->
           <li class="nav-item user {{ 'selected' if active_page == 'profile' else '' }}">
             <a href="/profile" role="listitem">
-              <div class="user-badge" aria-hidden="true">{{ location_name[0:1] | upper }}</div>
-              <span class="item-text">{{ location_name }}</span>
+              <div class="user-badge" aria-hidden="true">{{ user_name[0:1] | upper if user_name is defined else location_name[0:1] | upper }}</div>
+              <span class="item-text">Profile</span>
             </a>
           </li>
 
         </ul>
+
       </div><!-- /after-spacer-wrapper -->
 
     </div><!-- /panels-list -->
