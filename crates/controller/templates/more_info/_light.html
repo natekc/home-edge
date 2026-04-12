@@ -31,7 +31,7 @@
   {% if entity.color_temp_kelvin %}
   <div class="mi-row mi-row--slider">
     <span class="mi-label">Color temp</span>
-    <input class="mi-slider" type="range" name="color_temp_kelvin" min="2000" max="6500"
+    <input class="mi-slider" type="range" name="color_temp_kelvin" min="{{ entity.min_color_temp_kelvin }}" max="{{ entity.max_color_temp_kelvin }}"
            value="{{ entity.color_temp_kelvin }}"
            hx-post="/ui/services/light/turn_on"
            hx-include="closest .mi-controls"

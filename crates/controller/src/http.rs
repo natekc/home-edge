@@ -846,7 +846,14 @@ struct EntityView {
     /// Light brightness 0–255, None if unavailable.
     brightness: Option<u8>,
     /// Light color temperature in kelvin, None if unavailable.
+    /// Source: homeassistant/components/light/__init__.py ATTR_COLOR_TEMP_KELVIN
     color_temp_kelvin: Option<u16>,
+    /// Per-device minimum color temperature in kelvin.
+    /// Source: homeassistant/components/light/__init__.py ATTR_MIN_COLOR_TEMP_KELVIN, DEFAULT_MIN_KELVIN = 2000
+    min_color_temp_kelvin: u16,
+    /// Per-device maximum color temperature in kelvin.
+    /// Source: homeassistant/components/light/__init__.py ATTR_MAX_COLOR_TEMP_KELVIN, DEFAULT_MAX_KELVIN = 6535
+    max_color_temp_kelvin: u16,
     /// Select entity available options.
     options: Vec<String>,
     /// Cover current position 0–100, None if unavailable
@@ -886,6 +893,17 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         .get("color_temp_kelvin")
         .and_then(|v| v.as_u64())
         .map(|v| v as u16);
+    // Source: homeassistant/components/light/const.py DEFAULT_MIN_KELVIN=2000, DEFAULT_MAX_KELVIN=6535
+    let min_color_temp_kelvin = attrs
+        .get("min_color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16)
+        .unwrap_or(2000);
+    let max_color_temp_kelvin = attrs
+        .get("max_color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16)
+        .unwrap_or(6535);
     let options: Vec<String> = attrs
         .get("options")
         .and_then(|v| v.as_array())
@@ -913,6 +931,8 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         hvac_modes,
         brightness,
         color_temp_kelvin,
+        min_color_temp_kelvin,
+        max_color_temp_kelvin,
         options,
         current_position,
     }
