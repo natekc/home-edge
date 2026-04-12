@@ -465,6 +465,11 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
   .page-body   { padding: 12px 16px 28px; }
   .wizard-card { padding: 24px 20px; }
 }
+/* On narrow screens the sidebar hides and the FAB appears fixed top-left;
+   shift the page-header title right so it doesn't sit under the button. */
+@media (max-width: 640px) {
+  .page-header { padding-left: 64px; }
+}
 
 /* --- Dark theme --------------------------------------------------------
    Mirrors Home Assistant's default dark theme token values.
@@ -538,11 +543,103 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 }
 
 /* ==========================================================================
-   Area card / glance grid / button row / entity row
+   HA-parity entity list rows  (icon | name | state/control)
+   Replaces tile-grid + glance-grid with a single consistent row layout
+   matching homeassistant/components/lovelace "entities" card style.
    ========================================================================== */
 
-/* Area card — one per area on dashboard */
-.area-card { margin-bottom: 16px; }
+/* One entities card per area (replaces .area-card) */
+.entities-card {
+  background: var(--card-bg);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.entities-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 16px 20px 10px;
+  color: var(--primary-text);
+}
+
+/* Individual entity row */
+.entity-list-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 20px;
+  border-top: 1px solid var(--border);
+  min-height: 48px;
+  cursor: pointer;
+  transition: background .12s;
+  text-decoration: none;
+  color: inherit;
+}
+.entity-list-row:first-of-type { border-top: none; }
+.entity-list-row:hover          { background: rgba(0,0,0,.03); }
+.entity-list-icon {
+  width: 24px; height: 24px;
+  fill: var(--secondary-text);
+  flex-shrink: 0;
+}
+/* Active / on states get the primary colour */
+.entity-list-row.state-on  .entity-list-icon { fill: var(--primary-color); }
+.entity-list-row.state-on  .entity-list-state { color: var(--primary-color); }
+.entity-list-name {
+  flex: 1;
+  font-size: .9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--primary-text);
+}
+.entity-list-state {
+  font-size: .9rem;
+  font-weight: 500;
+  color: var(--secondary-text);
+  white-space: nowrap;
+  text-align: right;
+}
+/* Inline toggle matching HA light/switch toggle in entity rows */
+.entity-list-toggle {
+  position: relative;
+  width: 44px; height: 26px;
+  border: none; border-radius: 13px;
+  background: var(--border);
+  cursor: pointer;
+  transition: background .2s;
+  flex-shrink: 0;
+}
+.entity-list-toggle.is-on       { background: var(--primary-color); }
+.entity-list-toggle-thumb {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  transition: transform .2s;
+}
+.entity-list-toggle.is-on .entity-list-toggle-thumb { transform: translateX(18px); }
+
+/* Button activatables (button/scene/script) inside entity rows */
+.entity-list-btn {
+  padding: 4px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  font-size: .82rem; font-weight: 500; font-family: inherit;
+  cursor: pointer;
+  color: var(--primary-color);
+  white-space: nowrap;
+  transition: background .13s;
+}
+.entity-list-btn:hover { background: var(--ha-blue-bg); }
+
+@media (prefers-color-scheme: dark) {
+  .entity-list-row:hover { background: rgba(255,255,255,.04); }
+}
 
 /* Glance grid — compact sensor readings */
 .glance-grid {

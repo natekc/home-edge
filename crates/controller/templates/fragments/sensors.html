@@ -4,101 +4,66 @@
 </p>
 {% else %}
 {% for card in area_cards %}
-<div class="ha-card area-card">
-  <div class="ha-card-header">
-    <h2>{{ card.area_name }}</h2>
-  </div>
-  <div class="ha-card-body">
+<div class="entities-card">
+  <div class="entities-card-title">{{ card.area_name }}</div>
 
-    {# ---- Controllable tiles: light, switch, fan, cover, lock, binary_sensor ---- #}
-    {% set has_tiles = false %}
-    {% for entity in card.entities %}{% if entity.entity_type != "sensor" and entity.entity_type != "button" and entity.entity_type != "scene" and entity.entity_type != "script" and entity.entity_type != "select" %}{% set has_tiles = true %}{% endif %}{% endfor %}
-    {% if has_tiles %}
-    <div class="sensor-grid">
-      {% for entity in card.entities %}
-      {% if entity.entity_type != "sensor" and entity.entity_type != "button" and entity.entity_type != "scene" and entity.entity_type != "script" and entity.entity_type != "select" %}
-      <div class="sensor-tile
-            {%- if entity.entity_type == "light" or entity.entity_type == "switch" or entity.entity_type == "fan" %} {% if entity.value == "on" %}binary-on{% else %}binary-off{% endif %}
-            {%- elif entity.entity_type == "cover" %} {% if entity.value == "open" %}binary-on{% else %}binary-off{% endif %}
-            {%- elif entity.entity_type == "lock" %} {% if entity.value == "unlocked" %}binary-on{% else %}binary-off{% endif %}
-            {%- elif entity.entity_type == "binary_sensor" %} {% if entity.value == "on" %}binary-on{% else %}binary-off{% endif %}
-            {%- endif %}"
-           hx-get="/fragments/more-info/{{ entity.entity_id }}"
-           hx-target="#more-info-body"
-           hx-swap="innerHTML"
-           hx-on::after-request="document.getElementById('more-info-dialog').showModal()"
-           style="cursor:pointer"
-           title="{{ entity.display_name }}">
-        <svg class="sensor-tile-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
-        <div class="sensor-tile-value">{{ entity.value }}</div>
-        <div class="sensor-tile-name">{{ entity.display_name }}</div>
-      </div>
-      {% endif %}
-      {% endfor %}
-    </div>
-    {% endif %}
+  {% for entity in card.entities %}
+  {# --- Determine extra row class for colouring active states --- #}
+  {% set row_class = "" %}
+  {% if entity.value == "on" or entity.value == "open" or entity.value == "unlocked" %}
+    {% set row_class = "state-on" %}
+  {% endif %}
 
-    {# ---- Sensor readings: glance grid ---- #}
-    {% set has_sensors = false %}
-    {% for entity in card.entities %}{% if entity.entity_type == "sensor" %}{% set has_sensors = true %}{% endif %}{% endfor %}
-    {% if has_sensors %}
-    <div class="glance-grid{% if has_tiles %} glance-grid--mt{% endif %}">
-      {% for entity in card.entities %}
-      {% if entity.entity_type == "sensor" %}
-      <div class="glance-cell"
-           hx-get="/fragments/more-info/{{ entity.entity_id }}"
-           hx-target="#more-info-body"
-           hx-swap="innerHTML"
-           hx-on::after-request="document.getElementById('more-info-dialog').showModal()"
-           style="cursor:pointer"
-           title="{{ entity.display_name }}">
-        <svg class="glance-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
-        <div class="glance-value">{{ entity.value }}<span class="glance-unit"> {{ entity.unit }}</span></div>
-        <div class="glance-name">{{ entity.display_name }}</div>
-      </div>
-      {% endif %}
-      {% endfor %}
-    </div>
-    {% endif %}
+  <div class="entity-list-row {{ row_class }}"
+       hx-get="/fragments/more-info/{{ entity.entity_id }}"
+       hx-target="#more-info-body"
+       hx-swap="innerHTML"
+       hx-on::after-request="document.getElementById('more-info-dialog').showModal()">
 
-    {# ---- Activatables: button / scene / script ---- #}
-    {% set has_activatables = false %}
-    {% for entity in card.entities %}{% if entity.entity_type == "button" or entity.entity_type == "scene" or entity.entity_type == "script" %}{% set has_activatables = true %}{% endif %}{% endfor %}
-    {% if has_activatables %}
-    <div class="button-row{% if has_tiles or has_sensors %} button-row--mt{% endif %}">
-      {% for entity in card.entities %}
-      {% if entity.entity_type == "button" or entity.entity_type == "scene" or entity.entity_type == "script" %}
-      <button class="ha-button"
-              hx-post="/ui/services/{{ entity.entity_type }}/{{ entity.service_action }}"
-              hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
-              hx-swap="none"
-              hx-on::after-request="showToast('{{ entity.display_name }}', 2000)">
-        <svg><use href="#icon-{{ entity.icon_name }}"/></svg>
-        {{ entity.display_name }}
-      </button>
-      {% endif %}
-      {% endfor %}
-    </div>
-    {% endif %}
+    <svg class="entity-list-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
 
-    {# ---- Select entities ---- #}
-    {% for entity in card.entities %}
-    {% if entity.entity_type == "select" %}
-    <div class="entity-row"
-         hx-get="/fragments/more-info/{{ entity.entity_id }}"
-         hx-target="#more-info-body"
-         hx-swap="innerHTML"
-         hx-on::after-request="document.getElementById('more-info-dialog').showModal()"
-         style="cursor:pointer">
-      <svg class="entity-row-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
-      <span class="entity-row-name">{{ entity.display_name }}</span>
-      <span class="entity-row-state">{{ entity.value }}</span>
-    </div>
+    <span class="entity-list-name">{{ entity.display_name }}</span>
+
+    {# Right side: toggle for controllable binary entities, button for activatables, state text for the rest #}
+    {% if entity.entity_type == "light" or entity.entity_type == "switch" or entity.entity_type == "fan" %}
+    <button class="entity-list-toggle{% if entity.value == 'on' %} is-on{% endif %}"
+            hx-post="/ui/services/{{ entity.entity_type }}/toggle"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')"
+            onclick="event.stopPropagation()"
+            aria-label="Toggle {{ entity.display_name }}">
+      <span class="entity-list-toggle-thumb"></span>
+    </button>
+
+    {% elif entity.entity_type == "cover" %}
+    <span class="entity-list-state">{{ entity.value }}</span>
+
+    {% elif entity.entity_type == "lock" %}
+    <span class="entity-list-state">{{ entity.value }}</span>
+
+    {% elif entity.entity_type == "button" or entity.entity_type == "scene" or entity.entity_type == "script" %}
+    <button class="entity-list-btn"
+            hx-post="/ui/services/{{ entity.entity_type }}/{{ entity.service_action }}"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-on::after-request="showToast('{{ entity.display_name }}', 2000); htmx.trigger(document.getElementById('area-cards'),'refresh')"
+            onclick="event.stopPropagation()">
+      {{ entity.service_action | capitalize }}
+    </button>
+
+    {% elif entity.entity_type == "sensor" %}
+    <span class="entity-list-state">{{ entity.value }}{% if entity.unit %}&nbsp;{{ entity.unit }}{% endif %}</span>
+
+    {% else %}
+    <span class="entity-list-state">{{ entity.value }}</span>
     {% endif %}
-    {% endfor %}
 
   </div>
+  {% endfor %}
+
 </div>
 {% endfor %}
 {% endif %}
+
 
