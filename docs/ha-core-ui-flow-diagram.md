@@ -211,15 +211,15 @@ flowchart TD
 
         CFG_INTEGRATIONS["/config/integrations\nHTTP: POST /api/config/config_entries/flow\nHTTP: /api/config/config_entries/options/flow\nHTTP: /api/config/config_entries/subentries/flow\nconfig/config_entries.py:168,263,299"]
         CFG_DEVICES["/config/devices\nWS: config/device_registry/list,update,\n    remove_config_entry\nconfig/device_registry.py:19"]
-        CFG_ENTITIES["/config/entities\nWS: config/entity_registry/list,get,\n    update,remove,get_entities\nconfig/entity_registry.py:26"]
-        CFG_AREAS["/config/areas\nWS: config/area_registry/list,create,\n    delete,update,reorder\nconfig/area_registry.py:16"]
+        CFG_ENTITIES["/config/entities\nWS: config/entity_registry/list,get,\n    update,remove,get_entities\nconfig/entity_registry.py:25"]
+        CFG_AREAS["/config/areas\nWS: config/area_registry/list,create,\n    delete,update,reorder\nconfig/area_registry.py:15"]
         CFG_FLOORS["/config/floors\nWS: config/floor_registry/list,create,\n    delete,update,reorder\nconfig/floor_registry.py:15"]
-        CFG_AUTO["/config/automation\nHTTP: GET|POST|DELETE\n/api/config/automation/config/{key}\nconfig/automation.py:43"]
+        CFG_AUTO["/config/automation\nHTTP: GET|POST|DELETE\n/api/config/automation/config/{key}\nconfig/automation.py:44"]
         CFG_SCRIPT["/config/script\nHTTP: GET|POST|DELETE\n/api/config/script/config/{key}\nconfig/script.py:21"]
-        CFG_SCENE["/config/scene\nHTTP: GET|POST|DELETE\n/api/config/scene/config/{key}\nconfig/scene.py:26"]
+        CFG_SCENE["/config/scene\nHTTP: GET|POST|DELETE\n/api/config/scene/config/{key}\nconfig/scene.py:24"]
         CFG_HELPERS["/config/helpers\n→ integration config flows\n   (helper integrations)"]
         CFG_USERS["/config/users  admin\nWS: config/auth/list,create,\n    update,delete\nWS: config/auth_provider/homeassistant/*\nconfig/auth.py + auth_provider_homeassistant.py"]
-        CFG_GENERAL["/config/general\nWS: config/core/update\n    (country,currency,elevation,lat,lon,tz)\nWS: config/core/detect\nconfig/core.py:21"]
+        CFG_GENERAL["/config/general\nWS: config/core/update\n    (country,currency,elevation,lat,lon,tz)\nWS: config/core/detect\nconfig/core.py:20"]
         CFG_DASH["/config/lovelace/dashboards\nManage Lovelace dashboard list"]
         CFG_REPAIRS["/config/repairs\nHTTP: POST /api/repairs/issues/fix\nWS: repairs/list_issues\nWS: repairs/ignore_issue\nrepairs/websocket_api.py"]
 
@@ -246,11 +246,11 @@ flowchart TD
     subgraph CONFIG_FLOW["Config Flow Framework\ndata_entry_flow.py + config_entries.py"]
         direction TB
 
-        CF_INIT["POST /api/config/config_entries/flow\nconfig/config_entries.py:163\nConfigEntriesFlowManager.async_init(domain)\nValidates source in context — config_entries.py:1463\nGuard: reauth/reconfigure require entry_id — L1466\nGuard: single_instance_allowed — L1493\ninit_step = context.source\ne.g. 'user', 'bluetooth', 'dhcp', 'homekit',\n     'mqtt', 'ssdp', 'usb', 'zeroconf', 'hassio',\n     'integration_discovery', 'reauth', 'reconfigure'"]
+        CF_INIT["POST /api/config/config_entries/flow\nconfig/config_entries.py:168\nConfigEntriesFlowManager.async_init(domain)\nValidates source in context — config_entries.py:1463\nGuard: reauth/reconfigure require entry_id — L1466\nGuard: single_instance_allowed — L1493\ninit_step = context.source\ne.g. 'user', 'bluetooth', 'dhcp', 'homekit',\n     'mqtt', 'ssdp', 'usb', 'zeroconf', 'hassio',\n     'integration_discovery', 'reauth', 'reconfigure'"]
 
         CF_INIT --> CF_SOURCE_DISPATCH
 
-        CF_SOURCE_DISPATCH{"init_step = context.source\nconfig_entries.py:1511"}
+        CF_SOURCE_DISPATCH{"init_step = context.source\nconfig_entries.py:1793"}
 
         CF_SOURCE_DISPATCH -- "source=user" --> CF_STEP_USER
         CF_SOURCE_DISPATCH -- "source=bluetooth/dhcp/homekit\n  mqtt/ssdp/usb/zeroconf\n  hassio/integration_discovery" --> CF_STEP_DISCOVERY
@@ -420,10 +420,10 @@ flowchart TD
         direction LR
 
         UM_LIST["WS: config/auth/list\nauth.py — list all users"]
-        UM_CREATE_1["Step 1: WS config/auth/create\nauth.py:82\nhass.auth.async_create_user(name, group_ids, local_only)\nReturns {user}"]
+        UM_CREATE_1["Step 1: WS config/auth/create\nauth.py:88\nhass.auth.async_create_user(name, group_ids, local_only)\nReturns {user}"]
         UM_CREATE_2["Step 2: WS config/auth_provider/homeassistant/create\nauth_provider_homeassistant.py:37\nprovider.async_add_auth(username, password)\nprovider.async_get_or_create_credentials({username})\nhass.auth.async_link_user(user, credentials)"]
         UM_CREATE_1 --> UM_CREATE_2
-        UM_UPDATE["WS: config/auth/update\nauth.py:103\nhass.auth.async_update_user()\nFields: name, is_active, group_ids, local_only\nGuard: cannot deactivate owner"]
+        UM_UPDATE["WS: config/auth/update\nauth.py:115\nhass.auth.async_update_user()\nFields: name, is_active, group_ids, local_only\nGuard: cannot deactivate owner"]
         UM_DELETE["WS: config/auth/delete\nauth.py:53\nhass.auth.async_remove_user(user)"]
         UM_CHPW["WS: config/auth_provider/homeassistant/change_password\nUser changes own password"]
         UM_ADMINPW["WS: config/auth_provider/homeassistant/admin_change_password\nAdmin changes any user password  @require_admin"]
