@@ -29,10 +29,29 @@
   <div class="ha-card">
     <div class="ha-card-header" style="color:var(--error,#e74c3c)"><h2>Restart</h2></div>
     <div class="ha-card-body">
-      <p class="text-muted" style="margin:0 0 14px">Restart the home-edge controller process.</p>
-      <button class="btn btn-secondary" onclick="showToast('Restart not yet implemented.', 3000)">Restart</button>
+      <p class="text-muted" style="margin:0 0 14px">Restart the home-edge controller process. The page will reload automatically.</p>
+      <button class="btn btn-secondary" onclick="confirmRestart()">Restart</button>
     </div>
   </div>
+
+<script>
+function confirmRestart() {
+  if (!confirm('Restart home-edge? The page will reload after a few seconds.')) return;
+  fetch('/api/system/restart', { method: 'POST' })
+    .then(function(r) {
+      if (r.ok) {
+        showToast('Restarting\u2026 page will reload shortly.', 8000);
+        setTimeout(function() { window.location.reload(); }, 4000);
+      } else {
+        showToast('Restart failed: ' + r.status, 4000);
+      }
+    })
+    .catch(function() {
+      showToast('Restart request sent. Reconnecting\u2026', 6000);
+      setTimeout(function() { window.location.reload(); }, 4000);
+    });
+}
+</script>
 
 </div>
 {% endblock %}

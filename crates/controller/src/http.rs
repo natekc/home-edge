@@ -154,6 +154,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         // Edge-internal history API. Not a replica of HA's /api/history/period endpoint
         // (which uses compressed-state wire format: {"s", "a", "lu"}).
         .route("/api/edge/history/{entity_id}",                  get(api_history))
+        // System API
+        .route("/api/system/restart",                            post(api_system_restart))
         // Health + onboarding REST API
         .route("/api/health",                                    get(health))
         .route("/api/onboarding",                                get(onboarding_status))
@@ -837,6 +839,17 @@ async fn api_history(
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok", milestone: "m0" })
+}
+
+/// POST /api/system/restart — exit with code 100 so systemd restarts the process.
+/// Mirrors homeassistant/const.py RESTART_EXIT_CODE = 100.
+async fn api_system_restart() -> Response {
+    // Spawn a task to exit after the response has flushed.
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        std::process::exit(100);
+    });
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn onboarding_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
