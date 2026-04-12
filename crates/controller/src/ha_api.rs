@@ -51,6 +51,13 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/services/{domain}/{service}",
             axum::routing::post(api_service_call),
         )
+        // Config registry endpoints
+        // Source: homeassistant/components/config/device_registry.py  DeviceRegistryListView
+        // Used by iOS/Android companion DeviceNaming step to detect duplicate device names.
+        .route(
+            "/api/config/device_registry/list",
+            get(api_device_registry_list),
+        )
 }
 
 /// GET /api/
@@ -413,6 +420,58 @@ fn query_has_return_response(query: &str) -> bool {
         let key = part.split_once('=').map(|(key, _)| key).unwrap_or(part);
         key == "return_response"
     })
+}
+
+/// GET /api/config/device_registry/list
+///
+/// Source: homeassistant/components/config/device_registry.py  DeviceRegistryListView.get
+///   return self.json([entry.as_dict() for entry in registry.devices.values()])
+///
+/// Used by the iOS/Android companion app DeviceNaming step to detect duplicate device
+/// names before calling POST /api/mobile_app/registrations.
+///
+/// We return a minimal representation drawn from persisted MobileDeviceRecord entries.
+async fn api_device_registry_list(State(state): State<Arc<AppState>>) -> Response {
+    match state.mobile_devices.all().await {
+        Ok(devices) => {
+            let list: Vec<Value> = devices
+                .iter()
+                .map(|d| {
+                    let identifiers = d
+                        .device_id
+                        .as_deref()
+                        .map(|did| json!([["mobile_app", did]]))
+                        .unwrap_or_else(|| json!([["mobile_app", &d.webhook_id]]));
+                    json!({
+                        "area_id": null,
+                        "config_entries": [],
+                        "configuration_url": null,
+                        "connections": [],
+                        "disabled_by": null,
+                        "entry_type": null,
+                        "hw_version": null,
+                        "id": d.webhook_id,
+                        "identifiers": identifiers,
+                        "labels": [],
+                        "manufacturer": d.manufacturer,
+                        "model": d.model,
+                        "model_id": null,
+                        "name": d.device_name,
+                        "name_by_user": null,
+                        "serial_number": null,
+                        "sw_version": d.app_version,
+                        "via_device_id": null
+                    })
+                })
+                .collect();
+            (StatusCode::OK, Json(list)).into_response()
+        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"message": format!("failed to load device registry: {err:#}")})),
+        )
+            .into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------

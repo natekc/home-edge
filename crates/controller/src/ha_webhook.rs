@@ -239,6 +239,24 @@ async fn handle_mobile_webhook(
             let data = object.get("data").cloned().unwrap_or_else(|| json!([]));
             update_sensor_states_command(state, device, &data).await
         }
+        // Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_get_config
+        // Returns device and app configuration back to the companion app.
+        "get_config" => get_config_command(state, device).await,
+        // Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_get_zones
+        // Returns configured zones. Home-edge has no zone support yet; return empty list.
+        "get_zones" => {
+            (StatusCode::OK, Json(json!([]))).into_response()
+        }
+        // Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_update_location
+        // Accepts a device location update. Home-edge acknowledges but does not store.
+        "update_location" => {
+            (StatusCode::OK, Json(json!({}))).into_response()
+        }
+        // Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_fire_event
+        // Fires a Home Assistant event. Home-edge acknowledges but does not dispatch events yet.
+        "fire_event" => {
+            (StatusCode::OK, Json(json!({}))).into_response()
+        }
         _ => (StatusCode::OK, Json(json!({}))).into_response(),
     }
 }
@@ -256,6 +274,50 @@ struct SensorCommand {
     entity_category: Option<String>,
     state_class: Option<String>,
     disabled: bool,
+}
+
+/// Handle `type: "get_config"` webhook command.
+///
+/// Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_get_config
+/// Returns the registration details and current app config back to the companion app.
+/// The companion uses this to sync webhook_id and server capabilities on reconnect.
+async fn get_config_command(state: &Arc<AppState>, device: &MobileDeviceRecord) -> Response {
+    let config = match state
+        .core
+        .execute(
+            crate::core::CoreDeps {
+                config: &state.config,
+                states: &state.states,
+                services: &state.services,
+            },
+            crate::core::OperationRequest::GetConfigSummary,
+        ) {
+        crate::core::OperationResult::ConfigSummary(cfg) => cfg,
+        _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    // Source: handle_webhook_get_config return value (mobile_app/webhook.py):
+    //   {
+    //     CONF_CLOUDHOOK_URL: entry.data.get(CONF_CLOUDHOOK_URL),
+    //     CONF_REMOTE_UI_URL: entry.data.get(CONF_REMOTE_UI_URL),
+    //     CONF_SECRET: entry.data.get(CONF_SECRET),
+    //     CONF_WEBHOOK_ID: entry.data[CONF_WEBHOOK_ID],
+    //     "entities": [],
+    //     "user_id": user.id,
+    //   }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "cloudhook_url": null,
+            "remote_ui_url": null,
+            "secret": device.secret,
+            "webhook_id": device.webhook_id,
+            "location_name": config.location_name,
+            "entities": [],
+            "user_id": null,
+        })),
+    )
+        .into_response()
 }
 
 async fn register_sensor_command(
