@@ -58,6 +58,8 @@ pub fn build_env() -> Environment<'static> {
         .expect("settings.html");
     env.add_template("profile.html", include_str!("../templates/profile.html"))
         .expect("profile.html");
+    env.add_template("devices.html", include_str!("../templates/devices.html"))
+        .expect("devices.html");
 
     // HTMX fragment partials
     env.add_template(
