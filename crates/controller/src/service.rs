@@ -124,6 +124,9 @@ pub struct ServiceData {
     pub position: Option<u8>,
     pub temperature: Option<f64>,
     pub hvac_mode: Option<String>,
+    /// Fan speed as a percentage (0–100).
+    /// Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
+    pub percentage: Option<u8>,
 }
 
 impl ServiceData {
@@ -162,7 +165,13 @@ impl ServiceData {
             Some(Value::Null) | None => None,
             Some(_) => return Err(ServiceError::InvalidFormat("hvac_mode must be a string".into())),
         };
-        Ok(Self { brightness, color_temp_kelvin, option, position, temperature, hvac_mode })
+        // Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE, vol.Range(min=0, max=100)
+        let percentage = match data.get("percentage") {
+            Some(Value::Number(n)) => n.as_u64().map(|v| v.min(100) as u8),
+            Some(Value::Null) | None => None,
+            Some(_) => return Err(ServiceError::InvalidFormat("percentage must be a number".into())),
+        };
+        Ok(Self { brightness, color_temp_kelvin, option, position, temperature, hvac_mode, percentage })
     }
 }
 
@@ -519,7 +528,23 @@ impl BuiltinServiceDefinition {
                 service: self.service.into(),
                 name: "Turn on".into(),
                 description: "Turn on fan entities.".into(),
-                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "fan"}})) })]),
+                fields: BTreeMap::from([
+                    (
+                        "entity_id".into(),
+                        ServiceField {
+                            required: false,
+                            selector: Some(json!({"entity": {"domain": "fan"}})),
+                        },
+                    ),
+                    (
+                        // Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
+                        "percentage".into(),
+                        ServiceField {
+                            required: false,
+                            selector: Some(json!({"number": {"min": 0, "max": 100}})),
+                        },
+                    ),
+                ]),
                 supports_response: SupportsResponse::None,
             },
             BuiltinServiceKind::FanTurnOff => ServiceDescription {
@@ -611,8 +636,34 @@ impl BuiltinServiceDefinition {
     ) -> Result<ServiceOutcome, ServiceError> {
         match self.kind {
             BuiltinServiceKind::LightTurnOn
-            | BuiltinServiceKind::SwitchTurnOn
-            | BuiltinServiceKind::FanTurnOn => set_entities_state(request, states, "on"),
+            | BuiltinServiceKind::SwitchTurnOn => set_entities_state(request, states, "on"),
+            BuiltinServiceKind::FanTurnOn => {
+                // fan.turn_on accepts optional percentage (ATTR_PERCENTAGE).
+                // Store it as a state attribute so the UI can read it back.
+                let entity_ids = request.target.entity_ids.clone();
+                if entity_ids.is_empty() {
+                    return Err(ServiceError::InvalidFormat("entity_id required".into()));
+                }
+                let mut changed_states = Vec::new();
+                for entity_id in &entity_ids {
+                    let mut attributes = states
+                        .get(entity_id)
+                        .map(|s| s.attributes)
+                        .unwrap_or_default();
+                    if let Some(pct) = request.data.percentage {
+                        attributes.insert("percentage".into(), json!(pct));
+                    }
+                    let new_state = make_state_with_context(
+                        entity_id.clone(),
+                        "on".to_string(),
+                        StateAttributes::from_hash(attributes),
+                        request.context.clone(),
+                    );
+                    states.set(new_state.clone())?;
+                    changed_states.push(new_state);
+                }
+                Ok(ServiceOutcome { context: request.context, changed_states, response: None })
+            }
             BuiltinServiceKind::LightTurnOff
             | BuiltinServiceKind::SwitchTurnOff
             | BuiltinServiceKind::FanTurnOff => set_entities_state(request, states, "off"),

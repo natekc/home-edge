@@ -453,6 +453,10 @@ struct UiServiceForm {
     hvac_mode: Option<String>,
     #[serde(default)]
     temperature: Option<String>,
+    /// Fan speed percentage (0–100).
+    /// Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
+    #[serde(default)]
+    percentage: Option<String>,
 }
 
 async fn ui_service_call(
@@ -479,6 +483,9 @@ async fn ui_service_call(
     }
     if let Some(t) = form.temperature.as_deref().filter(|s| !s.is_empty()) {
         if let Ok(f) = t.parse::<f64>() { data.insert("temperature".into(), serde_json::json!(f)); }
+    }
+    if let Some(pct) = form.percentage.as_deref().filter(|s| !s.is_empty()) {
+        if let Ok(n) = pct.parse::<u8>() { data.insert("percentage".into(), json!(n)); }
     }
     let target = match ServiceTarget::from_parts(None, Some(&data)) {
         Ok(t) => t,
@@ -858,6 +865,9 @@ struct EntityView {
     options: Vec<String>,
     /// Cover current position 0–100, None if unavailable
     current_position: Option<u8>,
+    /// Fan speed percentage 0–100, None if unavailable.
+    /// Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
+    fan_percentage: Option<u8>,
 }
 
 /// Area-grouped card view passed to dashboard templates.
@@ -913,6 +923,11 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         .get("current_position")
         .and_then(|v| v.as_u64())
         .map(|v| v.min(100) as u8);
+    // Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
+    let fan_percentage = attrs
+        .get("percentage")
+        .and_then(|v| v.as_u64())
+        .map(|v| v.min(100) as u8);
     EntityView {
         entity_id: entity.entity_id.clone(),
         webhook_id: entity.webhook_id.clone(),
@@ -935,6 +950,7 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         max_color_temp_kelvin,
         options,
         current_position,
+        fan_percentage,
     }
 }
 
