@@ -30,6 +30,9 @@
   {% endif %}
 </div>
 <script>
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 function loadHistoryFor(entityId) {
   if (!entityId) return;
   var target = document.getElementById('history-chart');
@@ -43,7 +46,11 @@ function loadHistoryFor(entityId) {
       }
       var rows = entries.map(function(e) {
         var d = new Date(e.recorded_at * 1000);
-        return '<tr><td style="color:var(--text-secondary);font-size:.8rem;white-space:nowrap">' + d.toLocaleString() + '</td><td style="font-weight:500">' + e.state + '</td></tr>';
+        return '<tr><td style="color:var(--text-secondary);font-size:.8rem;white-space:nowrap">'
+          + esc(d.toLocaleString())
+          + '</td><td style="font-weight:500">'
+          + esc(e.state)
+          + '</td></tr>';
       }).join('');
       target.innerHTML = '<div class="ha-card-body" style="padding:0"><table style="width:100%;border-collapse:collapse">' + rows + '</table></div>';
     })

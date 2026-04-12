@@ -360,6 +360,7 @@ async fn developer_tools_page(State(state): State<Arc<AppState>>) -> Response {
         Ok(e) => e,
         Err(err) => return internal_error(&err),
     };
+    // Include disabled entities intentionally — developer tools shows the full picture
     let entity_states: Vec<serde_json::Value> = all_entities
         .iter()
         .map(|e| {
@@ -428,7 +429,9 @@ async fn area_delete(
     State(state): State<Arc<AppState>>,
     Path(area_id): Path<String>,
 ) -> Response {
-    let _ = state.area_registry.delete(&area_id).await;
+    if let Err(err) = state.area_registry.delete(&area_id).await {
+        return internal_error(&err);
+    }
     redirect("/areas")
 }
 

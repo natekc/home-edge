@@ -20,7 +20,8 @@
         <a href="/areas/{{ area.area_id }}" style="flex:1;font-size:.95rem;text-decoration:none;color:inherit">{{ area.name }}</a>
         <form method="post" action="/areas/{{ area.area_id }}/delete" style="margin:0">
           <button type="submit" class="btn btn-secondary" style="font-size:.75rem;padding:4px 10px"
-                  onclick="return confirm('Delete area {{ area.name }}?')">Delete</button>
+                  data-area-name="{{ area.name }}"
+                  onclick="return confirm('Delete area \u201c' + this.dataset.areaName + '\u201d?')">Delete</button>
         </form>
       </div>
       {% endfor %}
@@ -32,7 +33,7 @@
     <div class="ha-card-header"><h2>Add area</h2></div>
     <div class="ha-card-body">
       <form method="post" action="/areas" style="display:flex;gap:12px;align-items:center">
-        <input type="text" name="name" class="form-control" placeholder="e.g. Bedroom" required style="flex:1">
+        <input type="text" name="name" class="form-control" placeholder="e.g. Bedroom" required maxlength="64" style="flex:1">
         <button type="submit" class="btn btn-primary">Add</button>
       </form>
     </div>
