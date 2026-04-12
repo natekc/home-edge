@@ -130,7 +130,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/ble",                                           get(ble_scan_page))
         .route("/settings",                                      get(settings_page))
         .route("/profile",                                       get(profile_page))
-        .route("/devices",                                        get(devices_list_page))
         .route("/devices/{webhook_id}",                          get(device_detail_page))
         .route("/devices/{webhook_id}/entities/{entity_id}",     get(entity_edit_page))
         .route(
@@ -275,40 +274,6 @@ async fn settings_page(State(state): State<Arc<AppState>>) -> Response {
         runtime_mode => mode.as_str(),
     );
     render_template(&state, "settings.html", ctx)
-}
-
-async fn devices_list_page(State(state): State<Arc<AppState>>) -> Response {
-    let devices = match state.mobile_devices.all().await {
-        Ok(d) => d,
-        Err(err) => return internal_error(&err),
-    };
-    let all_entities = match state.mobile_entities.all().await {
-        Ok(e) => e,
-        Err(err) => return internal_error(&err),
-    };
-    let device_summaries: Vec<_> = devices
-        .iter()
-        .map(|d| {
-            let count = all_entities
-                .iter()
-                .filter(|e| e.webhook_id == d.webhook_id)
-                .count();
-            json!({
-                "webhook_id":   d.webhook_id,
-                "device_name":  d.display_name(),
-                "manufacturer": d.manufacturer,
-                "model":        d.model,
-                "os_name":      d.os_name,
-                "entity_count": count,
-            })
-        })
-        .collect();
-    let location_name = load_location_name(&state).await;
-    let area_names = load_area_names(&state).await;
-    let ctx = app_ctx!(state, "settings", location_name.as_str(), &area_names,
-        devices => Value::from_serialize(&device_summaries),
-    );
-    render_template(&state, "devices.html", ctx)
 }
 
 async fn ble_scan_page(State(state): State<Arc<AppState>>) -> Response {

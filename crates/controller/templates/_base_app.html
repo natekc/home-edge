@@ -141,8 +141,6 @@ function showToast(msg, dur) {
 function openNativeSettings() {
   if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.externalBus) {
     window.webkit.messageHandlers.externalBus.postMessage({type: 'config_screen/show'});
-  } else {
-    showToast('Switch Server is only available in the iOS or Android app.', 4000);
   }
 }
 
