@@ -110,7 +110,7 @@ flowchart TD
         MFA_GATE{"MFA enabled?\nsupport_mfa=True\n& user has MFA modules\nauth/__init__.py:168"}
         MFA_GATE -- "No MFA configured" --> AUTH_COMPLETE_NODE
 
-        subgraph MFA_LOGIN_SUBFLOW["MFA Login Verification — providers/__init__.py:213"]
+        subgraph MFA_LOGIN_SUBFLOW["MFA Login Verification — providers/__init__.py:223"]
             MFA_SEL["async_step_select_mfa_module\nproviders/__init__.py:223\nShow form: {multi_factor_auth_module}\n(auto-skipped if only 1 module)"]
             MFA_SEL -- "Invalid module\nerrors.base=invalid_auth_module" --> MFA_SEL
             MFA_SEL -- "Module selected" --> MFA_VERIFY
@@ -156,14 +156,14 @@ flowchart TD
         SIDEBAR_ENTRY --> P_APP
 
         P_LOVELACE["/ — Overview / Lovelace\ncomponent=lovelace (builtin)\ncomponents/lovelace/__init__.py:345\nDynamic url_path per dashboard"]
-        P_ENERGY["/energy\ncomponent=energy\ncomponents/energy/__init__.py:29\nmdi:lightning-bolt"]
-        P_HISTORY["/history\ncomponent=history\ncomponents/history/__init__.py:49\nmdi:chart-box"]
-        P_LOGBOOK["/logbook\ncomponent=logbook\ncomponents/logbook/__init__.py:117\nmdi:format-list-bulleted-type"]
+        P_ENERGY["/energy\ncomponent=energy\ncomponents/energy/__init__.py:28\nmdi:lightning-bolt"]
+        P_HISTORY["/history\ncomponent=history\ncomponents/history/__init__.py:48\nmdi:chart-box"]
+        P_LOGBOOK["/logbook\ncomponent=logbook\ncomponents/logbook/__init__.py:116\nmdi:format-list-bulleted-type"]
         P_TODO["/todo\ncomponent=todo\ncomponents/todo/__init__.py:127\nmdi:clipboard-list"]
         P_MEDIA["/media-browser\ncomponent=media-browser\ncomponents/media_source/http.py:27\nmdi:play-box-multiple"]
         P_CALENDAR["/calendar\ncomponent=calendar\ncomponents/calendar/__init__.py:321\nmdi:calendar"]
         P_MAP["/map — Lovelace map dashboard\ncomponents/lovelace/__init__.py:366\n_create_map_dashboard()"]
-        P_CONFIG["/config  (admin required)\ncomponent=config\ncomponents/config/__init__.py:51\nmdi:cog"]
+        P_CONFIG["/config  (admin required)\ncomponent=config\ncomponents/config/__init__.py:50\nmdi:cog"]
         P_PROFILE["/profile\ncomponent=profile\ncomponents/frontend/__init__.py:603\n(no sidebar)"]
         P_APP["/app — Supervisor shell\ncomponent=app\ncomponents/hassio/__init__.py:211"]
 
@@ -181,7 +181,7 @@ flowchart TD
             P_DYNALITE["/dynalite  admin\ndynalite-panel iframe\ncomponents/dynalite/panel.py:108"]
             P_INSTEON["/insteon  admin\ninsteon-frontend iframe\ncomponents/insteon/api/__init__.py:105"]
             P_LCN["/lcn  admin\nlcn_frontend package\ncomponents/lcn/websocket.py:89"]
-            P_ADDON["/{addon_slug}  ingress panels\ncomponent=app\ncomponents/hassio/addon_panel.py:73"]
+            P_ADDON["/{addon_slug}  ingress panels\ncomponent=app\ncomponents/hassio/addon_panel.py:75"]
         end
     end
 
@@ -380,7 +380,7 @@ flowchart TD
     subgraph MFA_SETUP["MFA Module Setup Flow — components/auth/mfa_setup_flow.py"]
         direction TB
 
-        MFAS_ENTRYPOINT["WS: auth/setup_mfa\nmfa_setup_flow.py:87 (websocket_setup_mfa)\nGuard: module must exist — mfa_setup_flow.py:108\nMfaFlowManager.async_init(mfa_module_id, {user_id}) — L112\nContinued via flow_id: flow_manager.async_configure() — L97"]
+        MFAS_ENTRYPOINT["WS: auth/setup_mfa\nmfa_setup_flow.py:87 (websocket_setup_mfa)\nGuard: module must exist — mfa_setup_flow.py:104\nMfaFlowManager.async_init(mfa_module_id, {user_id}) — L112\nContinued via flow_id: flow_manager.async_configure() — L97"]
         MFAS_ENTRYPOINT --> MFAS_MOD_DISPATCH
 
         MFAS_MOD_DISPATCH{"Which MFA module?"}
@@ -398,7 +398,7 @@ flowchart TD
             NOTIF_INIT -- "Services exist\nShow form: {notify_service, target?}\nnotify.py:313" --> NOTIF_SVC_FORM
             NOTIF_SVC_FORM -- "Service selected" --> NOTIF_STEP_SETUP
 
-            NOTIF_STEP_SETUP["async_step_setup\nGenerate OTP from _secret/_count\nSend OTP via async_notify()\nShow form: {code: str}\nnotify.py:349"]
+            NOTIF_STEP_SETUP["async_step_setup\nGenerate OTP from _secret/_count\nSend OTP via async_notify()\nShow form: {code: str}\nnotify.py:315"]
             NOTIF_STEP_SETUP -- "ServiceNotFound\nnotify.py:347" --> NOTIF_SVC_ABORT(["async_abort(reason=notify_service_not_exist)"])
             NOTIF_STEP_SETUP -- "Wrong code, send new OTP\nerrors.base=invalid_code\nnotify.py:349" --> NOTIF_STEP_SETUP
             NOTIF_STEP_SETUP -- "Correct code" --> NOTIF_DONE
@@ -408,7 +408,7 @@ flowchart TD
         MFAS_MOD_DISPATCH -- "totp" --> TOTP_INIT
         MFAS_MOD_DISPATCH -- "notify" --> NOTIF_INIT
 
-        MFAS_DISABLE["WS: auth/depose_mfa\nmfa_setup_flow.py:123\nhass.auth.async_disable_user_mfa(user, module_id)"]
+        MFAS_DISABLE["WS: auth/depose_mfa\nmfa_setup_flow.py:125\nhass.auth.async_disable_user_mfa(user, module_id)"]
     end
 
     P_PROFILE -.->|"MFA settings section" | MFAS_ENTRYPOINT
@@ -455,7 +455,7 @@ flowchart TD
     %% =========================================================
     %% _my_redirect PANEL
     %% =========================================================
-    P_MY_REDIRECT["/_my_redirect\ncomponent=my\ncomponents/my/__init__.py:16\nRoutes deep-links from my.home-assistant.io\nMap of logical targets to /config/* pages"]
+    P_MY_REDIRECT["/_my_redirect\ncomponent=my\ncomponents/my/__init__.py:15\nRoutes deep-links from my.home-assistant.io\nMap of logical targets to /config/* pages"]
     SIDEBAR_ENTRY -.-> P_MY_REDIRECT
 ```
 
