@@ -6,6 +6,7 @@
   </div>
 </div>
 <div class="mi-controls">
+  <input type="hidden" name="entity_id" value="{{ entity.entity_id }}">
   <div class="mi-row">
     <span class="mi-label">Power</span>
     <button class="mi-toggle{% if entity.value == 'on' %} mi-toggle--on{% endif %}"
@@ -16,4 +17,24 @@
       <span class="mi-toggle-thumb"></span>
     </button>
   </div>
+  <div class="mi-row mi-row--slider">
+    <span class="mi-label">Speed</span>
+    <input class="mi-slider" type="range" name="percentage" min="0" max="100"
+           value="{{ entity.fan_percentage | default(50) }}"
+           hx-post="/ui/services/fan/set_percentage"
+           hx-include="closest .mi-controls"
+           hx-swap="none"
+           hx-trigger="change"
+           hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')">
+    <span class="mi-slider-val">{{ entity.fan_percentage | default(50) }}%</span>
+  </div>
 </div>
+<script>
+(function(){
+  document.querySelectorAll('.mi-row--slider .mi-slider').forEach(function(slider){
+    slider.addEventListener('input', function(){
+      this.closest('.mi-row--slider').querySelector('.mi-slider-val').textContent = this.value + '%';
+    });
+  });
+})();
+</script>

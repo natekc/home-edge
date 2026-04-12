@@ -6,9 +6,25 @@
   </div>
 </div>
 <div class="mi-controls">
+  {% if entity.options | length > 0 %}
+  <div class="mi-row">
+    <span class="mi-label">Option</span>
+    <select class="mi-select"
+            hx-post="/ui/services/select/select_option"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-trigger="change"
+            hx-on::after-request="document.getElementById('more-info-dialog').close(); htmx.trigger(document.getElementById('area-cards'),'refresh')"
+            name="option">
+      {% for opt in entity.options %}
+      <option value="{{ opt }}"{% if opt == entity.value %} selected{% endif %}>{{ opt }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% else %}
   <div class="mi-row">
     <span class="mi-label">Current option</span>
     <span class="mi-value">{{ entity.value }}</span>
   </div>
-  <p class="mi-hint">Option selection requires a WebSocket connection — coming soon.</p>
+  {% endif %}
 </div>
