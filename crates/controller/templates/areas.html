@@ -1,0 +1,43 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Areas, labels &amp; zones</h1>
+  <p>Manage the areas of your home.</p>
+</div>
+<div class="page-body">
+
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header"><h2>Areas</h2></div>
+    {% if areas | length == 0 %}
+    <div class="ha-card-body text-muted">No areas configured yet.</div>
+    {% else %}
+    <div class="ha-card-body" style="padding:0">
+      {% for area in areas %}
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)">
+        <svg width="20" height="20" style="color:var(--ha-blue,#009ac7);fill:currentColor;flex-shrink:0">
+          <use href="#icon-home"/>
+        </svg>
+        <a href="/areas/{{ area.area_id }}" style="flex:1;font-size:.95rem;text-decoration:none;color:inherit">{{ area.name }}</a>
+        <form method="post" action="/areas/{{ area.area_id }}/delete" style="margin:0">
+          <button type="submit" class="btn btn-secondary" style="font-size:.75rem;padding:4px 10px"
+                  data-area-name="{{ area.name }}"
+                  onclick="return confirm('Delete area \u201c' + this.dataset.areaName + '\u201d?')">Delete</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="ha-card">
+    <div class="ha-card-header"><h2>Add area</h2></div>
+    <div class="ha-card-body">
+      <form method="post" action="/areas" style="display:flex;gap:12px;align-items:center">
+        <input type="text" name="name" class="form-control" placeholder="e.g. Bedroom" required maxlength="64" style="flex:1">
+        <button type="submit" class="btn btn-primary">Add</button>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

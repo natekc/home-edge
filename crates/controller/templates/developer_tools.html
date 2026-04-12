@@ -1,0 +1,86 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Developer tools</h1>
+  <p>Inspect entity states and call services manually.</p>
+</div>
+<div class="page-body">
+
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header"><h2>Current states</h2></div>
+    {% if entity_states | length == 0 %}
+    <div class="ha-card-body text-muted">No entities registered yet.</div>
+    {% else %}
+    <div class="ha-card-body" style="padding:0;overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border)">
+            <th style="text-align:left;padding:8px 16px">Entity ID</th>
+            <th style="text-align:left;padding:8px 16px">Display name</th>
+            <th style="text-align:left;padding:8px 16px">Type</th>
+            <th style="text-align:left;padding:8px 16px">State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entity_states %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px 16px;font-family:monospace;font-size:.78rem">{{ e.entity_id }}</td>
+            <td style="padding:8px 16px">{{ e.display_name }}</td>
+            <td style="padding:8px 16px;color:var(--text-secondary)">{{ e.entity_type }}</td>
+            <td style="padding:8px 16px;font-weight:500">{{ e.state }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="ha-card">
+    <div class="ha-card-header"><h2>Call service</h2></div>
+    <div class="ha-card-body">
+      <form id="service-form" onsubmit="callService(event)">
+        <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:12px;align-items:end">
+          <div>
+            <label style="font-size:.8rem;color:var(--text-secondary)">Domain</label>
+            <input type="text" id="svc-domain" class="form-control" placeholder="light" required>
+          </div>
+          <div>
+            <label style="font-size:.8rem;color:var(--text-secondary)">Service</label>
+            <input type="text" id="svc-service" class="form-control" placeholder="toggle" required>
+          </div>
+          <div>
+            <label style="font-size:.8rem;color:var(--text-secondary)">Entity ID</label>
+            <input type="text" id="svc-entity" class="form-control" placeholder="light.bedroom_lamp">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">Call service</button>
+      </form>
+      <div id="svc-result" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+</div>
+<script>
+function callService(ev) {
+  ev.preventDefault();
+  var domain  = document.getElementById('svc-domain').value.trim();
+  var service = document.getElementById('svc-service').value.trim();
+  var entity  = document.getElementById('svc-entity').value.trim();
+  var result  = document.getElementById('svc-result');
+  result.textContent = 'Calling\u2026';
+  var body = new URLSearchParams();
+  if (entity) body.append('entity_id', entity);
+  fetch('/ui/services/' + encodeURIComponent(domain) + '/' + encodeURIComponent(service), {
+    method: 'POST', body: body,
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'}
+  }).then(function(r) {
+    result.style.color = r.ok ? 'var(--color-green, #16a34a)' : 'var(--error)';
+    result.textContent = r.ok ? '\u2713 Service called (HTTP ' + r.status + ')' : '\u2717 Error: HTTP ' + r.status;
+  }).catch(function(e) {
+    result.style.color = 'var(--error)';
+    result.textContent = '\u2717 ' + e;
+  });
+}
+</script>
+{% endblock %}
