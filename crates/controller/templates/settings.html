@@ -2,84 +2,68 @@
 {% block content %}
 <div class="page-header">
   <h1>Settings</h1>
-  <p>System configuration and instance information.</p>
 </div>
 
 <div class="page-body">
+  <div class="ha-card">
+    <div class="settings-list">
 
-  <!-- ── Quick info strip ────────────────────────────────────────────── -->
-  <div class="ha-card" style="margin-bottom:20px">
-    <div class="ha-card-body" style="display:flex;flex-wrap:wrap;gap:24px;align-items:center">
-      <div>
-        <div style="font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary)">Version</div>
-        <div style="font-weight:600;font-size:.95rem"><code>{{ version }}</code></div>
-      </div>
-      <div>
-        <div style="font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary)">Transport</div>
-        <div><span class="transport-badge {{ 'ble' if transport == 'BLE' else '' }}" style="margin:0">{{ transport }}</span></div>
-      </div>
-      <div>
-        <div style="font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary)">Runtime Mode</div>
-        <div style="font-weight:500;font-size:.9rem">{{ runtime_mode }}</div>
-      </div>
+      <a href="/devices" class="settings-row">
+        <div class="settings-row-icon" style="background:#1565c0">
+          <svg><use href="#icon-devices"/></svg>
+        </div>
+        <div class="settings-row-text">
+          <div class="settings-row-title">Devices &amp; services</div>
+          <div class="settings-row-sub">Connected companion devices</div>
+        </div>
+        <div class="settings-row-chevron">›</div>
+      </a>
+
+      <a href="/areas" class="settings-row">
+        <div class="settings-row-icon" style="background:#e65100">
+          <svg><use href="#icon-home"/></svg>
+        </div>
+        <div class="settings-row-text">
+          <div class="settings-row-title">Areas, labels &amp; zones</div>
+          <div class="settings-row-sub">Manage locations in your home</div>
+        </div>
+        <div class="settings-row-chevron">›</div>
+      </a>
+
+      <button class="settings-row" onclick="openNativeSettings()" style="border:none;width:100%;text-align:left;font:inherit">
+        <div class="settings-row-icon" style="background:#6a1b9a">
+          <svg><use href="#icon-cellphone-cog"/></svg>
+        </div>
+        <div class="settings-row-text">
+          <div class="settings-row-title">Companion app</div>
+          <div class="settings-row-sub">Location and notifications</div>
+        </div>
+        <div class="settings-row-chevron">›</div>
+      </button>
+
+      <a href="/profile" class="settings-row">
+        <div class="settings-row-icon" style="background:#00695c">
+          <svg><use href="#icon-user"/></svg>
+        </div>
+        <div class="settings-row-text">
+          <div class="settings-row-title">People</div>
+          <div class="settings-row-sub">Manage who can access your home</div>
+        </div>
+        <div class="settings-row-chevron">›</div>
+      </a>
+
+      <a href="/system" class="settings-row">
+        <div class="settings-row-icon" style="background:#37474f">
+          <svg><use href="#icon-settings"/></svg>
+        </div>
+        <div class="settings-row-text">
+          <div class="settings-row-title">System</div>
+          <div class="settings-row-sub">Version, transport, and restart</div>
+        </div>
+        <div class="settings-row-chevron">›</div>
+      </a>
+
     </div>
   </div>
-
-  <!-- ── Tile grid ───────────────────────────────────────────────────── -->
-  <div class="settings-grid">
-
-    <a href="/profile" class="settings-tile">
-      <div class="settings-tile-icon">
-        <svg><use href="#icon-user"/></svg>
-      </div>
-      <div class="settings-tile-text">
-        <div class="settings-tile-title">Profile</div>
-        <div class="settings-tile-sub">Account &amp; instance info</div>
-      </div>
-      <div class="settings-tile-chevron">›</div>
-    </a>
-
-    <a href="/devices" class="settings-tile">
-      <div class="settings-tile-icon">
-        <svg><use href="#icon-devices"/></svg>
-      </div>
-      <div class="settings-tile-text">
-        <div class="settings-tile-title">Devices</div>
-        <div class="settings-tile-sub">Connected iOS devices</div>
-      </div>
-      <div class="settings-tile-chevron">›</div>
-    </a>
-
-    <a href="/ble" class="settings-tile {% if not is_ble_build %}settings-tile--disabled{% endif %}">
-      <div class="settings-tile-icon">
-        <svg><use href="#icon-bluetooth"/></svg>
-      </div>
-      <div class="settings-tile-text">
-        <div class="settings-tile-title">Bluetooth</div>
-        <div class="settings-tile-sub">BLE device discovery</div>
-      </div>
-      <div class="settings-tile-chevron">›</div>
-    </a>
-
-  </div>
-
-  <!-- ── Areas ───────────────────────────────────────────────────────── -->
-  {% if areas | length > 0 %}
-  <div class="ha-card" style="margin-top:20px">
-    <div class="ha-card-header"><h2>Areas</h2></div>
-    <div class="ha-card-body">
-      <p class="text-muted" style="margin:0 0 14px">
-        Defined in <code>config.toml</code> under <code>[areas]</code>.
-      </p>
-      {% for area in areas %}
-      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-        <svg width="16" height="16" style="color:var(--ha-blue);fill:currentColor;flex-shrink:0"><use href="#icon-home"/></svg>
-        <span style="font-size:.9rem">{{ area }}</span>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
-
 </div>
 {% endblock %}
