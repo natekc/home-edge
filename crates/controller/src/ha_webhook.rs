@@ -360,9 +360,13 @@ async fn register_sensor_command(
     }
 
     // Record numeric value to history for sparklines / history API.
-    if let Some(st) = state.states.get(&record.entity_id) {
-        if let Ok(v) = st.state.parse::<f64>() {
-            state.history.record(&record.entity_id, v).await;
+    // Source: homeassistant/components/sensor/__init__.py _numeric_state_expected()
+    // A sensor is numeric if state_class is set OR unit_of_measurement is set.
+    if is_numeric_sensor(&record) {
+        if let Some(st) = state.states.get(&record.entity_id) {
+            if let Ok(v) = st.state.parse::<f64>() {
+                state.history.record(&record.entity_id, v).await;
+            }
         }
     }
 
@@ -453,9 +457,13 @@ async fn update_sensor_states_command(
         }
 
         // Record numeric value to history for sparklines / history API.
-        if let Some(st) = state.states.get(&record.entity_id) {
-            if let Ok(v) = st.state.parse::<f64>() {
-                state.history.record(&record.entity_id, v).await;
+        // Source: homeassistant/components/sensor/__init__.py _numeric_state_expected()
+        // A sensor is numeric if state_class is set OR unit_of_measurement is set.
+        if is_numeric_sensor(&record) {
+            if let Some(st) = state.states.get(&record.entity_id) {
+                if let Ok(v) = st.state.parse::<f64>() {
+                    state.history.record(&record.entity_id, v).await;
+                }
             }
         }
 
@@ -467,6 +475,15 @@ async fn update_sensor_states_command(
     }
 
     (StatusCode::OK, Json(Value::Object(response))).into_response()
+}
+
+/// Returns true if the sensor should have numeric history tracked.
+///
+/// Source: homeassistant/components/sensor/__init__.py _numeric_state_expected()
+///   A sensor is numeric when state_class OR unit_of_measurement (native) is set.
+///   Binary sensors and category sensors without these attributes are not numeric.
+fn is_numeric_sensor(record: &MobileEntityRecord) -> bool {
+    record.state_class.is_some() || record.unit_of_measurement.is_some()
 }
 
 fn parse_sensor_command(value: &Value, require_name: bool) -> Option<SensorCommand> {
@@ -776,7 +793,330 @@ mod tests {
         let pattern = json["topic_pattern"].as_str().unwrap();
         assert!(
             pattern.starts_with(prefix),
-            "topic_pattern must start with discovery_prefix"
+            "topic_pattern must start with discord_prefix"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // History recording — grounded in homeassistant/components/sensor/__init__.py
+    // _numeric_state_expected(): numeric when state_class OR unit_of_measurement is set.
+    // -----------------------------------------------------------------------
+
+    /// Build a full-router TestServer and return it together with the shared AppState.
+    fn make_full_server() -> (axum_test::TestServer, std::sync::Arc<crate::app::AppState>) {
+        use std::net::{IpAddr, Ipv4Addr};
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        use crate::app::AppState;
+        use crate::config::{AppConfig, HistoryConfig, ServerConfig, StorageConfig, UiConfig};
+        use crate::http;
+        use crate::storage::Storage;
+
+        let config = AppConfig {
+            server: ServerConfig {
+                host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: 0,
+                log_level: tracing::Level::INFO,
+            },
+            storage: StorageConfig {
+                data_dir: PathBuf::from("/tmp/ha-webhook-history-test"),
+            },
+            ui: UiConfig { product_name: "Test".into() },
+            areas: crate::config::AreasConfig::default(),
+            // Small capacity to keep tests fast
+            history: HistoryConfig { capacity: 50 },
+        };
+        let storage = Storage::new_in_memory();
+        let state = Arc::new(AppState::new(config, storage));
+        let app = http::router(Arc::clone(&state));
+        let server = axum_test::TestServer::new(app).unwrap();
+        (server, state)
+    }
+
+    /// Helper: register a device and return its webhook_id.
+    async fn register_device(server: &axum_test::TestServer) -> String {
+        let resp = server
+            .post("/api/mobile_app/registrations")
+            .json(&serde_json::json!({
+                "app_id": "io.homeassistant.companion.test",
+                "app_name": "HA Test",
+                "app_version": "1.0",
+                "device_id": "test-device-001",
+                "device_name": "Test Phone",
+                "manufacturer": "Test",
+                "model": "Model X",
+                "os_name": "TestOS",
+                "os_version": "1.0",
+                "supports_encryption": false
+            }))
+            .await;
+        resp.assert_status(StatusCode::CREATED);
+        resp.json::<Value>()["webhook_id"]
+            .as_str()
+            .expect("webhook_id in registration response")
+            .to_string()
+    }
+
+    /// Sensor with state_class=measurement and a numeric state IS recorded.
+    ///
+    /// Source: homeassistant/components/sensor/__init__.py _numeric_state_expected()
+    ///   state_class is not None → numeric
+    #[tokio::test]
+    async fn numeric_sensor_with_state_class_is_recorded_in_history() {
+        let (server, state) = make_full_server();
+        let webhook_id = register_device(&server).await;
+
+        // Register sensor with state_class=measurement
+        server
+            .post(&format!("/api/webhook/{webhook_id}"))
+            .json(&serde_json::json!({
+                "type": "register_sensor",
+                "data": {
+                    "type": "sensor",
+                    "unique_id": "battery_level",
+                    "name": "Battery",
+                    "state": "85",
+                    "state_class": "measurement",
+                    "unit_of_measurement": "%"
+                }
+            }))
+            .await
+            .assert_status(StatusCode::CREATED);
+
+        // Update the state to confirm recording
+        server
+            .post(&format!("/api/webhook/{webhook_id}"))
+            .json(&serde_json::json!({
+                "type": "update_sensor_states",
+                "data": [{
+                    "type": "sensor",
+                    "unique_id": "battery_level",
+                    "state": "90"
+                }]
+            }))
+            .await
+            .assert_status_ok();
+
+        // History should contain both the initial and updated reading.
+        // Look up the actual entity_id (includes the random webhook_id, not the device name).
+        let entities = state
+            .mobile_entities
+            .list_by_webhook_id(&webhook_id)
+            .await
+            .unwrap();
+        let entity = entities
+            .iter()
+            .find(|e| e.sensor_unique_id == "battery_level")
+            .expect("registered sensor should appear in entity store");
+        let entity_id = &entity.entity_id;
+        let entries = state.history.last_n(entity_id, 10).await;
+        assert!(
+            !entries.is_empty(),
+            "numeric sensor with state_class must be recorded in history"
+        );
+        // The most recent reading should be 90
+        let last_val = entries.last().unwrap().value;
+        assert!(
+            (last_val - 90.0).abs() < f64::EPSILON,
+            "last recorded value should be 90, got {last_val}"
+        );
+    }
+
+    /// Sensor with unit_of_measurement but no state_class IS recorded.
+    ///
+    /// Source: homeassistant/components/sensor/__init__.py _numeric_state_expected()
+    ///   native_unit_of_measurement is not None → numeric
+    #[tokio::test]
+    async fn numeric_sensor_with_unit_only_is_recorded_in_history() {
+        let (server, state) = make_full_server();
+        let webhook_id = register_device(&server).await;
+
+        server
+            .post(&format!("/api/webhook/{webhook_id}"))
+            .json(&serde_json::json!({
+                "type": "register_sensor",
+                "data": {
+                    "type": "sensor",
+                    "unique_id": "temperature",
+                    "name": "Temperature",
+                    "state": "21.5",
+                    "unit_of_measurement": "°C"
+                }
+            }))
+            .await
+            .assert_status(StatusCode::CREATED);
+
+        let entities = state
+            .mobile_entities
+            .list_by_webhook_id(&webhook_id)
+            .await
+            .unwrap();
+        let entity = entities
+            .iter()
+            .find(|e| e.sensor_unique_id == "temperature")
+            .expect("registered sensor should appear in entity store");
+        let entity_id = &entity.entity_id;
+        let entries = state.history.last_n(entity_id, 10).await;
+        assert!(
+            !entries.is_empty(),
+            "sensor with unit_of_measurement must be recorded even without state_class"
+        );
+    }
+
+    /// Sensor with no state_class and no unit_of_measurement is NOT recorded.
+    ///
+    /// Source: homeassistant/components/sensor/__init__.py _numeric_state_expected()
+    ///   Neither state_class nor unit_of_measurement → not numeric (e.g. category/text sensor)
+    #[tokio::test]
+    async fn non_numeric_sensor_without_state_class_is_not_recorded() {
+        let (server, state) = make_full_server();
+        let webhook_id = register_device(&server).await;
+
+        server
+            .post(&format!("/api/webhook/{webhook_id}"))
+            .json(&serde_json::json!({
+                "type": "register_sensor",
+                "data": {
+                    "type": "sensor",
+                    "unique_id": "activity",
+                    "name": "Activity",
+                    "state": "walking"
+                    // No state_class, no unit_of_measurement → category/text sensor
+                }
+            }))
+            .await
+            .assert_status(StatusCode::CREATED);
+
+        // Look up the actual entity_id to ensure we're checking the right slot.
+        let entities = state
+            .mobile_entities
+            .list_by_webhook_id(&webhook_id)
+            .await
+            .unwrap();
+        let entity = entities
+            .iter()
+            .find(|e| e.sensor_unique_id == "activity")
+            .expect("registered sensor should appear in entity store");
+        let entity_id = &entity.entity_id;
+        let entries = state.history.last_n(entity_id, 10).await;
+        assert!(
+            entries.is_empty(),
+            "text sensor without state_class/unit must NOT be recorded; got {} entries",
+            entries.len()
+        );
+    }
+
+    /// binary_sensor is never recorded regardless of numeric-looking state.
+    ///
+    /// Source: binary_sensor states are "on"/"off" strings — not numeric.
+    ///   They have no state_class and no unit_of_measurement.
+    #[tokio::test]
+    async fn binary_sensor_is_not_recorded_in_history() {
+        let (server, state) = make_full_server();
+        let webhook_id = register_device(&server).await;
+
+        server
+            .post(&format!("/api/webhook/{webhook_id}"))
+            .json(&serde_json::json!({
+                "type": "register_sensor",
+                "data": {
+                    "type": "binary_sensor",
+                    "unique_id": "charging",
+                    "name": "Charging",
+                    "state": "on"
+                }
+            }))
+            .await
+            .assert_status(StatusCode::CREATED);
+
+        let entities = state
+            .mobile_entities
+            .list_by_webhook_id(&webhook_id)
+            .await
+            .unwrap();
+        let entity = entities
+            .iter()
+            .find(|e| e.sensor_unique_id == "charging")
+            .expect("registered binary_sensor should appear in entity store");
+        let entity_id = &entity.entity_id;
+        let entries = state.history.last_n(entity_id, 10).await;
+        assert!(
+            entries.is_empty(),
+            "binary_sensor must never be recorded in history"
+        );
+    }
+
+    /// GET /api/edge/history/{entity_id} returns readings for a numeric sensor.
+    ///
+    /// The /api/edge/history path is intentionally non-standard (diverges from
+    /// HA's /api/history/period format which uses compressed state {"s","a","lu"}).
+    #[tokio::test]
+    async fn edge_history_endpoint_returns_readings_for_numeric_sensor() {
+        let (server, state) = make_full_server();
+        let webhook_id = register_device(&server).await;
+
+        // Register and update a numeric sensor
+        server
+            .post(&format!("/api/webhook/{webhook_id}"))
+            .json(&serde_json::json!({
+                "type": "register_sensor",
+                "data": {
+                    "type": "sensor",
+                    "unique_id": "steps",
+                    "name": "Steps",
+                    "state": "1000",
+                    "state_class": "total_increasing",
+                    "unit_of_measurement": "steps"
+                }
+            }))
+            .await
+            .assert_status(StatusCode::CREATED);
+
+        server
+            .post(&format!("/api/webhook/{webhook_id}"))
+            .json(&serde_json::json!({
+                "type": "update_sensor_states",
+                "data": [{"type": "sensor", "unique_id": "steps", "state": "1500"}]
+            }))
+            .await
+            .assert_status_ok();
+
+        // Look up actual entity_id (includes random webhook_id in path).
+        let entities = state
+            .mobile_entities
+            .list_by_webhook_id(&webhook_id)
+            .await
+            .unwrap();
+        let entity = entities
+            .iter()
+            .find(|e| e.sensor_unique_id == "steps")
+            .expect("registered sensor should appear in entity store");
+        let entity_id = &entity.entity_id;
+        let resp = server
+            .get(&format!("/api/edge/history/{entity_id}"))
+            .await;
+        resp.assert_status_ok();
+        let entries: Value = resp.json();
+        assert!(entries.is_array(), "response must be a JSON array");
+        assert!(
+            !entries.as_array().unwrap().is_empty(),
+            "history array must be non-empty for numeric sensor"
+        );
+        // Each entry has ts (u64) and value (f64)
+        let first = &entries[0];
+        assert!(first.get("ts").is_some(), "entry must have 'ts' field");
+        assert!(first.get("value").is_some(), "entry must have 'value' field");
+    }
+
+    /// Old /api/history path no longer exists (returns 404).
+    ///
+    /// Renamed to /api/edge/history to avoid confusion with HA's history API format.
+    #[tokio::test]
+    async fn old_api_history_path_returns_404() {
+        let (server, _state) = make_full_server();
+        let resp = server.get("/api/history/sensor.test").await;
+        resp.assert_status(StatusCode::NOT_FOUND);
+    }
 }
+

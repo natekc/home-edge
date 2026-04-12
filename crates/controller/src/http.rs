@@ -147,7 +147,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/ble/scan",                                  post(api_ble_scan))
         .route("/api/ble/pair",                                  post(api_ble_pair))
         // History JSON
-        .route("/api/history/{entity_id}",                       get(api_history))
+        // Edge-internal history API. Not a replica of HA's /api/history/period endpoint
+        // (which uses compressed-state wire format: {"s", "a", "lu"}).
+        .route("/api/edge/history/{entity_id}",                  get(api_history))
         // Health + onboarding REST API
         .route("/api/health",                                    get(health))
         .route("/api/onboarding",                                get(onboarding_status))
