@@ -119,6 +119,9 @@ impl ServiceTarget {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ServiceData {
     pub brightness: Option<i64>,
+    pub color_temp_kelvin: Option<i64>,
+    pub option: Option<String>,
+    pub position: Option<u8>,
     pub temperature: Option<f64>,
     pub hvac_mode: Option<String>,
 }
@@ -134,6 +137,21 @@ impl ServiceData {
                 ));
             }
         };
+        let color_temp_kelvin = match data.get("color_temp_kelvin") {
+            Some(Value::Number(n)) => n.as_i64(),
+            Some(Value::Null) | None => None,
+            Some(_) => return Err(ServiceError::InvalidFormat("color_temp_kelvin must be a number".into())),
+        };
+        let option = match data.get("option") {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Null) | None => None,
+            Some(_) => return Err(ServiceError::InvalidFormat("option must be a string".into())),
+        };
+        let position = match data.get("position") {
+            Some(Value::Number(n)) => n.as_u64().map(|v| v.min(100) as u8),
+            Some(Value::Null) | None => None,
+            Some(_) => return Err(ServiceError::InvalidFormat("position must be a number".into())),
+        };
         let temperature = match data.get("temperature") {
             Some(Value::Number(n)) => n.as_f64(),
             Some(Value::Null) | None => None,
@@ -144,7 +162,7 @@ impl ServiceData {
             Some(Value::Null) | None => None,
             Some(_) => return Err(ServiceError::InvalidFormat("hvac_mode must be a string".into())),
         };
-        Ok(Self { brightness, temperature, hvac_mode })
+        Ok(Self { brightness, color_temp_kelvin, option, position, temperature, hvac_mode })
     }
 }
 
@@ -326,6 +344,44 @@ fn set_entities_state(
         if let Some(brightness) = request.data.brightness {
             attributes.insert("brightness".into(), json!(brightness));
         }
+        if let Some(color_temp_kelvin) = request.data.color_temp_kelvin {
+            attributes.insert("color_temp_kelvin".into(), json!(color_temp_kelvin));
+        }
+        let new_state = make_state_with_context(
+            entity_id.clone(),
+            state_value.to_string(),
+            StateAttributes::from_hash(attributes),
+            request.context.clone(),
+        );
+        states.set(new_state.clone())?;
+        changed_states.push(new_state);
+    }
+    Ok(ServiceOutcome {
+        context: request.context,
+        changed_states,
+        response: None,
+    })
+}
+
+fn set_cover_state(
+    request: ServiceRequest,
+    states: &StateStore,
+    state_value: &str,
+    position: Option<u8>,
+) -> Result<ServiceOutcome, ServiceError> {
+    if request.target.entity_ids.is_empty() {
+        return Err(ServiceError::InvalidFormat("target must include entity_id".into()));
+    }
+    let entity_ids = request.target.entity_ids.clone();
+    let mut changed_states = Vec::new();
+    for entity_id in &entity_ids {
+        let mut attributes = states
+            .get(entity_id)
+            .map(|s| s.attributes)
+            .unwrap_or_default();
+        if let Some(pos) = position {
+            attributes.insert("current_position".into(), json!(pos));
+        }
         let new_state = make_state_with_context(
             entity_id.clone(),
             state_value.to_string(),
@@ -445,25 +501,89 @@ impl BuiltinServiceDefinition {
                 )]),
                 supports_response: SupportsResponse::None,
             },
+            BuiltinServiceKind::LightToggle => ServiceDescription {
+                service: self.service.into(),
+                name: "Toggle".into(),
+                description: "Toggle light entities.".into(),
+                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "light"}})) })]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::SwitchToggle => ServiceDescription {
+                service: self.service.into(),
+                name: "Toggle".into(),
+                description: "Toggle switch entities.".into(),
+                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "switch"}})) })]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::FanTurnOn => ServiceDescription {
+                service: self.service.into(),
+                name: "Turn on".into(),
+                description: "Turn on fan entities.".into(),
+                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "fan"}})) })]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::FanTurnOff => ServiceDescription {
+                service: self.service.into(),
+                name: "Turn off".into(),
+                description: "Turn off fan entities.".into(),
+                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "fan"}})) })]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::FanToggle => ServiceDescription {
+                service: self.service.into(),
+                name: "Toggle".into(),
+                description: "Toggle fan entities.".into(),
+                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "fan"}})) })]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::SelectSelectOption => ServiceDescription {
+                service: self.service.into(),
+                name: "Select option".into(),
+                description: "Select an option for select entities.".into(),
+                fields: BTreeMap::from([
+                    ("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "select"}})) }),
+                    ("option".into(), ServiceField { required: true, selector: Some(json!({"text": {}})) }),
+                ]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::CoverSetPosition => ServiceDescription {
+                service: self.service.into(),
+                name: "Set position".into(),
+                description: "Set cover position (0\u{2013}100).".into(),
+                fields: BTreeMap::from([
+                    ("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "cover"}})) }),
+                    ("position".into(), ServiceField { required: true, selector: Some(json!({"number": {"min": 0, "max": 100}})) }),
+                ]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::CoverOpenCover => ServiceDescription {
+                service: self.service.into(),
+                name: "Open".into(),
+                description: "Open cover entities.".into(),
+                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "cover"}})) })]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::CoverCloseCover => ServiceDescription {
+                service: self.service.into(),
+                name: "Close".into(),
+                description: "Close cover entities.".into(),
+                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "cover"}})) })]),
+                supports_response: SupportsResponse::None,
+            },
+            BuiltinServiceKind::CoverStopCover => ServiceDescription {
+                service: self.service.into(),
+                name: "Stop".into(),
+                description: "Stop cover entities.".into(),
+                fields: BTreeMap::from([("entity_id".into(), ServiceField { required: false, selector: Some(json!({"entity": {"domain": "cover"}})) })]),
+                supports_response: SupportsResponse::None,
+            },
             BuiltinServiceKind::ClimateSetHvacMode => ServiceDescription {
                 service: self.service.into(),
                 name: "Set HVAC mode".into(),
                 description: "Set the HVAC mode for climate entities.".into(),
                 fields: BTreeMap::from([
-                    (
-                        "entity_id".into(),
-                        ServiceField {
-                            required: true,
-                            selector: Some(json!({"entity": {"domain": "climate"}})),
-                        },
-                    ),
-                    (
-                        "hvac_mode".into(),
-                        ServiceField {
-                            required: true,
-                            selector: Some(json!({"select": {"options": ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"]}})),
-                        },
-                    ),
+                    ("entity_id".into(), ServiceField { required: true, selector: Some(json!({"entity": {"domain": "climate"}})) }),
+                    ("hvac_mode".into(), ServiceField { required: true, selector: Some(json!({"select": {"options": ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"]}})) }),
                 ]),
                 supports_response: SupportsResponse::None,
             },
@@ -472,20 +592,8 @@ impl BuiltinServiceDefinition {
                 name: "Set temperature".into(),
                 description: "Set the target temperature for climate entities.".into(),
                 fields: BTreeMap::from([
-                    (
-                        "entity_id".into(),
-                        ServiceField {
-                            required: true,
-                            selector: Some(json!({"entity": {"domain": "climate"}})),
-                        },
-                    ),
-                    (
-                        "temperature".into(),
-                        ServiceField {
-                            required: true,
-                            selector: Some(json!({"number": {"min": -40, "max": 100, "step": 0.5}})),
-                        },
-                    ),
+                    ("entity_id".into(), ServiceField { required: true, selector: Some(json!({"entity": {"domain": "climate"}})) }),
+                    ("temperature".into(), ServiceField { required: true, selector: Some(json!({"number": {"min": -40, "max": 100, "step": 0.5}})) }),
                 ]),
                 supports_response: SupportsResponse::None,
             },
@@ -502,11 +610,30 @@ impl BuiltinServiceDefinition {
         states: &StateStore,
     ) -> Result<ServiceOutcome, ServiceError> {
         match self.kind {
-            BuiltinServiceKind::LightTurnOn | BuiltinServiceKind::SwitchTurnOn => {
-                set_entities_state(request, states, "on")
+            BuiltinServiceKind::LightTurnOn
+            | BuiltinServiceKind::SwitchTurnOn
+            | BuiltinServiceKind::FanTurnOn => set_entities_state(request, states, "on"),
+            BuiltinServiceKind::LightTurnOff
+            | BuiltinServiceKind::SwitchTurnOff
+            | BuiltinServiceKind::FanTurnOff => set_entities_state(request, states, "off"),
+            BuiltinServiceKind::LightToggle
+            | BuiltinServiceKind::SwitchToggle
+            | BuiltinServiceKind::FanToggle => {
+                let entity_id = request
+                    .target
+                    .primary_entity_id()
+                    .ok_or_else(|| ServiceError::InvalidFormat("entity_id required".into()))?;
+                let current = states.get(entity_id).map(|s| s.state.clone()).unwrap_or_default();
+                let next = if current == "on" { "off" } else { "on" };
+                set_entities_state(request, states, next)
             }
-            BuiltinServiceKind::LightTurnOff | BuiltinServiceKind::SwitchTurnOff => {
-                set_entities_state(request, states, "off")
+            BuiltinServiceKind::SelectSelectOption => {
+                let opt = request
+                    .data
+                    .option
+                    .clone()
+                    .ok_or_else(|| ServiceError::InvalidFormat("option field required".into()))?;
+                set_entities_state(request, states, &opt)
             }
             BuiltinServiceKind::ClimateSetHvacMode => {
                 let mode = request.data.hvac_mode.clone()
@@ -541,6 +668,25 @@ impl BuiltinServiceDefinition {
                 }
                 Ok(ServiceOutcome { context: request.context, changed_states, response: None })
             }
+            BuiltinServiceKind::CoverSetPosition => {
+                let pos = request
+                    .data
+                    .position
+                    .ok_or_else(|| ServiceError::InvalidFormat("position field required".into()))?;
+                let state_value = if pos == 0 { "closed" } else { "open" };
+                set_cover_state(request, states, state_value, Some(pos))
+            }
+            BuiltinServiceKind::CoverOpenCover => {
+                set_cover_state(request, states, "open", Some(100))
+            }
+            BuiltinServiceKind::CoverCloseCover => {
+                set_cover_state(request, states, "closed", Some(0))
+            }
+            BuiltinServiceKind::CoverStopCover => Ok(ServiceOutcome {
+                context: request.context,
+                changed_states: vec![],
+                response: None,
+            }),
         }
     }
 }
@@ -549,8 +695,18 @@ impl BuiltinServiceDefinition {
 enum BuiltinServiceKind {
     LightTurnOn,
     LightTurnOff,
+    LightToggle,
     SwitchTurnOn,
     SwitchTurnOff,
+    SwitchToggle,
+    FanTurnOn,
+    FanTurnOff,
+    FanToggle,
+    SelectSelectOption,
+    CoverSetPosition,
+    CoverOpenCover,
+    CoverCloseCover,
+    CoverStopCover,
     ClimateSetHvacMode,
     ClimateSetTemperature,
 }
@@ -576,16 +732,18 @@ const BUILTIN_SERVICES: &[BuiltinServiceDefinition] = &[
         service: "turn_off",
         kind: BuiltinServiceKind::SwitchTurnOff,
     },
-    BuiltinServiceDefinition {
-        domain: "climate",
-        service: "set_hvac_mode",
-        kind: BuiltinServiceKind::ClimateSetHvacMode,
-    },
-    BuiltinServiceDefinition {
-        domain: "climate",
-        service: "set_temperature",
-        kind: BuiltinServiceKind::ClimateSetTemperature,
-    },
+    BuiltinServiceDefinition { domain: "light",   service: "toggle",             kind: BuiltinServiceKind::LightToggle },
+    BuiltinServiceDefinition { domain: "switch",  service: "toggle",             kind: BuiltinServiceKind::SwitchToggle },
+    BuiltinServiceDefinition { domain: "fan",     service: "turn_on",            kind: BuiltinServiceKind::FanTurnOn },
+    BuiltinServiceDefinition { domain: "fan",     service: "turn_off",           kind: BuiltinServiceKind::FanTurnOff },
+    BuiltinServiceDefinition { domain: "fan",     service: "toggle",             kind: BuiltinServiceKind::FanToggle },
+    BuiltinServiceDefinition { domain: "select",  service: "select_option",      kind: BuiltinServiceKind::SelectSelectOption },
+    BuiltinServiceDefinition { domain: "cover",   service: "set_cover_position", kind: BuiltinServiceKind::CoverSetPosition },
+    BuiltinServiceDefinition { domain: "cover",   service: "open_cover",         kind: BuiltinServiceKind::CoverOpenCover },
+    BuiltinServiceDefinition { domain: "cover",   service: "close_cover",        kind: BuiltinServiceKind::CoverCloseCover },
+    BuiltinServiceDefinition { domain: "cover",   service: "stop_cover",         kind: BuiltinServiceKind::CoverStopCover },
+    BuiltinServiceDefinition { domain: "climate", service: "set_hvac_mode",      kind: BuiltinServiceKind::ClimateSetHvacMode },
+    BuiltinServiceDefinition { domain: "climate", service: "set_temperature",    kind: BuiltinServiceKind::ClimateSetTemperature },
 ];
 
 fn find_builtin_service(domain: &str, service: &str) -> Option<BuiltinServiceDefinition> {

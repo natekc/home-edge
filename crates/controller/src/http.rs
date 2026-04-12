@@ -438,9 +438,17 @@ async fn fragment_more_info(
     render_template(&state, template_name, ctx)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct UiServiceForm {
     entity_id: String,
+    #[serde(default)]
+    brightness: Option<String>,
+    #[serde(default)]
+    color_temp_kelvin: Option<String>,
+    #[serde(default)]
+    option: Option<String>,
+    #[serde(default)]
+    position: Option<String>,
     #[serde(default)]
     hvac_mode: Option<String>,
     #[serde(default)]
@@ -454,13 +462,23 @@ async fn ui_service_call(
 ) -> Response {
     let mut data: Map<String, serde_json::Value> = Map::new();
     data.insert("entity_id".to_string(), serde_json::Value::String(form.entity_id));
+    if let Some(b) = form.brightness.as_deref().filter(|s| !s.is_empty()) {
+        if let Ok(n) = b.parse::<i64>() { data.insert("brightness".into(), json!(n)); }
+    }
+    if let Some(c) = form.color_temp_kelvin.as_deref().filter(|s| !s.is_empty()) {
+        if let Ok(n) = c.parse::<i64>() { data.insert("color_temp_kelvin".into(), json!(n)); }
+    }
+    if let Some(o) = form.option.as_deref().filter(|s| !s.is_empty()) {
+        data.insert("option".into(), json!(o));
+    }
+    if let Some(p) = form.position.as_deref().filter(|s| !s.is_empty()) {
+        if let Ok(n) = p.parse::<u8>() { data.insert("position".into(), json!(n)); }
+    }
     if let Some(m) = form.hvac_mode.as_deref().filter(|s| !s.is_empty()) {
         data.insert("hvac_mode".into(), serde_json::json!(m));
     }
     if let Some(t) = form.temperature.as_deref().filter(|s| !s.is_empty()) {
-        if let Ok(f) = t.parse::<f64>() {
-            data.insert("temperature".into(), serde_json::json!(f));
-        }
+        if let Ok(f) = t.parse::<f64>() { data.insert("temperature".into(), serde_json::json!(f)); }
     }
     let target = match ServiceTarget::from_parts(None, Some(&data)) {
         Ok(t) => t,
@@ -825,6 +843,14 @@ struct EntityView {
     current_temperature: Option<f64>,
     target_temperature: Option<f64>,
     hvac_modes: Vec<String>,
+    /// Light brightness 0–255, None if unavailable.
+    brightness: Option<u8>,
+    /// Light color temperature in kelvin, None if unavailable.
+    color_temp_kelvin: Option<u16>,
+    /// Select entity available options.
+    options: Vec<String>,
+    /// Cover current position 0–100, None if unavailable
+    current_position: Option<u8>,
 }
 
 /// Area-grouped card view passed to dashboard templates.
@@ -852,6 +878,23 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
+    let brightness = attrs
+        .get("brightness")
+        .and_then(|v| v.as_u64())
+        .map(|v| v.min(255) as u8);
+    let color_temp_kelvin = attrs
+        .get("color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16);
+    let options: Vec<String> = attrs
+        .get("options")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let current_position = attrs
+        .get("current_position")
+        .and_then(|v| v.as_u64())
+        .map(|v| v.min(100) as u8);
     EntityView {
         entity_id: entity.entity_id.clone(),
         webhook_id: entity.webhook_id.clone(),
@@ -868,6 +911,10 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         current_temperature,
         target_temperature,
         hvac_modes,
+        brightness,
+        color_temp_kelvin,
+        options,
+        current_position,
     }
 }
 
