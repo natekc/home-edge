@@ -754,6 +754,27 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 .mi-state--open     { color: var(--success); }
 .mi-state--closed   { color: var(--secondary-text); }
 
+/* --- Logbook page ------------------------------------------------------- */
+.logbook-row {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.logbook-row:last-child { border-bottom: none; }
+.logbook-row-time {
+  flex: 0 0 140px; font-size: .8rem; color: var(--secondary-text);
+  padding-top: 2px; white-space: nowrap;
+}
+.logbook-row-body { flex: 1; min-width: 0; }
+.logbook-name { font-weight: 500; display: block; }
+.logbook-entity-id {
+  font-size: .78rem; color: var(--secondary-text); display: block;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.logbook-row-state {
+  flex: 0 0 auto; display: flex; align-items: center;
+  font-size: .85rem; white-space: nowrap;
+}
+
 /* --- More-info controls ------------------------------------------------ */
 .mi-controls { display: flex; flex-direction: column; gap: 14px; }
 .mi-row {

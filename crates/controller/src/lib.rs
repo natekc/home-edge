@@ -8,6 +8,7 @@ pub mod app;
 pub mod config;
 pub mod core;
 pub mod history_store;
+pub mod logbook_store;
 pub mod logging;
 pub mod service;
 pub mod state_store;

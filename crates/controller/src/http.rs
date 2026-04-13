@@ -349,7 +349,10 @@ async fn history_page(State(state): State<Arc<AppState>>) -> Response {
 async fn logbook_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let ctx = app_ctx!(state, "logbook", location_name.as_str(), &areas,);
+    let entries = state.logbook.recent_n(200).await;
+    let ctx = app_ctx!(state, "logbook", location_name.as_str(), &areas,
+        entries => Value::from_serialize(&entries),
+    );
     render_template(&state, "logbook.html", ctx)
 }
 
