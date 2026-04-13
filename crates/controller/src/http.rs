@@ -383,7 +383,10 @@ async fn developer_tools_page(State(state): State<Arc<AppState>>) -> Response {
 async fn notifications_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let ctx = app_ctx!(state, "notifications", location_name.as_str(), &areas,);
+    let notifications = state.notifications.all().await;
+    let ctx = app_ctx!(state, "notifications", location_name.as_str(), &areas,
+        notifications => Value::from_serialize(&notifications),
+    );
     render_template(&state, "notifications.html", ctx)
 }
 
@@ -672,6 +675,12 @@ struct UiServiceForm {
     /// Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
     #[serde(default)]
     percentage: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    notification_id: Option<String>,
 }
 
 async fn ui_service_call(
@@ -679,6 +688,36 @@ async fn ui_service_call(
     Path((domain, service)): Path<(String, String)>,
     axum::extract::Form(form): axum::extract::Form<UiServiceForm>,
 ) -> Response {
+    // Handle persistent_notification domain directly (needs NotificationStore)
+    if domain.as_str() == "persistent_notification" {
+        match service.as_str() {
+            "create" => {
+                let message = form.message.clone().unwrap_or_default();
+                if message.is_empty() {
+                    return (StatusCode::BAD_REQUEST, "message required").into_response();
+                }
+                state
+                    .notifications
+                    .create(message, form.title.clone(), form.notification_id.clone())
+                    .await;
+                return StatusCode::NO_CONTENT.into_response();
+            }
+            "dismiss" => {
+                let id = form
+                    .notification_id
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| Some(form.entity_id.as_str()).filter(|s| !s.is_empty()))
+                    .unwrap_or("");
+                if id.is_empty() {
+                    return (StatusCode::BAD_REQUEST, "notification_id required").into_response();
+                }
+                state.notifications.dismiss(id).await;
+                return StatusCode::NO_CONTENT.into_response();
+            }
+            _ => return StatusCode::NOT_FOUND.into_response(),
+        }
+    }
     let mut data: Map<String, serde_json::Value> = Map::new();
     data.insert("entity_id".to_string(), serde_json::Value::String(form.entity_id));
     if let Some(b) = form.brightness.as_deref().filter(|s| !s.is_empty()) {
