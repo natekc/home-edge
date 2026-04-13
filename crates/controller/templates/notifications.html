@@ -25,7 +25,8 @@
         <div style="font-size:.75rem;color:var(--text-secondary);margin-top:6px"
              data-ts="{{ n.created_at }}">{{ n.created_at }}</div>
       </div>
-      <button onclick="dismissNotification('{{ n.notification_id }}')"
+      <button data-nid="{{ n.notification_id }}"
+              onclick="dismissNotification(this.dataset.nid)"
               class="btn btn-secondary"
               style="flex-shrink:0;font-size:.8rem">Dismiss</button>
     </div>
@@ -41,7 +42,10 @@ function dismissNotification(id) {
     method: 'POST',
     body: body,
     headers: {'Content-Type': 'application/x-www-form-urlencoded'}
-  }).then(function() { window.location.reload(); });
+  }).then(function(resp) {
+    if (resp.ok) { window.location.reload(); }
+    else { console.error('dismiss failed', resp.status); }
+  });
 }
 (function() {
   document.querySelectorAll('[data-ts]').forEach(function(el) {

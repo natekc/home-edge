@@ -59,3 +59,9 @@ impl NotificationStore {
         list
     }
 }
+
+impl Default for NotificationStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
