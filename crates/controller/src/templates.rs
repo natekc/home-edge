@@ -60,6 +60,29 @@ pub fn build_env() -> Environment<'static> {
         .expect("profile.html");
     env.add_template("devices.html", include_str!("../templates/devices.html"))
         .expect("devices.html");
+    env.add_template("history.html", include_str!("../templates/history.html"))
+        .expect("history.html");
+    env.add_template("logbook.html", include_str!("../templates/logbook.html"))
+        .expect("logbook.html");
+    env.add_template(
+        "developer_tools.html",
+        include_str!("../templates/developer_tools.html"),
+    )
+    .expect("developer_tools.html");
+    env.add_template(
+        "notifications.html",
+        include_str!("../templates/notifications.html"),
+    )
+    .expect("notifications.html");
+    env.add_template("system.html", include_str!("../templates/system.html"))
+        .expect("system.html");
+    env.add_template("areas.html", include_str!("../templates/areas.html"))
+        .expect("areas.html");
+    env.add_template(
+        "area_detail.html",
+        include_str!("../templates/area_detail.html"),
+    )
+    .expect("area_detail.html");
 
     // HTMX fragment partials
     env.add_template(

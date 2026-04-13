@@ -39,6 +39,8 @@ use crate::state_store::StateStore;
 use crate::storage::Storage;
 #[cfg(feature = "transport_wifi")]
 use crate::zeroconf;
+#[cfg(feature = "transport_wifi")]
+use tokio::sync::broadcast::error::RecvError;
 
 #[cfg(feature = "transport_wifi")]
 pub struct AppState {
@@ -56,6 +58,7 @@ pub struct AppState {
     pub services: ServiceRegistry,
     pub templates: minijinja::Environment<'static>,
     pub history: crate::history_store::HistoryStore,
+    pub logbook: crate::logbook_store::LogbookStore,
 }
 
 #[cfg(feature = "transport_wifi")]
@@ -82,6 +85,7 @@ impl AppState {
             services: ServiceRegistry::new(),
             templates: crate::templates::build_env(),
             history: crate::history_store::HistoryStore::new(history_capacity),
+            logbook: crate::logbook_store::LogbookStore::new(history_capacity),
         }
     }
 
@@ -127,6 +131,51 @@ pub async fn run(config: AppConfig, reset: bool) -> Result<()> {
 
     let storage = Storage::new(config.storage.data_dir.clone()).await?;
     let state = Arc::new(AppState::new_initialized(config, storage).await?);
+
+    // Spawn logbook listener: subscribes to StateStore broadcast and records entries.
+    {
+        let state_clone = Arc::clone(&state);
+        let mut rx = state.states.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let old = event
+                            .old_state
+                            .as_ref()
+                            .map(|s| s.state.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let display_name = event
+                            .state
+                            .attributes
+                            .get("friendly_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&event.state.entity_id)
+                            .to_string();
+                        let entry = crate::logbook_store::LogbookEntry {
+                            ts,
+                            entity_id: event.state.entity_id.clone(),
+                            display_name,
+                            old_state: old,
+                            new_state: event.state.state.clone(),
+                        };
+                        state_clone.logbook.record(entry).await;
+                    }
+                    Err(RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "logbook listener lagged, {n} events dropped");
+                        continue;
+                    }
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
     let _zeroconf = zeroconf::announce(&state).await?;
 
     let listener = tokio::net::TcpListener::bind(listen_addr)

@@ -5,11 +5,71 @@
   <p>A record of everything that happens in your home.</p>
 </div>
 <div class="page-body">
+
+{% if entries | length == 0 %}
   <div class="ha-card">
     <div class="ha-card-body" style="text-align:center;padding:48px 24px">
       <svg width="48" height="48" style="color:var(--text-secondary);fill:currentColor;margin-bottom:16px"><use href="#icon-format-list"/></svg>
-      <p style="color:var(--text-secondary);margin:0">Logbook requires an event bus.<br>Coming in a future release.</p>
+      <p style="color:var(--text-secondary);margin:0">No state changes recorded yet.</p>
     </div>
   </div>
+{% else %}
+
+  <input type="search" id="logbook-search" class="form-control"
+         placeholder="Filter by name or entity…"
+         style="margin-bottom:16px;max-width:320px">
+
+  <div class="ha-card">
+    <div class="ha-card-header">
+      <h2>State Changes</h2>
+      <span style="font-size:.82rem;color:var(--secondary-text)">{{ entries | length }} entr{% if entries | length != 1 %}ies{% else %}y{% endif %}</span>
+    </div>
+    <div class="ha-card-body" style="padding:0">
+      <div id="logbook-entries">
+        {% for entry in entries %}
+        <div class="logbook-row" data-name="{{ entry.display_name }} {{ entry.entity_id }}">
+          <div class="logbook-row-time">
+            <time class="logbook-ts" data-ts="{{ entry.ts }}">{{ entry.ts }}</time>
+          </div>
+          <div class="logbook-row-body">
+            <span class="logbook-name">{{ entry.display_name }}</span>
+            <span class="logbook-entity-id">{{ entry.entity_id }}</span>
+          </div>
+          <div class="logbook-row-state">
+            {% if entry.old_state != "" %}
+            <span class="mi-state mi-state--{{ entry.old_state }}">{{ entry.old_state }}</span>
+            <span style="color:var(--text-secondary);padding:0 4px">→</span>
+            {% endif %}
+            <span class="mi-state mi-state--{{ entry.new_state }}">{{ entry.new_state }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    // Render Unix timestamps as locale strings.
+    document.querySelectorAll('time.logbook-ts').forEach(function (el) {
+      var ts = parseInt(el.dataset.ts, 10);
+      if (!isNaN(ts)) {
+        el.textContent = new Date(ts * 1000).toLocaleString();
+      }
+    });
+
+    // Client-side filter by display name / entity id.
+    var input = document.getElementById('logbook-search');
+    if (!input) return;
+    input.addEventListener('input', function () {
+      var q = this.value.toLowerCase();
+      document.querySelectorAll('.logbook-row').forEach(function (row) {
+        row.style.display = row.dataset.name.toLowerCase().indexOf(q) !== -1 ? '' : 'none';
+      });
+    });
+  })();
+  </script>
+
+{% endif %}
 </div>
 {% endblock %}
