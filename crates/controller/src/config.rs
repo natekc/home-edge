@@ -33,11 +33,7 @@ pub struct AreasConfig {
 }
 
 fn default_areas() -> Vec<String> {
-    vec![
-        "Living Room".into(),
-        "Kitchen".into(),
-        "Bedroom".into(),
-    ]
+    vec![]
 }
 
 #[derive(Debug, Clone, Deserialize)]
