@@ -107,3 +107,48 @@ pub fn build_env() -> Environment<'static> {
 
     env
 }
+
+/// Verify that every template file on disk is registered in the minijinja Environment.
+///
+/// This test prevents the recurring bug where a template is added to templates/ but
+/// forgotten in this file — causing HTTP 500 at render time (no HTML → no
+/// connection-status:connected → iOS 10s disconnect timer fires → black screen).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn collect_template_files(base: &Path, dir: &Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).expect("read templates dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                collect_template_files(base, &path, out);
+            } else {
+                let rel = path.strip_prefix(base).expect("strip prefix");
+                out.push(rel.to_str().expect("utf-8 path").replace('\\', "/"));
+            }
+        }
+    }
+
+    #[test]
+    fn every_template_file_is_registered() {
+        let env = build_env();
+        let templates_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let mut files = Vec::new();
+        collect_template_files(&templates_dir, &templates_dir, &mut files);
+        files.sort();
+
+        let mut missing = Vec::new();
+        for name in &files {
+            if env.get_template(name).is_err() {
+                missing.push(name.clone());
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "template files exist on disk but are NOT registered in templates.rs:\n  {}",
+            missing.join("\n  ")
+        );
+    }
+}
