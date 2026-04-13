@@ -100,6 +100,8 @@ macro_rules! app_ctx {
             server_host   => local_host(),
             server_port   => $state.config.server.port,
             areas         => Value::from_serialize($areas),
+            back_url      => "",
+            nav_title     => "",
             $($rest)*
         }
     };
@@ -311,7 +313,9 @@ async fn devices_list_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "settings", location_name.as_str(), &areas,
-        devices => Value::from_serialize(&device_summaries),
+        back_url  => "/settings",
+        nav_title => "Devices & services",
+        devices   => Value::from_serialize(&device_summaries),
     );
     render_template(&state, "devices.html", ctx)
 }
@@ -400,6 +404,8 @@ async fn system_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "system", location_name.as_str(), &areas,
+        back_url     => "/settings",
+        nav_title    => "System",
         version      => env!("CARGO_PKG_VERSION"),
         runtime_mode => mode.as_str(),
     );
@@ -409,7 +415,10 @@ async fn system_page(State(state): State<Arc<AppState>>) -> Response {
 async fn areas_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,);
+    let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,
+        back_url  => "/settings",
+        nav_title => "Areas, labels & zones",
+    );
     render_template(&state, "areas.html", ctx)
 }
 
@@ -518,8 +527,10 @@ async fn device_detail_page(
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
-        device   => Value::from_serialize(&device),
-        entities => Value::from_serialize(&entities),
+        back_url  => "/devices",
+        nav_title => device.display_name(),
+        device    => Value::from_serialize(&device),
+        entities  => Value::from_serialize(&entities),
     );
     render_template(&state, "device_detail.html", ctx)
 }
@@ -548,7 +559,10 @@ async fn entity_edit_page(
     let entity_view = entity_to_view(&entity_record, &state);
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
+    let back = format!("/devices/{webhook_id}");
     let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
+        back_url      => back.as_str(),
+        nav_title     => entity_view.display_name.as_str(),
         device        => Value::from_serialize(&device),
         entity        => Value::from_serialize(&entity_view),
         saved         => params.saved.unwrap_or(false),
