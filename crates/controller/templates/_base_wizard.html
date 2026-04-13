@@ -5,6 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ product_name }}</title>
   <style>{% include "_css.html" %}</style>
+  <script>
+  /* Send connection-status:connected immediately so the iOS 10-second disconnect
+     timer (started by didStartProvisionalNavigation) is cancelled before any
+     external resource can delay the page. */
+  (function() {
+    try {
+      window.webkit.messageHandlers.externalBus.postMessage(
+        {type: 'connection-status', payload: {event: 'connected'}}
+      );
+    } catch(e) {}
+    var noopCancel = { cancel: function() {} };
+    var conn = {
+      sendMessagePromise: function() { return Promise.resolve({}); },
+      subscribeEvents: function() { return noopCancel; }
+    };
+    window.hassConnection = Promise.resolve({ conn: conn });
+    window.checkForMissingHassConnectionAndReload = function() {
+      try {
+        window.webkit.messageHandlers.externalBus.postMessage(
+          {type: 'connection-status', payload: {event: 'connected'}}
+        );
+      } catch(e) {}
+    };
+  })();
+  </script>
 </head>
 <body>
 {% include "_icons.html" %}
