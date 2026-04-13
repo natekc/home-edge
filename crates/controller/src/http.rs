@@ -154,6 +154,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         // Edge-internal history API. Not a replica of HA's /api/history/period endpoint
         // (which uses compressed-state wire format: {"s", "a", "lu"}).
         .route("/api/edge/history/{entity_id}",                  get(api_history))
+        // System API
+        .route("/api/system/restart",                            post(api_system_restart))
         // Health + onboarding REST API
         .route("/api/health",                                    get(health))
         .route("/api/onboarding",                                get(onboarding_status))
@@ -894,6 +896,27 @@ async fn api_history(
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok", milestone: "m0" })
+}
+
+/// Exit code that signals systemd to restart the process.
+/// Source: homeassistant/const.py  RESTART_EXIT_CODE: Final = 100
+const RESTART_EXIT_CODE: i32 = 100;
+
+/// POST /api/system/restart — exit with code 100 so systemd restarts the process.
+///
+/// Exit code 100 matches HA's RESTART_EXIT_CODE. The 100ms delay lets the 204
+/// response flush over TCP before the process terminates. Systemd's
+/// Restart=on-failure policy catches exit code 100 and re-launches.
+///
+/// Note: std::process::exit skips Drop impls. All stores are in-memory only
+/// (no pending async writes at shutdown), so data loss risk is minimal.
+async fn api_system_restart() -> Response {
+    // Spawn a task to exit after the response has flushed.
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        std::process::exit(RESTART_EXIT_CODE);
+    });
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn onboarding_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
