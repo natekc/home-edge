@@ -1,0 +1,15 @@
+#!/bin/sh
+# Prevent direct pushes to main. Use a feature branch and open a PR on GitHub.
+
+remote="$1"
+url="$2"
+
+while read local_ref local_sha remote_ref remote_sha; do
+    if [ "$remote_ref" = "refs/heads/main" ]; then
+        echo "ERROR: Direct push to 'main' is not allowed."
+        echo "Create a feature branch, push it, and open a pull request on GitHub."
+        exit 1
+    fi
+done
+
+exit 0
