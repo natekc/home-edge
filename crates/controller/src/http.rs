@@ -841,6 +841,10 @@ async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok", milestone: "m0" })
 }
 
+/// Exit code that signals systemd to restart the process.
+/// Source: homeassistant/const.py  RESTART_EXIT_CODE: Final = 100
+const RESTART_EXIT_CODE: i32 = 100;
+
 /// POST /api/system/restart — exit with code 100 so systemd restarts the process.
 ///
 /// Exit code 100 matches HA's RESTART_EXIT_CODE. The 100ms delay lets the 204
@@ -853,7 +857,7 @@ async fn api_system_restart() -> Response {
     // Spawn a task to exit after the response has flushed.
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        std::process::exit(100);
+        std::process::exit(RESTART_EXIT_CODE);
     });
     StatusCode::NO_CONTENT.into_response()
 }
