@@ -51,14 +51,45 @@ fn unauthorized(msg: &'static str) -> Response {
     (StatusCode::UNAUTHORIZED, Json(ErrorResponse::new(msg.into()))).into_response()
 }
 
+/// Self-contained HTML error page for page-navigation contexts.
+/// Does NOT use the template engine (avoids recursion if templates fail).
+/// Fires `connection-status:connected` so the iOS 10-second disconnect timer is cancelled.
+fn page_error(status: StatusCode, msg: &str) -> Response {
+    let safe = msg.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let html = format!(
+        concat!(
+            "<!doctype html><html lang=\"en\"><head>",
+            "<meta charset=\"utf-8\">",
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+            "<title>Error</title>",
+            "<script>(function(){{try{{window.webkit.messageHandlers.externalBus",
+            ".postMessage({{type:\'connection-status\',payload:{{event:\'connected\'}}}});",
+            "}}catch(e){{}}}})()</script>",
+            "<style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;",
+            "padding:32px 24px;color:#333;background:#f5f5f5}}",
+            "h2{{font-weight:400;color:#c62828}}a{{color:#009ac7;text-decoration:none}}</style>",
+            "</head><body><h2>Error</h2><p>{safe}</p>",
+            "<p><a href=\"javascript:history.back()\">\u{2190} Go back</a></p>",
+            "</body></html>"
+        ),
+        safe = safe
+    );
+    (status, Html(html)).into_response()
+}
+
+/// Router-level 404 — unknown URLs return HTML so the connected script fires.
+async fn fallback_404() -> Response {
+    page_error(StatusCode::NOT_FOUND, "Page not found")
+}
+
 /// Render a named minijinja template into an HTML response.
 fn render_template(state: &AppState, name: &str, ctx: Value) -> Response {
     match state.render_html(name, ctx) {
         Ok(html) => Html(html).into_response(),
-        Err(err) => {
-            let err = anyhow::anyhow!("template {name}: {err}");
-            internal_error(&err)
-        }
+        Err(err) => page_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Template error ({name}): {err:#}"),
+        ),
     }
 }
 
@@ -170,6 +201,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/onboarding/integration/wait",               post(onboarding_integration_wait))
         .route("/api/onboarding/complete",                       post(complete_onboarding))
         .with_state(state)
+        // Any unmatched URL returns HTML 404 so the iOS connected script fires.
+        .fallback(fallback_404)
 }
 
 // ---------------------------------------------------------------------------
@@ -180,14 +213,16 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
     match state.core.onboarding_progress(&state.storage).await {
         Ok(progress) if !progress.onboarded => redirect("/onboarding"),
         Ok(_) => dashboard_response(&state).await,
-        Err(err) => internal_error(&err),
+        Err(err) => page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     }
 }
 
 fn redirect(path: &'static str) -> Response {
+    // 303 See Other: converts POST to GET (Post-Redirect-Get pattern).
+    // Using 307 would re-POST with empty body → axum 422 (no HTML) → iOS disconnect.
     let mut headers = HeaderMap::new();
     headers.insert(header::LOCATION, HeaderValue::from_static(path));
-    (StatusCode::TEMPORARY_REDIRECT, headers).into_response()
+    (StatusCode::SEE_OTHER, headers).into_response()
 }
 
 async fn profile_page(State(state): State<Arc<AppState>>) -> Response {
@@ -217,11 +252,11 @@ async fn profile_page(State(state): State<Arc<AppState>>) -> Response {
 async fn dashboard_response(state: &AppState) -> Response {
     let devices = match state.mobile_devices.all().await {
         Ok(d) => d,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let device_summaries: Vec<_> = devices
         .iter()
@@ -253,7 +288,7 @@ async fn dashboard_response(state: &AppState) -> Response {
 async fn onboarding_page(State(state): State<Arc<AppState>>) -> Response {
     let progress = match state.core.onboarding_progress(&state.storage).await {
         Ok(p) => p,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let steps = vec![
         json!({"done": progress.user_done,        "label": "Create owner account"}),
@@ -285,11 +320,11 @@ async fn settings_page(State(state): State<Arc<AppState>>) -> Response {
 async fn devices_list_page(State(state): State<Arc<AppState>>) -> Response {
     let devices = match state.mobile_devices.all().await {
         Ok(d) => d,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let device_summaries: Vec<_> = devices
         .iter()
@@ -330,7 +365,7 @@ async fn history_page(State(state): State<Arc<AppState>>) -> Response {
     let areas = load_areas(&state).await;
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let mut entity_list: Vec<serde_json::Value> = all_entities
         .iter()
@@ -362,7 +397,7 @@ async fn developer_tools_page(State(state): State<Arc<AppState>>) -> Response {
     let areas = load_areas(&state).await;
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     // Include disabled entities intentionally — developer tools shows the full picture.
     // Reuse entity_to_view so the state fallback logic is not duplicated here.
@@ -428,7 +463,7 @@ async fn areas_create(
         return redirect("/areas");
     }
     if let Err(err) = state.area_registry.create(name).await {
-        return internal_error(&err);
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
     }
     redirect("/areas")
 }
@@ -438,7 +473,7 @@ async fn area_delete(
     Path(area_id): Path<String>,
 ) -> Response {
     if let Err(err) = state.area_registry.delete(&area_id).await {
-        return internal_error(&err);
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
     }
     redirect("/areas")
 }
@@ -449,17 +484,17 @@ async fn area_detail_page(
 ) -> Response {
     let area = match state.area_registry.list().await {
         Ok(list) => list.into_iter().find(|a| a.area_id == area_id),
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let area = match area {
         Some(a) => a,
-        None => return (StatusCode::NOT_FOUND, "Area not found").into_response(),
+        None => return page_error(StatusCode::NOT_FOUND, "Area not found"),
     };
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let all_cards = build_area_cards(&state, &all_entities).await;
     let area_cards: Vec<AreaCard> = all_cards.into_iter()
@@ -505,12 +540,12 @@ async fn device_detail_page(
 ) -> Response {
     let device = match state.mobile_devices.get_by_webhook_id(&webhook_id).await {
         Ok(Some(d)) => d,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return internal_error(&err),
+        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Device not found"),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let raw_entities = match state.mobile_entities.list_by_webhook_id(&webhook_id).await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let entities: Vec<_> = raw_entities
         .iter()
@@ -534,13 +569,13 @@ async fn entity_edit_page(
 ) -> Response {
     let device = match state.mobile_devices.get_by_webhook_id(&webhook_id).await {
         Ok(Some(d)) => d,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return internal_error(&err),
+        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Device not found"),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let entity_record = match state.mobile_entities.get_by_entity_id(&entity_id).await {
         Ok(Some(e)) => e,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Entity not found").into_response(),
-        Err(err) => return internal_error(&err),
+        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Entity not found"),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let history = state.history.last_n(&entity_id, 100).await;
     let sparkline = if history.len() >= 2 {
@@ -610,7 +645,7 @@ async fn entity_edit_save(
             );
             (StatusCode::SEE_OTHER, headers).into_response()
         }
-        Err(err) => internal_error(&err),
+        Err(err) => page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     }
 }
 
