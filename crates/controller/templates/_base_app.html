@@ -29,10 +29,17 @@
 
 <!-- Mobile top app bar (HA-style sticky header; hidden on desktop, shown on narrow screens) -->
 <header class="app-header" id="app-header">
+  {% if back_url %}
+  <a href="{{ back_url }}" class="app-header-btn" aria-label="Go back">
+    <svg width="24" height="24"><use href="#icon-arrow-left"/></svg>
+  </a>
+  <span class="app-header-title">{{ nav_title if nav_title else location_name }}</span>
+  {% else %}
   <button class="app-header-btn" onclick="openMobileSidebar()" aria-label="Open menu">
     <svg width="24" height="24"><use href="#icon-menu"/></svg>
   </button>
   <span class="app-header-title">{{ location_name }}</span>
+  {% endif %}
 </header>
 <!-- Backdrop for mobile overlay -->
 <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
