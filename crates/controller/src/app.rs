@@ -39,6 +39,8 @@ use crate::state_store::StateStore;
 use crate::storage::Storage;
 #[cfg(feature = "transport_wifi")]
 use crate::zeroconf;
+#[cfg(feature = "transport_wifi")]
+use tokio::sync::broadcast::error::RecvError;
 
 #[cfg(feature = "transport_wifi")]
 pub struct AppState {
@@ -135,32 +137,41 @@ pub async fn run(config: AppConfig, reset: bool) -> Result<()> {
         let state_clone = Arc::clone(&state);
         let mut rx = state.states.subscribe();
         tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                let old = event
-                    .old_state
-                    .as_ref()
-                    .map(|s| s.state.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let display_name = event
-                    .state
-                    .attributes
-                    .get("friendly_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&event.state.entity_id)
-                    .to_string();
-                let entry = crate::logbook_store::LogbookEntry {
-                    ts,
-                    entity_id: event.state.entity_id.clone(),
-                    display_name,
-                    old_state: old,
-                    new_state: event.state.state.clone(),
-                };
-                state_clone.logbook.record(entry).await;
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let old = event
+                            .old_state
+                            .as_ref()
+                            .map(|s| s.state.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let display_name = event
+                            .state
+                            .attributes
+                            .get("friendly_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&event.state.entity_id)
+                            .to_string();
+                        let entry = crate::logbook_store::LogbookEntry {
+                            ts,
+                            entity_id: event.state.entity_id.clone(),
+                            display_name,
+                            old_state: old,
+                            new_state: event.state.state.clone(),
+                        };
+                        state_clone.logbook.record(entry).await;
+                    }
+                    Err(RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "logbook listener lagged, {n} events dropped");
+                        continue;
+                    }
+                    Err(RecvError::Closed) => break,
+                }
             }
         });
     }

@@ -39,6 +39,9 @@ impl LogbookStore {
 
     /// Append an entry, evicting the oldest if at capacity.
     pub async fn record(&self, entry: LogbookEntry) {
+        if self.capacity == 0 {
+            return;
+        }
         let mut buf = self.inner.write().await;
         if buf.len() >= self.capacity {
             buf.pop_front();
