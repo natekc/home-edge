@@ -659,6 +659,24 @@ async fn fragment_more_info(
     render_template(&state, template_name, ctx)
 }
 
+/// Service variants for the `persistent_notification` domain.
+/// Source: homeassistant/components/persistent_notification/__init__.py
+enum PersistentNotificationService {
+    Create,
+    Dismiss,
+}
+
+impl std::str::FromStr for PersistentNotificationService {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "create" => Ok(Self::Create),
+            "dismiss" => Ok(Self::Dismiss),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct UiServiceForm {
     entity_id: String,
@@ -693,8 +711,8 @@ async fn ui_service_call(
 ) -> Response {
     // Handle persistent_notification domain directly (needs NotificationStore)
     if domain.as_str() == "persistent_notification" {
-        match service.as_str() {
-            "create" => {
+        match service.parse::<PersistentNotificationService>() {
+            Ok(PersistentNotificationService::Create) => {
                 let message = form.message.clone().unwrap_or_default();
                 if message.is_empty() {
                     return (StatusCode::BAD_REQUEST, "message required").into_response();
@@ -705,7 +723,7 @@ async fn ui_service_call(
                     .await;
                 return StatusCode::NO_CONTENT.into_response();
             }
-            "dismiss" => {
+            Ok(PersistentNotificationService::Dismiss) => {
                 let id = form
                     .notification_id
                     .as_deref()
@@ -718,7 +736,7 @@ async fn ui_service_call(
                 state.notifications.dismiss(id).await;
                 return StatusCode::NO_CONTENT.into_response();
             }
-            _ => return StatusCode::NOT_FOUND.into_response(),
+            Err(_) => return StatusCode::NOT_FOUND.into_response(),
         }
     }
     let mut data: Map<String, serde_json::Value> = Map::new();
