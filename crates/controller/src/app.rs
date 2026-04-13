@@ -133,8 +133,10 @@ pub async fn run(config: AppConfig, reset: bool) -> Result<()> {
     let state = Arc::new(AppState::new_initialized(config, storage).await?);
 
     // Spawn logbook listener: subscribes to StateStore broadcast and records entries.
+    // state.clone() increments the Arc reference count — the spawned task needs its
+    // own owned Arc handle since tokio::spawn requires 'static.
     {
-        let state_clone = Arc::clone(&state);
+        let state_clone = state.clone();
         let mut rx = state.states.subscribe();
         tokio::spawn(async move {
             loop {
@@ -148,7 +150,7 @@ pub async fn run(config: AppConfig, reset: bool) -> Result<()> {
                             .to_string();
                         let ts = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
+                            .expect("system clock is before UNIX epoch")
                             .as_secs();
                         let display_name = event
                             .state
