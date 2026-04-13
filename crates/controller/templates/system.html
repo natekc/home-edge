@@ -43,11 +43,12 @@ function confirmRestart() {
         showToast('Restarting\u2026 page will reload shortly.', 8000);
         setTimeout(function() { window.location.reload(); }, 4000);
       } else {
-        showToast('Restart failed: ' + r.status, 4000);
+        showToast('Restart failed: HTTP ' + r.status, 4000);
       }
     })
     .catch(function() {
-      showToast('Restart request sent. Reconnecting\u2026', 6000);
+      // Connection reset is expected — process exited
+      showToast('Restarting\u2026 reconnecting shortly.', 6000);
       setTimeout(function() { window.location.reload(); }, 4000);
     });
 }

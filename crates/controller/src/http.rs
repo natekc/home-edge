@@ -839,7 +839,13 @@ async fn health() -> Json<HealthResponse> {
 }
 
 /// POST /api/system/restart — exit with code 100 so systemd restarts the process.
-/// Mirrors homeassistant/const.py RESTART_EXIT_CODE = 100.
+///
+/// Exit code 100 matches HA's RESTART_EXIT_CODE. The 100ms delay lets the 204
+/// response flush over TCP before the process terminates. Systemd's
+/// Restart=on-failure policy catches exit code 100 and re-launches.
+///
+/// Note: std::process::exit skips Drop impls. All stores are in-memory only
+/// (no pending async writes at shutdown), so data loss risk is minimal.
 async fn api_system_restart() -> Response {
     // Spawn a task to exit after the response has flushed.
     tokio::spawn(async {
