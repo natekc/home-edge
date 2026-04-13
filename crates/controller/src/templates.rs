@@ -19,6 +19,9 @@ pub fn build_env() -> Environment<'static> {
         .expect("_css.html");
     env.add_template("_icons.html", include_str!("../templates/_icons.html"))
         .expect("_icons.html");
+    // htmx inlined: no CDN dependency, auto-escape disabled for .js files (see callback above)
+    env.add_template("_htmx.js", include_str!("../templates/_htmx.js"))
+        .expect("_htmx.js");
 
     // Base shells
     env.add_template(
