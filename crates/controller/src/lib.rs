@@ -10,6 +10,8 @@ pub mod core;
 pub mod history_store;
 pub mod logbook_store;
 pub mod logging;
+#[cfg(feature = "transport_wifi")]
+pub mod notification_store;
 pub mod service;
 pub mod state_store;
 pub mod storage;
