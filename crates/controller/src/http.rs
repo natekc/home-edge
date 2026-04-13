@@ -708,10 +708,14 @@ async fn ui_service_call(
             "dismiss" => {
                 let id = form
                     .notification_id
-                    .clone()
-                    .or_else(|| Some(form.entity_id.clone()).filter(|s| !s.is_empty()))
-                    .unwrap_or_default();
-                state.notifications.dismiss(&id).await;
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| Some(form.entity_id.as_str()).filter(|s| !s.is_empty()))
+                    .unwrap_or("");
+                if id.is_empty() {
+                    return (StatusCode::BAD_REQUEST, "notification_id required").into_response();
+                }
+                state.notifications.dismiss(id).await;
                 return StatusCode::NO_CONTENT.into_response();
             }
             _ => return StatusCode::NOT_FOUND.into_response(),
