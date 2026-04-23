@@ -89,16 +89,26 @@
             <th>Entity ID</th>
             <th>Domain</th>
             <th>Device class</th>
+            <th>State</th>
             <th>Unit</th>
           </tr>
         </thead>
         <tbody>
           {% for ent in entities %}
           <tr>
-            <td style="font-family:monospace;font-size:.82rem">{{ ent.entity_id }}</td>
-            <td>{{ ent.domain }}</td>
-            <td>{{ ent.device_class | default("—") }}</td>
-            <td>{{ ent.unit_of_measurement | default("—") }}</td>
+            <td style="font-family:monospace;font-size:.82rem">
+              <a
+                href="#"
+                hx-get="/fragments/more-info/{{ ent.entity_id }}"
+                hx-target="#more-info-body"
+                hx-swap="innerHTML"
+                hx-on::after-request="document.getElementById('more-info-dialog').showModal()"
+              >{{ ent.entity_id }}</a>
+            </td>
+            <td>{{ ent.entity_type }}</td>
+            <td>{{ ent.device_class if ent.device_class else "—" }}</td>
+            <td>{{ ent.value }}</td>
+            <td>{{ ent.unit if ent.unit else "—" }}</td>
           </tr>
           {% endfor %}
         </tbody>

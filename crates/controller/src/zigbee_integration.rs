@@ -78,15 +78,16 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::Device) -> Vec<ZigbeeEntityR
         .to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
 
-    let has_on_off = clusters.contains(&0x0006);
-    let has_level = clusters.contains(&0x0008);
-    let has_color = clusters.contains(&0x0300);
-    let has_temperature = clusters.contains(&0x0402);
-    let has_humidity = clusters.contains(&0x0405);
-    let has_occupancy = clusters.contains(&0x0406);
-    let has_power = clusters.contains(&0x0001);
-    let has_illuminance = clusters.contains(&0x0400);
-    let has_ias = clusters.contains(&0x0500);
+    let has_on_off    = clusters.contains(&0x0006);
+    let has_level     = clusters.contains(&0x0008);
+    let has_color     = clusters.contains(&0x0300);
+    let has_temperature  = clusters.contains(&0x0402);
+    let has_humidity     = clusters.contains(&0x0405);
+    let has_occupancy    = clusters.contains(&0x0406);
+    let has_power        = clusters.contains(&0x0001);
+    let has_illuminance  = clusters.contains(&0x0400);
+    let has_pressure     = clusters.contains(&0x0403);
+    let has_ias          = clusters.contains(&0x0500);
 
     // ── Light or Switch ──────────────────────────────────────────────────
     if has_on_off {
@@ -130,7 +131,22 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::Device) -> Vec<ZigbeeEntityR
         });
     }
 
+    if has_pressure {
+        records.push(ZigbeeEntityRecord {
+            entity_id: format!("sensor.{base}_pressure"),
+            ieee_addr: ieee.clone(),
+            domain: "sensor".to_string(),
+            // Cluster 0x0403: MeasuredValue reported as "pressure" in hPa
+            attribute_key: Some("pressure".to_string()),
+            device_class: Some("atmospheric_pressure".to_string()),
+            unit_of_measurement: Some("hPa".to_string()),
+            name_by_user: None,
+            user_area_id: None,
+        });
+    }
+
     if has_power {
+        // Battery percentage — primary sensor.
         records.push(ZigbeeEntityRecord {
             entity_id: format!("sensor.{base}_battery"),
             ieee_addr: ieee.clone(),
@@ -141,6 +157,28 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::Device) -> Vec<ZigbeeEntityR
             name_by_user: None,
             user_area_id: None,
         });
+        // Battery voltage — secondary sensor.
+        records.push(ZigbeeEntityRecord {
+            entity_id: format!("sensor.{base}_battery_voltage"),
+            ieee_addr: ieee.clone(),
+            domain: "sensor".to_string(),
+            attribute_key: Some("battery_voltage".to_string()),
+            device_class: Some("voltage".to_string()),
+            unit_of_measurement: Some("V".to_string()),
+            name_by_user: None,
+            user_area_id: None,
+        });
+        // Low-battery warning — binary sensor.
+        records.push(ZigbeeEntityRecord {
+            entity_id: format!("binary_sensor.{base}_battery_low"),
+            ieee_addr: ieee.clone(),
+            domain: "binary_sensor".to_string(),
+            attribute_key: Some("battery_low".to_string()),
+            device_class: Some("battery".to_string()),
+            unit_of_measurement: None,
+            name_by_user: None,
+            user_area_id: None,
+        });
     }
 
     if has_illuminance {
@@ -148,6 +186,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::Device) -> Vec<ZigbeeEntityR
             entity_id: format!("sensor.{base}_illuminance"),
             ieee_addr: ieee.clone(),
             domain: "sensor".to_string(),
+            // Cluster 0x0400 emits "illuminance_lux" (converted from log scale)
             attribute_key: Some("illuminance_lux".to_string()),
             device_class: Some("illuminance".to_string()),
             unit_of_measurement: Some("lx".to_string()),
@@ -171,12 +210,25 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::Device) -> Vec<ZigbeeEntityR
     }
 
     if has_ias {
+        // IAS Zone (0x0500) emits "contact" (door/window sensors),
+        // "tamper", and "battery_low".  Device class "door" is the
+        // most common ZHA default; the user can rename if needed.
         records.push(ZigbeeEntityRecord {
-            entity_id: format!("binary_sensor.{base}_motion"),
+            entity_id: format!("binary_sensor.{base}_contact"),
             ieee_addr: ieee.clone(),
             domain: "binary_sensor".to_string(),
-            attribute_key: Some("occupancy".to_string()), // IAS zone reports as occupancy
-            device_class: Some("motion".to_string()),
+            attribute_key: Some("contact".to_string()),
+            device_class: Some("door".to_string()),
+            unit_of_measurement: None,
+            name_by_user: None,
+            user_area_id: None,
+        });
+        records.push(ZigbeeEntityRecord {
+            entity_id: format!("binary_sensor.{base}_tamper"),
+            ieee_addr: ieee.clone(),
+            domain: "binary_sensor".to_string(),
+            attribute_key: Some("tamper".to_string()),
+            device_class: Some("tamper".to_string()),
             unit_of_measurement: None,
             name_by_user: None,
             user_area_id: None,
@@ -254,12 +306,35 @@ pub fn push_state(
         if let Some(ref dc) = ent.device_class {
             attrs.insert("device_class".into(), Value::String(dc.clone()));
         }
-        if ent.domain == "light" {
-            for key in ["brightness", "color_temp", "color_mode", "color"] {
-                if let Some(v) = raw_state.get(key) {
-                    attrs.insert(key.to_string(), v.clone());
+
+        match ent.domain.as_str() {
+            "sensor" => {
+                // HA uses state_class = "measurement" for numeric sensors to enable
+                // long-term statistics and the history graph sparkline.
+                attrs.insert("state_class".into(), Value::String("measurement".into()));
+            }
+            "light" => {
+                // Brightness (0-254 raw from ZCL level cluster).
+                for key in ["brightness", "color_mode", "color"] {
+                    if let Some(v) = raw_state.get(key) {
+                        attrs.insert(key.to_string(), v.clone());
+                    }
+                }
+                // Convert color_temp from mireds to kelvin (1_000_000 / mireds).
+                // ZCL/z2m reports color_temp in mireds; HA frontend expects
+                // color_temp_kelvin.
+                // Source: homeassistant/components/light/__init__.py
+                if let Some(mireds) = raw_state.get("color_temp").and_then(|v| v.as_f64()) {
+                    if mireds > 0.0 {
+                        let kelvin = (1_000_000.0 / mireds).round() as u32;
+                        attrs.insert("color_temp_kelvin".into(), Value::Number(kelvin.into()));
+                        attrs.insert("color_temp".into(), Value::Number(
+                            serde_json::Number::from_f64(mireds).unwrap_or(serde_json::Number::from(0)),
+                        ));
+                    }
                 }
             }
+            _ => {}
         }
 
         let ts = now_iso8601();
