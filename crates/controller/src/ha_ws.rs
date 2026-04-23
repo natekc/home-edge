@@ -726,6 +726,110 @@ async fn dispatch_command(
             }
         }
 
+        // -----------------------------------------------------------------------
+        // Zone registry
+        // Source: homeassistant/components/zone/__init__.py
+        //   DictStorageCollectionWebsocket registers zone/{list,create,update,delete}.
+        //
+        // Note: zone.home is synthetic (derived from hass.config) and is NOT in the
+        // zone storage collection; WS zone/list returns only user-defined zones.
+        // -----------------------------------------------------------------------
+
+        // Source: homeassistant/components/zone/__init__.py  DictStorageCollectionWebsocket.ws_list_items
+        "zone/list" => {
+            match state.zone_store.list().await {
+                Ok(zones) => {
+                    let items: Vec<Value> = zones.iter().map(|z| json!({
+                        "id":        z.zone_id,
+                        "name":      z.name,
+                        "latitude":  z.latitude,
+                        "longitude": z.longitude,
+                        "radius":    z.radius,
+                        "passive":   z.passive,
+                        "icon":      z.icon,
+                    })).collect();
+                    result_ok(id, json!({"items": items}))
+                }
+                Err(_) => result_err(id, "internal_error", "Failed to load zones"),
+            }
+        }
+
+        // Source: homeassistant/components/zone/__init__.py  DictStorageCollectionWebsocket.ws_create_item
+        "zone/create" => {
+            let name = match extra.get("name").and_then(|v| v.as_str()) {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => return result_err(id, "invalid_format", "name is required"),
+            };
+            let latitude  = extra.get("latitude").and_then(|v| v.as_f64());
+            let longitude = extra.get("longitude").and_then(|v| v.as_f64());
+            let radius    = extra.get("radius").and_then(|v| v.as_f64());
+            let passive   = extra.get("passive").and_then(|v| v.as_bool());
+            let icon      = extra.get("icon").and_then(|v| v.as_str()).map(str::to_string);
+            match state.zone_store.create(name, latitude, longitude, radius, passive, icon).await {
+                Ok(zone) => result_ok(id, json!({
+                    "id":        zone.zone_id,
+                    "name":      zone.name,
+                    "latitude":  zone.latitude,
+                    "longitude": zone.longitude,
+                    "radius":    zone.radius,
+                    "passive":   zone.passive,
+                    "icon":      zone.icon,
+                })),
+                Err(_) => result_err(id, "internal_error", "Failed to create zone"),
+            }
+        }
+
+        // Source: homeassistant/components/zone/__init__.py  DictStorageCollectionWebsocket.ws_update_item
+        "zone/update" => {
+            // Accept both "zone_id" (home-edge) and "id" (HA core) for compat.
+            let zone_id = match extra.get("zone_id").or_else(|| extra.get("id"))
+                .and_then(|v| v.as_str()) {
+                Some(zid) => zid.to_string(),
+                None => return result_err(id, "invalid_format", "zone_id is required"),
+            };
+            // zone.home is synthetic — it cannot be edited through the storage collection.
+            if zone_id == "home" {
+                return result_err(id, "not_allowed", "zone.home cannot be edited through this API");
+            }
+            let name      = extra.get("name").and_then(|v| v.as_str()).map(str::to_string);
+            let latitude  = extra.get("latitude").map(|v| v.as_f64());
+            let longitude = extra.get("longitude").map(|v| v.as_f64());
+            let radius    = extra.get("radius").and_then(|v| v.as_f64());
+            let passive   = extra.get("passive").and_then(|v| v.as_bool());
+            let icon      = extra.get("icon").map(|v| v.as_str().map(str::to_string));
+            match state.zone_store.update(&zone_id, name, latitude, longitude, radius, passive, icon).await {
+                Ok(Some(zone)) => result_ok(id, json!({
+                    "id":        zone.zone_id,
+                    "name":      zone.name,
+                    "latitude":  zone.latitude,
+                    "longitude": zone.longitude,
+                    "radius":    zone.radius,
+                    "passive":   zone.passive,
+                    "icon":      zone.icon,
+                })),
+                Ok(None) => result_err(id, "not_found", "Zone not found"),
+                Err(_)   => result_err(id, "internal_error", "Failed to update zone"),
+            }
+        }
+
+        // Source: homeassistant/components/zone/__init__.py  DictStorageCollectionWebsocket.ws_delete_item
+        "zone/delete" => {
+            let zone_id = match extra.get("zone_id").or_else(|| extra.get("id"))
+                .and_then(|v| v.as_str()) {
+                Some(zid) => zid.to_string(),
+                None => return result_err(id, "invalid_format", "zone_id is required"),
+            };
+            // zone.home is synthetic — it cannot be deleted.
+            if zone_id == "home" {
+                return result_err(id, "not_allowed", "zone.home cannot be deleted");
+            }
+            match state.zone_store.delete(&zone_id).await {
+                Ok(true)  => result_ok(id, Value::Null),
+                Ok(false) => result_err(id, "not_found", "Zone not found"),
+                Err(_)    => result_err(id, "internal_error", "Failed to delete zone"),
+            }
+        }
+
         // Source: homeassistant/components/config/entity_registry.py  websocket_list_entities
         // iOS model manager caches the full entity + device registry.
         "config/entity_registry/list" => {
@@ -1067,6 +1171,7 @@ mod tests {
                 product_name: "Test Home".into(),
             },
             areas: crate::config::AreasConfig::default(),
+            home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
         };
         let storage = Storage::new_in_memory();
