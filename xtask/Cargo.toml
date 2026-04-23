@@ -1,0 +1,11 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# xtask is a developer tool — intentionally NOT part of [workspace.dependencies]
+# so its deps stay independent of the main crate's version constraints.
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

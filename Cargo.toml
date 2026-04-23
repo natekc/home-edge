@@ -1,5 +1,7 @@
 [workspace]
-members = ["crates/controller", "crates/ha-types", "crates/xtask"]
+members = ["crates/controller", "crates/ha-types", "xtask"]
+# xtask is excluded from the default build so `cargo build` only builds the product.
+default-members = ["crates/controller", "crates/ha-types"]
 resolver = "2"
 
 [workspace.package]
