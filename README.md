@@ -28,17 +28,17 @@ Download the pre-built tarball for your board from the [releases page](../../rel
 then from your laptop/desktop (on the same network as the device):
 
 ```bash
-# First-time install
-make push TARBALL=~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz HOST=pi@raspberrypi.local
+# First-time install or upgrade
+cargo xtask push --tarball ~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz
+cargo xtask push --tarball ~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz --host pi@192.168.1.50
 
-# Upgrade
-make push TARBALL=~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz HOST=pi@raspberrypi.local
-
-# Rollback to the previous binary
-make rollback HOST=pi@raspberrypi.local
+# Roll back to the previous binary
+cargo xtask rollback --host pi@raspberrypi.local
 ```
 
-Or without `make`, entirely by hand:
+`cargo xtask` is just a Cargo alias — no extra tools required beyond `cargo`, `ssh`, and `scp`.
+
+If you don't have Rust at all, the same steps work directly:
 
 ```bash
 scp home-edge-arm-unknown-linux-gnueabihf.tar.gz pi@raspberrypi.local:/tmp/
@@ -50,7 +50,7 @@ ssh pi@raspberrypi.local '
 ```
 
 The device does not need internet access — the tarball is transferred over your local
-network via SSH/SCP.  `upgrade.sh` delegates to `install.sh` automatically on first run.
+network via SSH/SCP. `upgrade.sh` delegates to `install.sh` automatically on first run.
 
 ### Release tarballs
 
@@ -103,15 +103,17 @@ See `.cargo/config.toml` for the full list of supported targets and required lin
 
 ```bash
 # Build, package, and push to device in one command:
-make deploy HOST=pi@raspberrypi.local
+cargo xtask deploy
+cargo xtask deploy --host pi@192.168.1.50
+cargo xtask deploy --target aarch64-unknown-linux-gnu --host ubuntu@myboard.local
 
-# Different board:
-make deploy TARGET=aarch64-unknown-linux-gnu HOST=ubuntu@myboard.local
-
-# Just build the tarball (for uploading to a release):
-make package TARGET=arm-unknown-linux-gnueabihf
-# → home-edge-arm-unknown-linux-gnueabihf.tar.gz
+# Just build the tarball (e.g. for uploading to a release):
+cargo xtask package
+cargo xtask package --target aarch64-unknown-linux-gnu
+# → home-edge-<target>.tar.gz
 ```
+
+See `cargo xtask --help` and `cargo xtask <command> --help` for all options.
 
 ## Current endpoints
 
