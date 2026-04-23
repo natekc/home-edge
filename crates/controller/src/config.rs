@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub home_zone: HomeZoneConfig,
     #[serde(default)]
     pub history: HistoryConfig,
+    #[serde(default)]
+    pub mdns: MdnsConfig,
 }
 
 /// Initial area names used to seed the area registry on first boot.
@@ -64,6 +66,44 @@ pub struct HomeZoneConfig {
 
 fn default_home_zone_radius() -> f64 {
     100.0
+}
+
+/// mDNS / Zeroconf advertisement configuration.
+///
+/// ```toml
+/// [mdns]
+/// # Interface name prefixes to exclude from the announced address list.
+/// # Addresses on matching interfaces are silently skipped.
+/// # Useful when the host has multiple NICs and only one is reachable by
+/// # clients (e.g. a USB-tethered internet uplink alongside a LAN interface).
+/// #
+/// # Built-in skipped prefixes (always applied regardless of this list):
+/// #   lo, docker, veth, br-, virbr
+/// # Add your own as needed, e.g.:
+/// #   exclude_interfaces = ["usb", "eth1"]
+/// exclude_interfaces = ["usb", "rndis", "ncm"]
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct MdnsConfig {
+    /// Interface name prefixes to exclude from mDNS announcement.
+    /// Matched with `str::starts_with` against each interface name.
+    #[serde(default = "default_mdns_exclude")]
+    pub exclude_interfaces: Vec<String>,
+}
+
+impl Default for MdnsConfig {
+    fn default() -> Self {
+        Self { exclude_interfaces: default_mdns_exclude() }
+    }
+}
+
+fn default_mdns_exclude() -> Vec<String> {
+    // USB CDC/RNDIS tethering interfaces that provide internet but are not
+    // reachable by other LAN clients — skip them by default.
+    ["usb", "rndis", "ncm"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 #[derive(Debug, Clone, Deserialize)]
