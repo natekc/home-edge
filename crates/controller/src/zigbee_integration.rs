@@ -283,6 +283,100 @@ pub fn push_state(
 // Integration runner
 // ---------------------------------------------------------------------------
 
+/// Consume events from `event_rx` and fan them out to the stores.
+///
+/// This is the inner loop extracted so it can be driven from tests without
+/// spinning up a real `Bridge`. Call it inside a `tokio::spawn` block.
+pub async fn run_event_loop(
+    mut event_rx: mpsc::Receiver<ZigbeeEvent>,
+    device_store: Arc<ZigbeeDeviceStore>,
+    entity_store: Arc<ZigbeeEntityStore>,
+    state_store: Arc<StateStore>,
+) {
+    while let Some(event) = event_rx.recv().await {
+        match event {
+            ZigbeeEvent::DeviceJoined { ieee_addr, .. } => {
+                let ieee = ieee_addr.as_hex();
+                info!("Zigbee device joined: {ieee}");
+                // Create a minimal record (interview not yet complete).
+                let record = ZigbeeDeviceRecord {
+                    ieee_addr: ieee,
+                    friendly_name: ieee_addr.as_hex(),
+                    manufacturer: None,
+                    model: None,
+                    power_source: None,
+                    sw_build_id: None,
+                    interview_complete: false,
+                    last_seen: None,
+                    name_by_user: None,
+                    user_area_id: None,
+                };
+                if let Err(e) = device_store.upsert(record).await {
+                    warn!("zigbee device store upsert failed: {e:#}");
+                }
+            }
+
+            ZigbeeEvent::DeviceLeft { ieee_addr } => {
+                let ieee = ieee_addr.as_hex();
+                info!("Zigbee device left: {ieee}");
+                // Mark unavailable in state store (do NOT delete — mirrors HA behaviour).
+                if let Ok(entities) = entity_store.list_for_device(&ieee).await {
+                    for ent in entities {
+                        let _ = state_store.set(ha_types::entity::State {
+                            entity_id: ent.entity_id.clone(),
+                            state: "unavailable".to_string(),
+                            attributes: Default::default(),
+                            last_changed: String::new(),
+                            last_updated: String::new(),
+                            last_reported: String::new(),
+                            context: new_ctx(),
+                        });
+                    }
+                }
+            }
+
+            ZigbeeEvent::DeviceInterviewComplete { ieee_addr, device } => {
+                let ieee = ieee_addr.as_hex();
+                info!("Zigbee interview complete: {ieee} model={:?}", device.model);
+
+                // Upsert full device record.
+                let record = ZigbeeDeviceRecord {
+                    ieee_addr: ieee.clone(),
+                    friendly_name: device.friendly_name.clone(),
+                    manufacturer: device.manufacturer.clone(),
+                    model: device.model.clone(),
+                    power_source: device.power_source.clone(),
+                    sw_build_id: device.sw_build_id.clone(),
+                    interview_complete: true,
+                    last_seen: None,
+                    name_by_user: None,
+                    user_area_id: None,
+                };
+                if let Err(e) = device_store.upsert(record).await {
+                    warn!("zigbee device store upsert failed: {e:#}");
+                }
+
+                // Derive and register entities.
+                let entity_records = entities_for_device(&device);
+                if let Err(e) = entity_store.register_bulk(entity_records.clone()).await {
+                    warn!("zigbee entity store register failed: {e:#}");
+                }
+
+                // Push initial state from the device's cached values.
+                push_state(&device.state, &entity_records, &state_store);
+            }
+
+            ZigbeeEvent::StateChanged { ieee_addr, state } => {
+                let ieee = ieee_addr.as_hex();
+                if let Ok(entities) = entity_store.list_for_device(&ieee).await {
+                    push_state(&state, &entities, &state_store);
+                }
+            }
+        }
+    }
+    info!("Zigbee event loop ended");
+}
+
 /// Spawn the bridge + event-fan-out tasks and return a `ZigbeeHandle`.
 pub async fn start(
     cfg: ZigbeeConfig,
@@ -315,7 +409,7 @@ pub async fn start(
 
     // Create bridge with event + command channels.
     let config_path = std::path::PathBuf::from("/dev/null"); // not used without MQTT/DB
-    let (bridge, mut event_rx, cmd_tx) = Bridge::start(z2m_cfg, config_path);
+    let (bridge, event_rx, cmd_tx) = Bridge::start(z2m_cfg, config_path);
 
     // Spawn the bridge task.
     tokio::spawn(async move {
@@ -325,90 +419,7 @@ pub async fn start(
     });
 
     // Spawn the event fan-out task.
-    tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            match event {
-                ZigbeeEvent::DeviceJoined { ieee_addr, .. } => {
-                    let ieee = ieee_addr.as_hex();
-                    info!("Zigbee device joined: {ieee}");
-                    // Create a minimal record (interview not yet complete).
-                    let record = ZigbeeDeviceRecord {
-                        ieee_addr: ieee,
-                        friendly_name: ieee_addr.as_hex(),
-                        manufacturer: None,
-                        model: None,
-                        power_source: None,
-                        sw_build_id: None,
-                        interview_complete: false,
-                        last_seen: None,
-                        name_by_user: None,
-                        user_area_id: None,
-                    };
-                    if let Err(e) = device_store.upsert(record).await {
-                        warn!("zigbee device store upsert failed: {e:#}");
-                    }
-                }
-
-                ZigbeeEvent::DeviceLeft { ieee_addr } => {
-                    let ieee = ieee_addr.as_hex();
-                    info!("Zigbee device left: {ieee}");
-                    // Mark unavailable in state store (do NOT delete — mirrors HA behaviour).
-                    if let Ok(entities) = entity_store.list_for_device(&ieee).await {
-                        for ent in entities {
-                            let _ = state_store.set(ha_types::entity::State {
-                                entity_id: ent.entity_id.clone(),
-                                state: "unavailable".to_string(),
-                                attributes: Default::default(),
-                                last_changed: String::new(),
-                                last_updated: String::new(),
-                                last_reported: String::new(),
-                                context: new_ctx(),
-                            });
-                        }
-                    }
-                }
-
-                ZigbeeEvent::DeviceInterviewComplete { ieee_addr, device } => {
-                    let ieee = ieee_addr.as_hex();
-                    info!("Zigbee interview complete: {ieee} model={:?}", device.model);
-
-                    // Upsert full device record.
-                    let record = ZigbeeDeviceRecord {
-                        ieee_addr: ieee.clone(),
-                        friendly_name: device.friendly_name.clone(),
-                        manufacturer: device.manufacturer.clone(),
-                        model: device.model.clone(),
-                        power_source: device.power_source.clone(),
-                        sw_build_id: device.sw_build_id.clone(),
-                        interview_complete: true,
-                        last_seen: None,
-                        name_by_user: None,
-                        user_area_id: None,
-                    };
-                    if let Err(e) = device_store.upsert(record).await {
-                        warn!("zigbee device store upsert failed: {e:#}");
-                    }
-
-                    // Derive and register entities.
-                    let entity_records = entities_for_device(&device);
-                    if let Err(e) = entity_store.register_bulk(entity_records.clone()).await {
-                        warn!("zigbee entity store register failed: {e:#}");
-                    }
-
-                    // Push initial state from the device's cached values.
-                    push_state(&device.state, &entity_records, &state_store);
-                }
-
-                ZigbeeEvent::StateChanged { ieee_addr, state } => {
-                    let ieee = ieee_addr.as_hex();
-                    if let Ok(entities) = entity_store.list_for_device(&ieee).await {
-                        push_state(&state, &entities, &state_store);
-                    }
-                }
-            }
-        }
-        info!("Zigbee event loop ended");
-    });
+    tokio::spawn(run_event_loop(event_rx, device_store, entity_store, state_store));
 
     ZigbeeHandle { cmd_tx }
 }
