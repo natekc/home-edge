@@ -59,7 +59,14 @@ pub fn build_service_info(
             .as_deref()
             .unwrap_or(&config.ui.product_name),
     );
-    let host_name = format!("{instance_id}.local.");
+    let host_name = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .map(|h| {
+            let h = h.trim_end_matches('.');
+            format!("{h}.local.")
+        })
+        .unwrap_or_else(|| format!("{instance_id}.local."));
     let properties = build_properties(config, onboarding, instance_id, addresses);
 
     ServiceInfo::new(
@@ -75,8 +82,13 @@ pub fn build_service_info(
 
 pub fn discover_announce_addresses() -> Result<Vec<IpAddr>> {
     let mut addresses = Vec::new();
-    for (_name, address) in list_afinet_netifas().context("list network interfaces")? {
+    for (name, address) in list_afinet_netifas().context("list network interfaces")? {
         if address.is_loopback() || address.is_unspecified() {
+            continue;
+        }
+        // Skip USB tethering / gadget interfaces — they are not reachable by
+        // other devices on the LAN and would cause mDNS connections to time out.
+        if name.starts_with("usb") || name.starts_with("rndis") || name.starts_with("ncm") {
             continue;
         }
         if !addresses.contains(&address) {
