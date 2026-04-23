@@ -22,7 +22,7 @@ pub struct Storage {
     lock: Mutex<()>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OnboardingState {
     #[serde(default)]
     pub version: u32,
@@ -44,6 +44,21 @@ pub struct OnboardingState {
     pub time_zone: Option<String>,
     #[serde(default)]
     pub unit_system: Option<String>,
+    /// Home zone latitude. Collected during the location onboarding step.
+    /// Used to synthesise `zone.home` for the `get_zones` webhook.
+    /// Source: homeassistant/components/zone/__init__.py  _home_conf
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    /// Home zone longitude.
+    #[serde(default)]
+    pub longitude: Option<f64>,
+    /// Home zone geofence radius in metres. Default: 100 m (HA core `DEFAULT_RADIUS`).
+    #[serde(default = "default_home_zone_radius")]
+    pub radius: f64,
+}
+
+fn default_home_zone_radius() -> f64 {
+    100.0
 }
 
 impl Default for OnboardingState {
@@ -59,6 +74,9 @@ impl Default for OnboardingState {
             language: None,
             time_zone: None,
             unit_system: None,
+            latitude: None,
+            longitude: None,
+            radius: default_home_zone_radius(),
         }
     }
 }
@@ -120,6 +138,41 @@ impl Storage {
         let _guard = self.lock.lock().await;
         let path = self.onboarding_path();
         save_json_atomic(&path, state).await
+    }
+
+    /// Seed home-zone coordinates from config on first boot.
+    ///
+    /// Only writes if `OnboardingState` has no coordinates yet.
+    /// This is a no-op once onboarding (or a previous seed) has set them,
+    /// mirroring the once-only pattern of `AreaRegistryStore::seed_if_empty`.
+    pub async fn seed_home_zone_coords_if_unset(
+        &self,
+        latitude: Option<f64>,
+        longitude: Option<f64>,
+        radius: f64,
+    ) -> Result<()> {
+        // Fast path: if config has no coordinates, nothing to do.
+        if latitude.is_none() && longitude.is_none() {
+            return Ok(());
+        }
+        let _guard = self.lock.lock().await;
+        let path = self.onboarding_path();
+        let mut state = match tokio::fs::read_to_string(&path).await {
+            Ok(contents) => serde_json::from_str::<OnboardingState>(&contents)
+                .with_context(|| format!("failed to parse {}", path.display()))?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => OnboardingState::default(),
+            Err(err) => {
+                return Err(err).with_context(|| format!("failed to read {}", path.display()));
+            }
+        };
+        // Only seed if both lat and lon are still unset.
+        if state.latitude.is_some() || state.longitude.is_some() {
+            return Ok(());
+        }
+        state.latitude = latitude;
+        state.longitude = longitude;
+        state.radius = radius;
+        save_json_atomic(&path, &state).await
     }
 
     pub async fn update_onboarding<F>(&self, update: F) -> Result<OnboardingState>
@@ -281,6 +334,9 @@ mod tests {
             language: Some("en".into()),
             time_zone: Some("UTC".into()),
             unit_system: Some("metric".into()),
+            latitude: Some(51.5),
+            longitude: Some(-0.1),
+            radius: 100.0,
         };
 
         storage.save_onboarding(&state).await.expect("save state");
