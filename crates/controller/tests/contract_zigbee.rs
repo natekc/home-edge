@@ -325,3 +325,143 @@ async fn permit_join_returns_503_when_bridge_not_configured() {
         .await;
     resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 }
+
+// ---------------------------------------------------------------------------
+// Test: IAS Zone cluster (0x0500) → contact + tamper binary_sensors.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ias_zone_creates_contact_and_tamper_entities() {
+    let (_, state) = support::test_server_and_state(support::completed_onboarding()).await;
+
+    let ieee = IeeeAddr::from_hex("0x00158d0006666666").expect("valid ieee");
+    // Door/window sensor: IAS Zone (0x0500) + Power (0x0001).
+    let mut dev = mock_device(ieee, "front_door_sensor", vec![0x0500, 0x0001]);
+    dev.state.insert("contact".to_string(), json!(false));
+    dev.state.insert("tamper".to_string(), json!(false));
+    dev.state.insert("battery".to_string(), json!(95));
+
+    drive_events(
+        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        Arc::clone(&state.zigbee_devices),
+        Arc::clone(&state.zigbee_entities),
+        Arc::clone(&state.states),
+    ).await;
+
+    let entities = state
+        .zigbee_entities
+        .list_for_device(&ieee.as_hex())
+        .await
+        .expect("list entities");
+    let entity_ids: Vec<_> = entities.iter().map(|e| e.entity_id.as_str()).collect();
+
+    // IAS contact entity (door device class, not "motion").
+    assert!(entity_ids.contains(&"binary_sensor.front_door_sensor_contact"), "contact entity");
+    let contact = entities.iter().find(|e| e.entity_id == "binary_sensor.front_door_sensor_contact").unwrap();
+    assert_eq!(contact.device_class.as_deref(), Some("door"));
+    assert_eq!(contact.attribute_key.as_deref(), Some("contact"));
+
+    // IAS tamper entity.
+    assert!(entity_ids.contains(&"binary_sensor.front_door_sensor_tamper"), "tamper entity");
+    let tamper = entities.iter().find(|e| e.entity_id == "binary_sensor.front_door_sensor_tamper").unwrap();
+    assert_eq!(tamper.device_class.as_deref(), Some("tamper"));
+
+    // Power cluster produces battery %, battery_voltage, and battery_low.
+    assert!(entity_ids.contains(&"sensor.front_door_sensor_battery"), "battery sensor");
+    assert!(entity_ids.contains(&"sensor.front_door_sensor_battery_voltage"), "battery_voltage sensor");
+    assert!(entity_ids.contains(&"binary_sensor.front_door_sensor_battery_low"), "battery_low binary_sensor");
+
+    // No legacy _motion entity should exist.
+    assert!(
+        !entity_ids.iter().any(|id| id.contains("_motion")),
+        "no _motion entity expected for IAS zone; got: {:?}", entity_ids
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: Power cluster (0x0001) → battery %, battery_voltage, battery_low.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn power_cluster_creates_three_battery_entities() {
+    let (_, state) = support::test_server_and_state(support::completed_onboarding()).await;
+
+    let ieee = IeeeAddr::from_hex("0x00158d0007777777").expect("valid ieee");
+    let mut dev = mock_device(ieee, "motion_pir", vec![0x0406, 0x0001]);
+    dev.state.insert("occupancy".to_string(), json!(false));
+    dev.state.insert("battery".to_string(), json!(72));
+    dev.state.insert("battery_voltage".to_string(), json!(2.9));
+    dev.state.insert("battery_low".to_string(), json!(false));
+
+    drive_events(
+        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        Arc::clone(&state.zigbee_devices),
+        Arc::clone(&state.zigbee_entities),
+        Arc::clone(&state.states),
+    ).await;
+
+    let entities = state
+        .zigbee_entities
+        .list_for_device(&ieee.as_hex())
+        .await
+        .expect("list entities");
+    let entity_ids: Vec<_> = entities.iter().map(|e| e.entity_id.as_str()).collect();
+
+    assert!(entity_ids.contains(&"sensor.motion_pir_battery"), "battery%");
+    assert!(entity_ids.contains(&"sensor.motion_pir_battery_voltage"), "battery_voltage");
+    assert!(entity_ids.contains(&"binary_sensor.motion_pir_battery_low"), "battery_low");
+
+    // Check unit and device_class.
+    let batt_v = entities.iter().find(|e| e.entity_id == "sensor.motion_pir_battery_voltage").unwrap();
+    assert_eq!(batt_v.unit_of_measurement.as_deref(), Some("V"));
+    assert_eq!(batt_v.device_class.as_deref(), Some("voltage"));
+
+    let batt_low = entities.iter().find(|e| e.entity_id == "binary_sensor.motion_pir_battery_low").unwrap();
+    assert_eq!(batt_low.device_class.as_deref(), Some("battery"));
+
+    // State for battery_voltage should be "2.9".
+    let bv_state = state.states.get("sensor.motion_pir_battery_voltage").expect("battery_voltage state");
+    assert_eq!(bv_state.state, "2.9");
+
+    // battery_low "false" should become "off".
+    let bl_state = state.states.get("binary_sensor.motion_pir_battery_low").expect("battery_low state");
+    assert_eq!(bl_state.state, "off");
+}
+
+// ---------------------------------------------------------------------------
+// Test: sensor state_class="measurement" set for all numeric sensor entities.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn sensor_entities_have_state_class_measurement() {
+    let (_, state) = support::test_server_and_state(support::completed_onboarding()).await;
+
+    let ieee = IeeeAddr::from_hex("0x00158d0008888888").expect("valid ieee");
+    let mut dev = mock_device(ieee, "env_sensor", vec![0x0402, 0x0405, 0x0403, 0x0400]);
+    dev.state.insert("temperature".to_string(), json!(22.0));
+    dev.state.insert("humidity".to_string(), json!(48.0));
+    dev.state.insert("pressure".to_string(), json!(1013.0));
+    dev.state.insert("illuminance_lux".to_string(), json!(340));
+
+    drive_events(
+        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        Arc::clone(&state.zigbee_devices),
+        Arc::clone(&state.zigbee_entities),
+        Arc::clone(&state.states),
+    ).await;
+
+    for sensor_id in [
+        "sensor.env_sensor_temperature",
+        "sensor.env_sensor_humidity",
+        "sensor.env_sensor_pressure",
+        "sensor.env_sensor_illuminance",
+    ] {
+        let s = state.states.get(sensor_id).unwrap_or_else(|| panic!("{sensor_id} state missing"));
+        assert_eq!(
+            s.attributes.get("state_class").and_then(|v| v.as_str()),
+            Some("measurement"),
+            "{sensor_id} should have state_class=measurement"
+        );
+    }
+}
+

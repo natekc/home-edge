@@ -836,18 +836,44 @@ async fn fragment_dashboard_sensors(State(state): State<Arc<AppState>>) -> Respo
     render_template(&state, "fragments/sensors.html", ctx)
 }
 
+/// Resolve an entity into an `(EntityView, entity_type)` pair, checking
+/// mobile entities first and then the Zigbee store.  Storage errors are
+/// returned as `Err(Response)` so the caller can propagate them immediately.
+async fn fetch_entity_view(
+    entity_id: &str,
+    state: &AppState,
+) -> Result<Option<(EntityView, String)>, Response> {
+    if let Some(e) = state
+        .mobile_entities
+        .get_by_entity_id(entity_id)
+        .await
+        .map_err(|e| internal_error(&e))?
+    {
+        return Ok(Some((entity_to_view(&e, state), e.entity_type)));
+    }
+    #[cfg(feature = "zigbee")]
+    if let Some(ze) = state
+        .zigbee_entities
+        .get(entity_id)
+        .await
+        .map_err(|e| internal_error(&e))?
+    {
+        return Ok(Some((zigbee_entity_to_view(&ze, state), ze.domain)));
+    }
+    Ok(None)
+}
+
 async fn fragment_more_info(
     State(state): State<Arc<AppState>>,
     Path(entity_id): Path<String>,
 ) -> Response {
-    let entity = match state.mobile_entities.get_by_entity_id(&entity_id).await {
-        Ok(Some(e)) => e,
-        Ok(None) => return (StatusCode::NOT_FOUND, Html("<p class='text-muted'>Entity not found</p>".to_string())).into_response(),
-        Err(err) => return internal_error(&err),
+    let (view, entity_type) = match fetch_entity_view(&entity_id, &state).await {
+        Err(resp)      => return resp,
+        Ok(None)       => return (StatusCode::NOT_FOUND, Html("<p class='text-muted'>Entity not found</p>".to_string())).into_response(),
+        Ok(Some(pair)) => pair,
     };
-    let view = entity_to_view(&entity, &state);
     let history = state.history.last_n(&entity_id, 20).await;
-    let template_name = match entity.entity_type.as_str() {
+    let template_name = match entity_type.as_str() {
         "light"         => "more_info/_light.html",
         "switch"        => "more_info/_switch.html",
         "cover"         => "more_info/_cover.html",
@@ -862,7 +888,7 @@ async fn fragment_more_info(
         "climate"       => "more_info/_climate.html",
         _               => "more_info/_default.html",
     };
-    let sparkline: Option<String> = if entity.entity_type == "sensor" && history.len() >= 2 {
+    let sparkline: Option<String> = if entity_type == "sensor" && history.len() >= 2 {
         Some(crate::history_store::render_sparkline(&history, 300, 56))
     } else {
         None
@@ -1466,6 +1492,101 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
     }
 }
 
+/// Build an [`EntityView`] from a Zigbee entity record and the live state store.
+///
+/// Zigbee entities are read-only from the UI perspective (no webhook_id);
+/// the service_action is empty for binary_sensor and sensor, "toggle" for
+/// light/switch (controlled via the Zigbee command path, not HA webhooks).
+#[cfg(feature = "zigbee")]
+fn zigbee_entity_to_view(
+    entity: &crate::zigbee_entity_store::ZigbeeEntityRecord,
+    state: &AppState,
+) -> EntityView {
+    let value = state
+        .states
+        .get(&entity.entity_id)
+        .map(|s| s.state.clone())
+        .unwrap_or_else(|| "unavailable".to_string());
+    let attrs = state
+        .states
+        .get(&entity.entity_id)
+        .map(|s| s.attributes)
+        .unwrap_or_default();
+
+    let brightness = attrs
+        .get("brightness")
+        .and_then(|v| v.as_u64())
+        .map(|v| v.min(255) as u8);
+    let color_temp_kelvin = attrs
+        .get("color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16);
+    let min_color_temp_kelvin = attrs
+        .get("min_color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16)
+        .unwrap_or(2000);
+    let max_color_temp_kelvin = attrs
+        .get("max_color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16)
+        .unwrap_or(6535);
+
+    let icon_name = match entity.domain.as_str() {
+        "light" => "lightbulb",
+        "switch" => {
+            if value == "on" { "toggle-switch" } else { "toggle-switch-off" }
+        }
+        "sensor" => match entity.device_class.as_deref() {
+            Some("temperature")           => "thermometer",
+            Some("humidity")              => "water-percent",
+            Some("illuminance")           => "weather-sunny",
+            Some("battery")              => "battery",
+            Some("voltage")              => "lightning-bolt",
+            Some("atmospheric_pressure") => "gauge",
+            _                            => "gauge",
+        },
+        "binary_sensor" => match entity.device_class.as_deref() {
+            Some("occupancy") | Some("motion") => "motion-sensor",
+            Some("door") | Some("window")      => "door",
+            Some("tamper")                     => "shield-alert",
+            Some("battery")                    => "battery-alert",
+            _                                  => "radiobox-marked",
+        },
+        _ => "home",
+    };
+
+    let service_action = match entity.domain.as_str() {
+        "light" | "switch" => "toggle",
+        _                  => "",
+    };
+
+    EntityView {
+        entity_id:             entity.entity_id.clone(),
+        webhook_id:            String::new(),
+        display_name:          entity.display_name().to_string(),
+        entity_type:           entity.domain.clone(),
+        icon_name:             icon_name.to_string(),
+        value,
+        unit:                  entity.unit_of_measurement.clone().unwrap_or_default(),
+        device_class:          entity.device_class.clone().unwrap_or_default(),
+        user_area_id:          entity.user_area_id.clone().unwrap_or_default(),
+        unit_of_measurement:   entity.unit_of_measurement.clone(),
+        disabled:              false,
+        service_action:        service_action.to_string(),
+        current_temperature:   None,
+        target_temperature:    None,
+        hvac_modes:            vec![],
+        brightness,
+        color_temp_kelvin,
+        min_color_temp_kelvin,
+        max_color_temp_kelvin,
+        options:               vec![],
+        current_position:      None,
+        fan_percentage:        None,
+    }
+}
+
 /// Returns the HA service action string for a given entity type.
 fn service_action_for(entity_type: &str) -> &'static str {
     match entity_type {
@@ -1776,10 +1897,14 @@ async fn zigbee_device_detail_page(
         Ok(None) => return page_error(StatusCode::NOT_FOUND, "Zigbee device not found"),
         Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
     };
-    let entities = match state.zigbee_entities.list_for_device(&ieee).await {
+    let entity_records = match state.zigbee_entities.list_for_device(&ieee).await {
         Ok(e) => e,
         Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
     };
+    let entities: Vec<EntityView> = entity_records
+        .iter()
+        .map(|e| zigbee_entity_to_view(e, &state))
+        .collect();
     let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
         device   => Value::from_serialize(&device),
         entities => Value::from_serialize(&entities),
