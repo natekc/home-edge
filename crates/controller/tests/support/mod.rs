@@ -133,6 +133,7 @@ async fn build_server_and_state(
         areas: home_edge::config::AreasConfig::default(),
         home_zone: home_edge::config::HomeZoneConfig::default(),
         history: home_edge::config::HistoryConfig::default(),
+            mdns: Default::default(),
     };
     let state = Arc::new(
         AppState::new_initialized(config, storage)

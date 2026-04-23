@@ -23,6 +23,7 @@ fn sample_config() -> AppConfig {
         areas: home_edge::config::AreasConfig::default(),
         home_zone: home_edge::config::HomeZoneConfig::default(),
         history: home_edge::config::HistoryConfig::default(),
+            mdns: Default::default(),
     }
 }
 
@@ -60,10 +61,17 @@ fn zeroconf_contract_matches_home_assistant_service_type_and_fields() {
         service.get_fullname(),
         "Living Room._home-assistant._tcp.local."
     );
-    assert_eq!(
-        service.get_hostname(),
-        "123e4567-e89b-12d3-a456-426614174000.local."
-    );
+    // hostname is the system hostname, not the instance UUID
+    let expected_host = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .map(|h| {
+            let h = h.trim_end_matches('.');
+            let h = h.strip_suffix(".local").unwrap_or(h);
+            format!("{h}.local.")
+        })
+        .unwrap_or_else(|| "123e4567-e89b-12d3-a456-426614174000.local.".into());
+    assert_eq!(service.get_hostname(), expected_host);
     assert_eq!(service.get_port(), 8124);
     assert_eq!(
         service.get_property_val_str("location_name"),

@@ -27,3 +27,16 @@ names = ["Living Room", "Kitchen", "Bedroom"]
 # capacity: maximum sensor readings retained per entity (oldest evicted first).
 # [history]
 # capacity = 1000
+
+# mDNS / Zeroconf advertisement settings.
+# exclude_interfaces: interface name *prefixes* to skip when building the list
+# of addresses advertised via mDNS.  Run with RUST_LOG=debug to see every
+# interface that is found and whether it is announced or excluded.
+#
+# Default excludes USB tethering/gadget interfaces (usb*, rndis*, ncm*) which
+# provide internet access but are not reachable by LAN clients.
+# Set to an empty list to announce on all non-loopback interfaces:
+#   exclude_interfaces = []
+#
+[mdns]
+exclude_interfaces = ["usb", "rndis", "ncm"]

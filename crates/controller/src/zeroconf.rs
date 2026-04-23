@@ -4,10 +4,10 @@ use std::net::IpAddr;
 use anyhow::{Context, Result, anyhow};
 use local_ip_address::list_afinet_netifas;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use tracing::warn;
+use tracing::{info, warn, debug};
 
 use crate::app::AppState;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, MdnsConfig};
 use crate::storage::OnboardingState;
 
 pub const ZEROCONF_TYPE: &str = "_home-assistant._tcp.local.";
@@ -23,7 +23,7 @@ impl Drop for ZeroconfRegistration {
 }
 
 pub async fn announce(state: &AppState) -> Result<Option<ZeroconfRegistration>> {
-    let addresses = discover_announce_addresses()?;
+    let addresses = discover_announce_addresses(&state.config.mdns)?;
     if addresses.is_empty() {
         warn!("no routable network addresses found for zeroconf advertisement");
         return Ok(None);
@@ -64,6 +64,7 @@ pub fn build_service_info(
         .and_then(|h| h.into_string().ok())
         .map(|h| {
             let h = h.trim_end_matches('.');
+            let h = h.strip_suffix(".local").unwrap_or(h);
             format!("{h}.local.")
         })
         .unwrap_or_else(|| format!("{instance_id}.local."));
@@ -80,21 +81,47 @@ pub fn build_service_info(
     .context("build zeroconf service info")
 }
 
-pub fn discover_announce_addresses() -> Result<Vec<IpAddr>> {
+pub fn discover_announce_addresses(cfg: &MdnsConfig) -> Result<Vec<IpAddr>> {
+    let all_ifaces = list_afinet_netifas().context("list network interfaces")?;
+
+    debug!("mDNS interface scan: {} interfaces found, exclude_prefixes={:?}",
+        all_ifaces.len(), cfg.exclude_interfaces);
+
     let mut addresses = Vec::new();
-    for (name, address) in list_afinet_netifas().context("list network interfaces")? {
+    for (name, address) in &all_ifaces {
         if address.is_loopback() || address.is_unspecified() {
+            debug!(iface = %name, addr = %address, "mDNS: skipping loopback/unspecified");
             continue;
         }
-        // Skip USB tethering / gadget interfaces — they are not reachable by
-        // other devices on the LAN and would cause mDNS connections to time out.
-        if name.starts_with("usb") || name.starts_with("rndis") || name.starts_with("ncm") {
+        // Always skip docker/veth/bridge virtual interfaces — they are host-only.
+        if name.starts_with("docker") || name.starts_with("veth") || name.starts_with("br-") || name.starts_with("virbr") {
+            debug!(iface = %name, addr = %address, "mDNS: skipping virtual/bridge interface");
             continue;
         }
-        if !addresses.contains(&address) {
-            addresses.push(address);
+        if cfg.exclude_interfaces.iter().any(|prefix| name.starts_with(prefix.as_str())) {
+            info!(iface = %name, addr = %address,
+                "mDNS: excluding interface (matches exclude_interfaces config); \
+                 to announce on this interface remove its prefix from [mdns] exclude_interfaces");
+            continue;
+        }
+        if !addresses.contains(address) {
+            info!(iface = %name, addr = %address, "mDNS: announcing on interface");
+            addresses.push(*address);
         }
     }
+
+    if addresses.is_empty() {
+        // Print every interface so the operator knows what to add/remove.
+        warn!("mDNS: no announceable addresses remain after filtering.");
+        for (name, address) in &all_ifaces {
+            warn!(iface = %name, addr = %address, "mDNS: available interface (not announced)");
+        }
+        warn!(
+            "To include an interface, remove its name prefix from [mdns] exclude_interfaces \
+             in your config file. To include ALL interfaces set: exclude_interfaces = []"
+        );
+    }
+
     Ok(addresses)
 }
 
@@ -169,6 +196,7 @@ mod tests {
             areas: crate::config::AreasConfig::default(),
             home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
+            mdns: Default::default(),
         }
     }
 
@@ -206,10 +234,17 @@ mod tests {
             service.get_fullname(),
             "My Home._home-assistant._tcp.local."
         );
-        assert_eq!(
-            service.get_hostname(),
-            "123e4567-e89b-12d3-a456-426614174000.local."
-        );
+        // hostname is derived from the system hostname (not the instance UUID)
+        let expected_host = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .map(|h| {
+                let h = h.trim_end_matches('.');
+                let h = h.strip_suffix(".local").unwrap_or(h);
+                format!("{h}.local.")
+            })
+            .unwrap_or_else(|| "123e4567-e89b-12d3-a456-426614174000.local.".into());
+        assert_eq!(service.get_hostname(), expected_host);
         assert_eq!(service.get_port(), 8124);
         assert_eq!(
             service.get_property_val_str("location_name"),
