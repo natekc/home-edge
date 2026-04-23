@@ -40,3 +40,17 @@ names = ["Living Room", "Kitchen", "Bedroom"]
 #
 [mdns]
 exclude_interfaces = ["usb", "rndis", "ncm"]
+
+# ── Zigbee coordinator integration ──────────────────────────────────────────
+# Uncomment and fill in the [zigbee] section to enable the embedded
+# zigbee2mqtt-rs bridge.  The integration starts automatically on boot
+# when this section is present; remove it to disable Zigbee entirely.
+#
+# [zigbee]
+# serial_port = "/dev/ttyACM0"   # path to the Zigbee coordinator serial port
+# baudrate = 115200              # baud rate (default 115200)
+# adapter = "znp"                # coordinator type: znp | ezsp | auto
+# rtscts = false                 # hardware (RTS/CTS) flow control
+# permit_join_on_startup = false # allow device pairing on startup
+# channel = 11                   # Zigbee channel 11-26
+# pan_id = 0x1a62                # 802.15.4 PAN ID (auto-generated if absent)

@@ -197,6 +197,7 @@ mod tests {
             home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
             mdns: Default::default(),
+            zigbee: None,
         }
     }
 

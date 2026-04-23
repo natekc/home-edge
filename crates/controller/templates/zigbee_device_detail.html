@@ -1,0 +1,111 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <div class="breadcrumb">
+    <a href="/">Overview</a>
+    <span class="breadcrumb-sep">›</span>
+    <a href="/zigbee">Zigbee</a>
+    <span class="breadcrumb-sep">›</span>
+    <span>{{ device.name_by_user if device.name_by_user else device.friendly_name }}</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <div>
+      <h1>{{ device.name_by_user if device.name_by_user else device.friendly_name }}</h1>
+      <p style="font-size:.82rem;color:var(--text-secondary)">{{ device.ieee_addr }}</p>
+    </div>
+    <form method="post" action="/api/zigbee/devices/{{ device.ieee_addr }}/delete"
+          onsubmit="return confirm('Remove this device from the registry?')">
+      <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+    </form>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- Device metadata card -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header">
+      <span class="ha-card-title">Device Info</span>
+    </div>
+    <div class="ha-card-body">
+      <dl class="info-grid">
+        <dt>Manufacturer</dt>  <dd>{{ device.manufacturer | default("Unknown") }}</dd>
+        <dt>Model</dt>         <dd>{{ device.model | default("Unknown") }}</dd>
+        <dt>Power source</dt>  <dd>{{ device.power_source | default("Unknown") }}</dd>
+        <dt>SW build</dt>      <dd>{{ device.sw_build_id | default("—") }}</dd>
+        <dt>Interview</dt>     <dd>{% if device.interview_complete %}<span class="badge badge-success">Complete</span>{% else %}<span class="badge badge-warning">Pending</span>{% endif %}</dd>
+        <dt>Last seen</dt>     <dd>{{ device.last_seen | default("—") }}</dd>
+        {% if device.user_area_id %}
+        <dt>Area</dt>          <dd>{{ device.user_area_id }}</dd>
+        {% endif %}
+      </dl>
+    </div>
+  </div>
+
+  <!-- Rename form -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header">
+      <span class="ha-card-title">Rename</span>
+    </div>
+    <div class="ha-card-body">
+      <form
+        hx-patch="/api/zigbee/devices/{{ device.ieee_addr }}"
+        hx-ext="json-enc"
+        hx-swap="none"
+        style="display:flex;gap:8px;align-items:flex-end"
+      >
+        <div class="form-group" style="flex:1;margin:0">
+          <label for="name_by_user">Display name</label>
+          <input
+            id="name_by_user"
+            name="name_by_user"
+            type="text"
+            class="form-control"
+            value="{{ device.name_by_user if device.name_by_user else device.friendly_name }}"
+            placeholder="{{ device.friendly_name }}"
+          >
+        </div>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Entities card -->
+  <div class="ha-card">
+    <div class="ha-card-header">
+      <span class="ha-card-title">Entities ({{ entities | length }})</span>
+    </div>
+    {% if entities | length == 0 %}
+    <div class="ha-card-body">
+      <p style="color:var(--text-secondary)">
+        No entities yet — waiting for interview completion.
+      </p>
+    </div>
+    {% else %}
+    <div class="ha-card-body" style="padding:0">
+      <table class="data-table" style="width:100%">
+        <thead>
+          <tr>
+            <th>Entity ID</th>
+            <th>Domain</th>
+            <th>Device class</th>
+            <th>Unit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ent in entities %}
+          <tr>
+            <td style="font-family:monospace;font-size:.82rem">{{ ent.entity_id }}</td>
+            <td>{{ ent.domain }}</td>
+            <td>{{ ent.device_class | default("—") }}</td>
+            <td>{{ ent.unit_of_measurement | default("—") }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

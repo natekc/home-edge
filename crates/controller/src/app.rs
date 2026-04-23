@@ -44,6 +44,12 @@ use crate::storage::Storage;
 use crate::zeroconf;
 #[cfg(feature = "transport_wifi")]
 use tokio::sync::broadcast::error::RecvError;
+#[cfg(all(feature = "transport_wifi", feature = "zigbee"))]
+use crate::zigbee_device_store::ZigbeeDeviceStore;
+#[cfg(feature = "zigbee")]
+use crate::zigbee_entity_store::ZigbeeEntityStore;
+#[cfg(feature = "zigbee")]
+use crate::zigbee_integration::ZigbeeHandle;
 
 #[cfg(feature = "transport_wifi")]
 pub struct AppState {
@@ -55,7 +61,7 @@ pub struct AppState {
     pub zone_store: ZoneStore,
     pub mobile_devices: MobileDeviceStore,
     pub mobile_entities: MobileEntityStore,
-    pub states: StateStore,
+    pub states: std::sync::Arc<StateStore>,
     pub tokens: TokenStore,
     pub flows: LoginFlowStore,
     pub webhooks: WebhookStore,
@@ -64,6 +70,16 @@ pub struct AppState {
     pub history: crate::history_store::HistoryStore,
     pub logbook: crate::logbook_store::LogbookStore,
     pub notifications: NotificationStore,
+    /// Zigbee device registry (only populated when the `zigbee` feature is enabled
+    /// and `[zigbee]` is present in config.toml).
+    #[cfg(feature = "zigbee")]
+    pub zigbee_devices: Arc<ZigbeeDeviceStore>,
+    #[cfg(feature = "zigbee")]
+    pub zigbee_entities: Arc<ZigbeeEntityStore>,
+    /// Operational handle for the running zigbee bridge; `None` if the
+    /// `zigbee` feature is disabled or `[zigbee]` is absent from config.
+    #[cfg(feature = "zigbee")]
+    pub zigbee: Option<ZigbeeHandle>,
 }
 
 #[cfg(feature = "transport_wifi")]
@@ -76,6 +92,10 @@ impl AppState {
         let mobile_entities = MobileEntityStore::new(storage.root().to_path_buf());
         let tokens = TokenStore::new(storage.root().to_path_buf());
         let history_capacity = config.history.capacity;
+        #[cfg(feature = "zigbee")]
+        let zigbee_devices = Arc::new(ZigbeeDeviceStore::new(storage.root().to_path_buf()));
+        #[cfg(feature = "zigbee")]
+        let zigbee_entities = Arc::new(ZigbeeEntityStore::new(storage.root().to_path_buf()));
         Self {
             core: AppCore::new(),
             auth,
@@ -85,7 +105,7 @@ impl AppState {
             mobile_entities,
             config,
             storage,
-            states: StateStore::new(),
+            states: std::sync::Arc::new(StateStore::new()),
             tokens,
             flows: LoginFlowStore::new(),
             webhooks: WebhookStore::new(),
@@ -94,11 +114,17 @@ impl AppState {
             history: crate::history_store::HistoryStore::new(history_capacity),
             logbook: crate::logbook_store::LogbookStore::new(history_capacity),
             notifications: NotificationStore::new(),
+            #[cfg(feature = "zigbee")]
+            zigbee_devices,
+            #[cfg(feature = "zigbee")]
+            zigbee_entities,
+            #[cfg(feature = "zigbee")]
+            zigbee: None,
         }
     }
 
     pub async fn new_initialized(config: AppConfig, storage: Storage) -> Result<Self> {
-        let state = Self::new(config, storage);
+        let mut state = Self::new(config, storage);
         let onboarding = state.storage.load_onboarding().await?;
         state
             .core
@@ -119,6 +145,18 @@ impl AppState {
                 state.config.home_zone.radius,
             )
             .await?;
+        // Start Zigbee bridge if configured.
+        #[cfg(feature = "zigbee")]
+        if let Some(ref zigbee_cfg) = state.config.zigbee.clone() {
+            let handle = crate::zigbee_integration::start(
+                zigbee_cfg.clone(),
+                Arc::clone(&state.zigbee_devices),
+                Arc::clone(&state.zigbee_entities),
+                Arc::clone(&state.states),
+            ).await;
+            state.zigbee = Some(handle);
+            tracing::info!("Zigbee bridge started");
+        }
         Ok(state)
     }
 
@@ -267,6 +305,7 @@ mod tests {
             home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
             mdns: Default::default(),
+            zigbee: None,
         }
     }
 

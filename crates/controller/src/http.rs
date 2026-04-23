@@ -138,6 +138,7 @@ macro_rules! app_ctx {
             location_name => $location_name,
             transport     => if cfg!(feature = "transport_wifi") { "WiFi" } else { "BLE" },
             is_ble_build  => cfg!(feature = "transport_ble"),
+            zigbee_enabled => cfg!(feature = "zigbee") && $state.config.zigbee.is_some(),
             active_page   => $active,
             server_host   => local_host(),
             server_port   => $state.config.server.port,
@@ -150,6 +151,29 @@ macro_rules! app_ctx {
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
+
+/// Returns the Zigbee-specific routes when the `zigbee` feature is enabled.
+/// When the feature is disabled this returns an empty router with no overhead.
+fn zigbee_router(state: Arc<AppState>) -> Router {
+    #[cfg(feature = "zigbee")]
+    {
+        Router::new()
+            // REST
+            .route("/api/zigbee/devices",                    get(api_zigbee_devices))
+            .route("/api/zigbee/devices/{ieee}",             patch(api_zigbee_device_rename).delete(api_zigbee_device_delete))
+            .route("/api/zigbee/permit_join",                post(api_zigbee_permit_join))
+            .route("/api/zigbee/permit_join/stop",           post(api_zigbee_permit_join_stop))
+            // UI pages
+            .route("/zigbee",                                get(zigbee_devices_page))
+            .route("/zigbee/{ieee}",                         get(zigbee_device_detail_page))
+            .with_state(state)
+    }
+    #[cfg(not(feature = "zigbee"))]
+    {
+        let _ = state;
+        Router::new()
+    }
+}
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -215,9 +239,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/onboarding/integration",                    post(complete_integration))
         .route("/api/onboarding/integration/wait",               post(onboarding_integration_wait))
         .route("/api/onboarding/complete",                       post(complete_onboarding))
-        .with_state(state)
+        .with_state(state.clone())
         // Any unmatched route returns an HTML 404 so the iOS connected script fires.
         .fallback(fallback_404)
+        .merge(zigbee_router(state))
 }
 
 // ---------------------------------------------------------------------------
@@ -1583,4 +1608,181 @@ impl ErrorResponse {
     pub fn new(error: String) -> Self {
         Self { error }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Zigbee REST API handlers
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "zigbee")]
+use crate::zigbee_device_store::ZigbeeDeviceMetaUpdate;
+
+#[cfg(feature = "zigbee")]
+#[derive(Debug, Serialize)]
+struct ZigbeeDeviceResponse {
+    ieee_addr: String,
+    friendly_name: String,
+    display_name: String,
+    manufacturer: Option<String>,
+    model: Option<String>,
+    power_source: Option<String>,
+    interview_complete: bool,
+    last_seen: Option<String>,
+    user_area_id: Option<String>,
+}
+
+#[cfg(feature = "zigbee")]
+async fn api_zigbee_devices(State(state): State<Arc<AppState>>) -> Response {
+    match state.zigbee_devices.list().await {
+        Ok(devices) => {
+            let resp: Vec<ZigbeeDeviceResponse> = devices
+                .into_iter()
+                .map(|d| ZigbeeDeviceResponse {
+                    display_name: d.display_name().to_string(),
+                    ieee_addr: d.ieee_addr.clone(),
+                    friendly_name: d.friendly_name.clone(),
+                    manufacturer: d.manufacturer,
+                    model: d.model,
+                    power_source: d.power_source,
+                    interview_complete: d.interview_complete,
+                    last_seen: d.last_seen,
+                    user_area_id: d.user_area_id,
+                })
+                .collect();
+            Json(resp).into_response()
+        }
+        Err(e) => internal_error(&e),
+    }
+}
+
+#[cfg(feature = "zigbee")]
+#[derive(Debug, Deserialize)]
+struct ZigbeeDeviceRenamePayload {
+    name_by_user: Option<Option<String>>,
+    user_area_id: Option<Option<String>>,
+}
+
+#[cfg(feature = "zigbee")]
+async fn api_zigbee_device_rename(
+    State(state): State<Arc<AppState>>,
+    Path(ieee): Path<String>,
+    Json(payload): Json<ZigbeeDeviceRenamePayload>,
+) -> Response {
+    let update = ZigbeeDeviceMetaUpdate {
+        name_by_user: payload.name_by_user,
+        user_area_id: payload.user_area_id,
+    };
+    match state.zigbee_devices.update_meta(&ieee, update).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(ErrorResponse::new("device not found".into()))).into_response(),
+        Err(e) => internal_error(&e),
+    }
+}
+
+#[cfg(feature = "zigbee")]
+async fn api_zigbee_device_delete(
+    State(state): State<Arc<AppState>>,
+    Path(ieee): Path<String>,
+) -> Response {
+    // List entities before removing them so we can clear state store.
+    let entity_ids: Vec<String> = state
+        .zigbee_entities
+        .list_for_device(&ieee)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| e.entity_id)
+        .collect();
+    // Remove entity records from the entity store.
+    if let Err(e) = state.zigbee_entities.remove_for_device(&ieee).await {
+        return internal_error(&e);
+    }
+    // Clear entity states from the state store (explicit deref to avoid trait ambiguity).
+    for entity_id in &entity_ids {
+        let _ = (&*state.states).remove(entity_id);
+    }
+    match state.zigbee_devices.remove(&ieee).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(ErrorResponse::new("device not found".into()))).into_response(),
+        Err(e) => internal_error(&e),
+    }
+}
+
+#[cfg(feature = "zigbee")]
+#[derive(Debug, Deserialize)]
+struct PermitJoinPayload {
+    #[serde(default = "default_permit_join_duration")]
+    duration: u8,
+}
+
+#[cfg(feature = "zigbee")]
+fn default_permit_join_duration() -> u8 { 254 }
+
+#[cfg(feature = "zigbee")]
+async fn api_zigbee_permit_join(
+    State(state): State<Arc<AppState>>,
+    payload: Option<Json<PermitJoinPayload>>,
+) -> Response {
+    let duration = payload.map(|p| p.duration).unwrap_or(254);
+    match &state.zigbee {
+        Some(handle) => match handle.permit_join(duration).await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => internal_error(&e),
+        },
+        None => (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new("zigbee bridge not running".into()))).into_response(),
+    }
+}
+
+#[cfg(feature = "zigbee")]
+async fn api_zigbee_permit_join_stop(State(state): State<Arc<AppState>>) -> Response {
+    match &state.zigbee {
+        Some(handle) => match handle.permit_join(0).await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => internal_error(&e),
+        },
+        None => (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new("zigbee bridge not running".into()))).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Zigbee UI page handlers
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "zigbee")]
+async fn zigbee_devices_page(State(state): State<Arc<AppState>>) -> Response {
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let devices = match state.zigbee_devices.list().await {
+        Ok(d) => d,
+        Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
+    };
+    let bridge_running = state.zigbee.is_some();
+    let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
+        devices       => Value::from_serialize(&devices),
+        bridge_running => bridge_running,
+    );
+    render_template(&state, "zigbee_devices.html", ctx)
+}
+
+#[cfg(feature = "zigbee")]
+async fn zigbee_device_detail_page(
+    State(state): State<Arc<AppState>>,
+    Path(ieee): Path<String>,
+) -> Response {
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let device = match state.zigbee_devices.get_by_ieee(&ieee).await {
+        Ok(Some(d)) => d,
+        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Zigbee device not found"),
+        Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
+    };
+    let entities = match state.zigbee_entities.list_for_device(&ieee).await {
+        Ok(e) => e,
+        Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
+    };
+    let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
+        device   => Value::from_serialize(&device),
+        entities => Value::from_serialize(&entities),
+    );
+    render_template(&state, "zigbee_device_detail.html", ctx)
 }
