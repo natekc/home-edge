@@ -18,7 +18,6 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 const DEFAULT_TARGET: &str = "arm-unknown-linux-gnueabihf";
-const DEFAULT_HOST: &str = "pi@raspberrypi.local";
 /// SSH ConnectTimeout in seconds (how long to wait for the initial TCP handshake).
 const DEFAULT_CONNECT_TIMEOUT: u32 = 10;
 /// ServerAliveInterval in seconds — SSH sends a keepalive probe every N seconds.
@@ -65,16 +64,13 @@ enum Cmd {
     /// Examples:
     ///
     ///   # First-time install or upgrade from a downloaded release:
-    ///   cargo xtask push --tarball ~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz
-    ///
-    ///   # Override host:
-    ///   cargo xtask push --tarball … --host pi@192.168.1.50
+    ///   cargo xtask push --tarball ~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz --host pi@192.168.1.50
     Push {
         /// Path to the release tarball.
         #[arg(long)]
         tarball: PathBuf,
-        /// SSH destination (user@host).
-        #[arg(long, default_value = DEFAULT_HOST)]
+        /// SSH destination (user@host), e.g. pi@192.168.1.50 or pi@raspberrypi.local.
+        #[arg(long)]
         host: String,
         /// Seconds to wait for the initial SSH/SCP connection to succeed.
         #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT)]
@@ -94,8 +90,8 @@ enum Cmd {
         /// Rust target triple (see `package --help` for values).
         #[arg(long, default_value = DEFAULT_TARGET)]
         target: String,
-        /// SSH destination (user@host).
-        #[arg(long, default_value = DEFAULT_HOST)]
+        /// SSH destination (user@host), e.g. pi@192.168.1.50 or pi@raspberrypi.local.
+        #[arg(long)]
         host: String,
         /// Seconds to wait for the initial SSH/SCP connection.
         #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT)]
@@ -113,8 +109,8 @@ enum Cmd {
     /// Requires that at least one `push` or `deploy` has been run before
     /// (upgrade.sh saves the old binary as home-edge.bak).
     Rollback {
-        /// SSH destination (user@host).
-        #[arg(long, default_value = DEFAULT_HOST)]
+        /// SSH destination (user@host), e.g. pi@192.168.1.50 or pi@raspberrypi.local.
+        #[arg(long)]
         host: String,
         /// Seconds to wait for the initial SSH connection.
         #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT)]
@@ -229,12 +225,12 @@ fn push(tarball: &Path, host: &str, opts: &SshOpts) -> Result<()> {
         );
     }
 
-    eprintln!("Copying {} → {host}:/tmp/home-edge-update.tar.gz...", tarball.display());
+    eprintln!("Copying {} → {host}:/var/tmp/home-edge-update.tar.gz...", tarball.display());
     let mut cmd = Command::new("scp");
     for o in opts.args() {
         cmd.arg(o);
     }
-    cmd.arg(tarball).arg(format!("{host}:/tmp/home-edge-update.tar.gz"));
+    cmd.arg(tarball).arg(format!("{host}:/var/tmp/home-edge-update.tar.gz"));
     run(&mut cmd)?;
 
     eprintln!("Running upgrade on {host}...");
@@ -243,10 +239,10 @@ fn push(tarball: &Path, host: &str, opts: &SshOpts) -> Result<()> {
         cmd.arg(o);
     }
     cmd.arg(host).arg(
-        "mkdir -p /tmp/home-edge-update && \
-         tar -xzf /tmp/home-edge-update.tar.gz -C /tmp/home-edge-update && \
-         sudo sh /tmp/home-edge-update/upgrade.sh && \
-         rm -rf /tmp/home-edge-update /tmp/home-edge-update.tar.gz",
+        "mkdir -p /var/tmp/home-edge-update && \
+         tar -xzf /var/tmp/home-edge-update.tar.gz -C /var/tmp/home-edge-update && \
+         sudo sh /var/tmp/home-edge-update/upgrade.sh && \
+         rm -rf /var/tmp/home-edge-update /var/tmp/home-edge-update.tar.gz",
     );
     run(&mut cmd)?;
 

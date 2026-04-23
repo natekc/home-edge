@@ -29,23 +29,26 @@ then from your laptop/desktop (on the same network as the device):
 
 ```bash
 # First-time install or upgrade
-cargo xtask push --tarball ~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz
 cargo xtask push --tarball ~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz --host pi@192.168.1.50
 
 # Roll back to the previous binary
-cargo xtask rollback --host pi@raspberrypi.local
+cargo xtask rollback --host pi@192.168.1.50
 ```
 
+`--host` is required and must be a `user@address` SSH destination.
 `cargo xtask` is just a Cargo alias — no extra tools required beyond `cargo`, `ssh`, and `scp`.
+
+Timeout defaults are 10 s connect + 30 s stall tolerance (5 s × 6 probes).
+Override with `--connect-timeout`, `--alive-interval`, `--alive-count`.
 
 If you don't have Rust at all, the same steps work directly:
 
 ```bash
-scp home-edge-arm-unknown-linux-gnueabihf.tar.gz pi@raspberrypi.local:/tmp/
-ssh pi@raspberrypi.local '
-  mkdir -p /tmp/home-edge-update &&
-  tar -xzf /tmp/home-edge-update.tar.gz -C /tmp/home-edge-update &&
-  sudo sh /tmp/home-edge-update/upgrade.sh
+scp home-edge-arm-unknown-linux-gnueabihf.tar.gz pi@192.168.1.50:/var/tmp/
+ssh pi@192.168.1.50 '
+  mkdir -p /var/tmp/home-edge-update &&
+  tar -xzf /var/tmp/home-edge-update.tar.gz -C /var/tmp/home-edge-update &&
+  sudo sh /var/tmp/home-edge-update/upgrade.sh
 '
 ```
 
@@ -103,7 +106,6 @@ See `.cargo/config.toml` for the full list of supported targets and required lin
 
 ```bash
 # Build, package, and push to device in one command:
-cargo xtask deploy
 cargo xtask deploy --host pi@192.168.1.50
 cargo xtask deploy --target aarch64-unknown-linux-gnu --host ubuntu@myboard.local
 
