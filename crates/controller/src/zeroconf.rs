@@ -155,6 +155,7 @@ mod tests {
                 product_name: "Home Edge".into(),
             },
             areas: crate::config::AreasConfig::default(),
+            home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
         }
     }

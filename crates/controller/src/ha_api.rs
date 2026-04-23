@@ -503,6 +503,7 @@ mod tests {
                 product_name: "Test Home".into(),
             },
             areas: crate::config::AreasConfig::default(),
+            home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
         };
         let storage = Storage::new_in_memory();

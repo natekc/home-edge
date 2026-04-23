@@ -4,9 +4,9 @@
   <div class="breadcrumb">
     <a href="/">Overview</a>
     <span class="breadcrumb-sep">›</span>
-    <span>{{ device.device_name }}</span>
+    <span>{{ device.name_by_user or device.device_name }}</span>
   </div>
-  <h1>{{ device.device_name }}</h1>
+  <h1>{{ device.name_by_user or device.device_name }}</h1>
   <p>{{ device.manufacturer }} {{ device.model }} · {{ device.os_name }}{% if device.os_version %} {{ device.os_version }}{% endif %}</p>
 </div>
 

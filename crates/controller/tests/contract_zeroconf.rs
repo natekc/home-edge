@@ -21,6 +21,7 @@ fn sample_config() -> AppConfig {
             product_name: "Home Edge".into(),
         },
         areas: home_edge::config::AreasConfig::default(),
+        home_zone: home_edge::config::HomeZoneConfig::default(),
         history: home_edge::config::HistoryConfig::default(),
     }
 }
