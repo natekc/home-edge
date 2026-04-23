@@ -52,10 +52,16 @@ fn unauthorized(msg: &'static str) -> Response {
 }
 
 /// Self-contained HTML error page for page-navigation contexts.
+///
 /// Does NOT use the template engine (avoids recursion if templates fail).
-/// Fires `connection-status:connected` so the iOS 10-second disconnect timer is cancelled.
+/// Fires `connection-status:connected` immediately so the iOS 10-second
+/// disconnect timer (started on every `didStartProvisionalNavigation`) is
+/// cancelled even when an error occurs.
 fn page_error(status: StatusCode, msg: &str) -> Response {
-    let safe = msg.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let safe = msg
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     let html = format!(
         concat!(
             "<!doctype html><html lang=\"en\"><head>",
@@ -63,21 +69,22 @@ fn page_error(status: StatusCode, msg: &str) -> Response {
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
             "<title>Error</title>",
             "<script>(function(){{try{{window.webkit.messageHandlers.externalBus",
-            ".postMessage({{type:\'connection-status\',payload:{{event:\'connected\'}}}});",
+            ".postMessage({{type:'connection-status',payload:{{event:'connected'}}}});",
             "}}catch(e){{}}}})()</script>",
             "<style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;",
             "padding:32px 24px;color:#333;background:#f5f5f5}}",
             "h2{{font-weight:400;color:#c62828}}a{{color:#009ac7;text-decoration:none}}</style>",
-            "</head><body><h2>Error</h2><p>{safe}</p>",
+            "</head><body><h2>Error</h2><p>{}</p>",
             "<p><a href=\"javascript:history.back()\">\u{2190} Go back</a></p>",
             "</body></html>"
         ),
-        safe = safe
+        safe
     );
     (status, Html(html)).into_response()
 }
 
-/// Router-level 404 — unknown URLs return HTML so the connected script fires.
+/// Router-level 404 — any URL not matched by the router returns HTML so the
+/// iOS connected script fires rather than leaving the disconnect timer running.
 async fn fallback_404() -> Response {
     page_error(StatusCode::NOT_FOUND, "Page not found")
 }
@@ -135,8 +142,6 @@ macro_rules! app_ctx {
             server_host   => local_host(),
             server_port   => $state.config.server.port,
             areas         => Value::from_serialize($areas),
-            back_url      => "",
-            nav_title     => "",
             $($rest)*
         }
     };
@@ -211,7 +216,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/onboarding/integration/wait",               post(onboarding_integration_wait))
         .route("/api/onboarding/complete",                       post(complete_onboarding))
         .with_state(state)
-        // Any unmatched URL returns HTML 404 so the iOS connected script fires.
+        // Any unmatched route returns an HTML 404 so the iOS connected script fires.
         .fallback(fallback_404)
 }
 
@@ -227,9 +232,11 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+/// POST/Redirect/GET: always 303 See Other so WKWebView converts the POST to a GET.
+/// 307 Temporary Redirect preserves the POST method — WKWebView would re-POST with
+/// an empty body, axum's Form extractor would reject it with 422 (plain text,
+/// no HTML), the iOS disconnect timer would fire, and the user would see a black screen.
 fn redirect(path: &'static str) -> Response {
-    // 303 See Other: converts POST to GET (Post-Redirect-Get pattern).
-    // Using 307 would re-POST with empty body → axum 422 (no HTML) → iOS disconnect.
     let mut headers = HeaderMap::new();
     headers.insert(header::LOCATION, HeaderValue::from_static(path));
     (StatusCode::SEE_OTHER, headers).into_response()
@@ -356,9 +363,7 @@ async fn devices_list_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "settings", location_name.as_str(), &areas,
-        back_url  => "/settings",
-        nav_title => "Devices & services",
-        devices   => Value::from_serialize(&device_summaries),
+        devices => Value::from_serialize(&device_summaries),
     );
     render_template(&state, "devices.html", ctx)
 }
@@ -447,8 +452,6 @@ async fn system_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "system", location_name.as_str(), &areas,
-        back_url     => "/settings",
-        nav_title    => "System",
         version      => env!("CARGO_PKG_VERSION"),
         runtime_mode => mode.as_str(),
     );
@@ -704,10 +707,8 @@ async fn device_detail_page(
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
-        back_url  => "/devices",
-        nav_title => device.display_name(),
-        device    => Value::from_serialize(&device),
-        entities  => Value::from_serialize(&entities),
+        device   => Value::from_serialize(&device),
+        entities => Value::from_serialize(&entities),
     );
     render_template(&state, "device_detail.html", ctx)
 }
@@ -736,10 +737,7 @@ async fn entity_edit_page(
     let entity_view = entity_to_view(&entity_record, &state);
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let back = format!("/devices/{webhook_id}");
     let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
-        back_url      => back.as_str(),
-        nav_title     => entity_view.display_name.as_str(),
         device        => Value::from_serialize(&device),
         entity        => Value::from_serialize(&entity_view),
         saved         => params.saved.unwrap_or(false),
