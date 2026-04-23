@@ -88,7 +88,6 @@ impl StateStore {
     }
 
     /// Remove a state. Returns true if it existed.
-    #[cfg(test)]
     pub fn remove(&self, entity_id: &str) -> bool {
         let mut lock = self.states.write().expect("state lock poisoned");
         lock.remove(entity_id).is_some()

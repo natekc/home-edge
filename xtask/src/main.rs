@@ -4,9 +4,10 @@
 //!
 //!   cargo xtask package                                        # build tarball for default target
 //!   cargo xtask package --target aarch64-unknown-linux-gnu    # different board
+//!   cargo xtask package --zigbee                              # build with Zigbee support
 //!   cargo xtask push --tarball home-edge-*.tar.gz             # deploy pre-built release (no Rust needed)
 //!   cargo xtask push --tarball … --host ubuntu@myboard.local  # different host
-//!   cargo xtask deploy                                        # build + package + push
+//!   cargo xtask deploy --zigbee --host pi@192.168.1.50        # build with Zigbee + deploy
 //!   cargo xtask rollback                                      # restore previous binary on device
 //!
 //! All commands support `--help` for details.
@@ -54,6 +55,9 @@ enum Cmd {
         ///   riscv64gc-unknown-linux-gnu   RISC-V 64-bit
         #[arg(long, default_value = DEFAULT_TARGET)]
         target: String,
+        /// Enable Zigbee support (compiles with `--features zigbee`).
+        #[arg(long)]
+        zigbee: bool,
     },
 
     /// Push a release tarball to a device via SSH and run the upgrade script.
@@ -90,6 +94,9 @@ enum Cmd {
         /// Rust target triple (see `package --help` for values).
         #[arg(long, default_value = DEFAULT_TARGET)]
         target: String,
+        /// Enable Zigbee support (compiles with `--features zigbee`).
+        #[arg(long)]
+        zigbee: bool,
         /// SSH destination (user@host), e.g. pi@192.168.1.50 or pi@raspberrypi.local.
         #[arg(long)]
         host: String,
@@ -127,16 +134,16 @@ enum Cmd {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Package { target } => {
-            package(&target)?;
+        Cmd::Package { target, zigbee } => {
+            package(&target, zigbee)?;
         }
         Cmd::Push { tarball, host, connect_timeout, alive_interval, alive_count } => {
             let opts = SshOpts { connect_timeout, alive_interval, alive_count };
             push(&tarball, &host, &opts)?;
         }
-        Cmd::Deploy { target, host, connect_timeout, alive_interval, alive_count } => {
+        Cmd::Deploy { target, zigbee, host, connect_timeout, alive_interval, alive_count } => {
             let opts = SshOpts { connect_timeout, alive_interval, alive_count };
-            let tarball = package(&target)?;
+            let tarball = package(&target, zigbee)?;
             push(&tarball, &host, &opts)?;
         }
         Cmd::Rollback { host, connect_timeout, alive_interval, alive_count } => {
@@ -174,14 +181,18 @@ impl SshOpts {
 
 /// Cross-compiles home-edge for `target`, assembles a deployment tarball,
 /// and returns its path.
-fn package(target: &str) -> Result<PathBuf> {
+fn package(target: &str, zigbee: bool) -> Result<PathBuf> {
     let root = workspace_root();
 
     // 1. Cross-compile.
-    eprintln!("Building home-edge for {target}...");
+    let feature_label = if zigbee { " +zigbee" } else { "" };
+    eprintln!("Building home-edge for {target}{feature_label}...");
     let mut cmd = Command::new("cargo");
-    cmd.args(["build", "--release", "--target", target, "-p", "home-edge"])
-        .current_dir(&root);
+    let mut args = vec!["build", "--release", "--target", target, "-p", "home-edge"];
+    if zigbee {
+        args.extend(["--features", "zigbee"]);
+    }
+    cmd.args(&args).current_dir(&root);
     run(&mut cmd)?;
 
     // 2. Assemble dist/.
