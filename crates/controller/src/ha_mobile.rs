@@ -237,6 +237,7 @@ mod tests {
             home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
             mdns: Default::default(),
+            zigbee: None,
         };
         let storage = Storage::new_in_memory();
         let state = Arc::new(AppState::new(config, storage));

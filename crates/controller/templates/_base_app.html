@@ -98,6 +98,15 @@
           </li>
           {% endif %}
 
+          {% if zigbee_enabled %}
+          <li class="nav-item {{ 'selected' if active_page == 'zigbee' else '' }}">
+            <a href="/zigbee" role="listitem">
+              <svg class="nav-icon"><use href="#icon-devices"/></svg>
+              <span class="item-text">Zigbee</span>
+            </a>
+          </li>
+          {% endif %}
+
           <li class="nav-item {{ 'selected' if active_page == 'logbook' else '' }}">
             <a href="/logbook" role="listitem">
               <svg class="nav-icon"><use href="#icon-format-list"/></svg>

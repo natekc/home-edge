@@ -663,6 +663,7 @@ mod tests {
             home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
             mdns: Default::default(),
+            zigbee: None,
         };
         let storage = Storage::new_in_memory();
         let state = Arc::new(AppState::new(config, storage));
@@ -753,6 +754,7 @@ mod tests {
             home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
             mdns: Default::default(),
+            zigbee: None,
         };
         let webhooks = WebhookStore::new();
         let mut base = AppState::new(config, Storage::new_in_memory());
@@ -851,6 +853,7 @@ mod tests {
             // Small capacity to keep tests fast
             history: HistoryConfig { capacity: 50 },
             mdns: Default::default(),
+            zigbee: None,
         };
         let storage = Storage::new_in_memory();
         let state = Arc::new(AppState::new(config, storage));

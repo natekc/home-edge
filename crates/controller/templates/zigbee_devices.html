@@ -1,0 +1,92 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<div class="page-header">
+  <div class="breadcrumb">
+    <a href="/">Overview</a>
+    <span class="breadcrumb-sep">›</span>
+    <span>Zigbee</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <div>
+      <h1>Zigbee Devices</h1>
+      <p>Devices connected via the embedded Zigbee bridge.</p>
+    </div>
+    {% if bridge_running %}
+    <div style="display:flex;align-items:center;gap:8px">
+      <form method="post" action="/api/zigbee/permit_join" style="display:inline">
+        <button type="submit" class="btn btn-primary" style="display:flex;align-items:center;gap:5px">
+          <svg width="16" height="16"><use href="#icon-plus"/></svg>
+          Allow Pairing (2 min)
+        </button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="page-body">
+  {% if not bridge_running %}
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-body">
+      <div class="empty-state">
+        <svg><use href="#icon-warning"/></svg>
+        <h3>Bridge not running</h3>
+        <p>Add a <code>[zigbee]</code> section to <code>config.toml</code> to start the Zigbee bridge.</p>
+      </div>
+    </div>
+  </div>
+  {% elif devices | length == 0 %}
+  <div class="ha-card">
+    <div class="ha-card-body">
+      <div class="empty-state">
+        <svg><use href="#icon-devices"/></svg>
+        <h3>No Zigbee devices yet</h3>
+        <p>Click <strong>Allow Pairing</strong> and put your Zigbee device into pairing mode.</p>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="ha-card">
+    <div class="ha-card-body" style="padding:0">
+      <table class="data-table" style="width:100%">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Model</th>
+            <th>Manufacturer</th>
+            <th>Power</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for device in devices %}
+          <tr>
+            <td>
+              <a href="/zigbee/{{ device.ieee_addr }}" style="font-weight:500">
+                {{ device.name_by_user if device.name_by_user else device.friendly_name }}
+              </a>
+              <div style="font-size:.75rem;color:var(--text-secondary)">{{ device.ieee_addr }}</div>
+            </td>
+            <td>{{ device.model | default("—") }}</td>
+            <td>{{ device.manufacturer | default("—") }}</td>
+            <td>{{ device.power_source | default("—") }}</td>
+            <td>
+              {% if device.interview_complete %}
+              <span class="badge badge-success">Ready</span>
+              {% else %}
+              <span class="badge badge-warning">Interviewing…</span>
+              {% endif %}
+            </td>
+            <td>
+              <a href="/zigbee/{{ device.ieee_addr }}" class="btn btn-sm">Details</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

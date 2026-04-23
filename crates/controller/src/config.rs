@@ -17,6 +17,9 @@ pub struct AppConfig {
     pub history: HistoryConfig,
     #[serde(default)]
     pub mdns: MdnsConfig,
+    /// Optional Zigbee coordinator integration.
+    /// When present, home-edge starts the embedded zigbee2mqtt-rs bridge.
+    pub zigbee: Option<ZigbeeConfig>,
 }
 
 /// Initial area names used to seed the area registry on first boot.
@@ -151,6 +154,48 @@ impl Default for HistoryConfig {
 fn default_history_capacity() -> usize {
     1000
 }
+
+/// Zigbee coordinator configuration.
+///
+/// When this section is present in `config.toml`, home-edge automatically
+/// starts the embedded zigbee2mqtt-rs bridge on startup.
+///
+/// ```toml
+/// [zigbee]
+/// serial_port = "/dev/ttyACM0"   # serial port of the coordinator
+/// # baudrate = 115200             # baud rate (default 115200)
+/// # adapter = "znp"               # znp | ezsp | auto (default znp)
+/// # rtscts = false                # hardware flow control (default false)
+/// # permit_join_on_startup = false # allow pairing on startup (default false)
+/// # channel = 11                  # Zigbee channel 11-26 (default 11)
+/// # pan_id = 0x1a62               # PAN ID (optional; generated if absent)
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct ZigbeeConfig {
+    /// Serial port path for the Zigbee coordinator (e.g. `/dev/ttyACM0`).
+    pub serial_port: String,
+    /// Baud rate for serial communication. Default: 115200.
+    #[serde(default = "default_zigbee_baudrate")]
+    pub baudrate: u32,
+    /// Coordinator adapter type: `znp`, `ezsp`, or `auto`. Default: `znp`.
+    #[serde(default = "default_zigbee_adapter")]
+    pub adapter: String,
+    /// Enable hardware (RTS/CTS) flow control. Default: false.
+    #[serde(default)]
+    pub rtscts: bool,
+    /// Enable device pairing immediately on startup. Default: false.
+    #[serde(default)]
+    pub permit_join_on_startup: bool,
+    /// Zigbee channel (11–26). Default: 11.
+    #[serde(default = "default_zigbee_channel")]
+    pub channel: u8,
+    /// 802.15.4 PAN ID.  Generated automatically if not set.
+    pub pan_id: Option<u16>,
+}
+
+fn default_zigbee_baudrate() -> u32 { 115_200 }
+fn default_zigbee_adapter() -> String { "znp".to_string() }
+fn default_zigbee_channel() -> u8 { 11 }
 
 impl AppConfig {
     pub async fn load(path: &Path) -> Result<Self> {

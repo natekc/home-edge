@@ -24,6 +24,7 @@ fn sample_config() -> AppConfig {
         home_zone: home_edge::config::HomeZoneConfig::default(),
         history: home_edge::config::HistoryConfig::default(),
             mdns: Default::default(),
+            zigbee: None,
     }
 }
 

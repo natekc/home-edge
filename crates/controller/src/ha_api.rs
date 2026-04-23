@@ -84,7 +84,7 @@ async fn api_core_state(State(_state): State<Arc<AppState>>) -> impl IntoRespons
     match state.core.execute(
         CoreDeps {
             config: &state.config,
-            states: &state.states,
+            states: &*state.states,
             services: &state.services,
         },
         OperationRequest::GetCoreState,
@@ -149,7 +149,7 @@ async fn api_states_list(State(state): State<Arc<AppState>>) -> Response {
     match state.core.execute(
         CoreDeps {
             config: &state.config,
-            states: &state.states,
+            states: &*state.states,
             services: &state.services,
         },
         request,
@@ -170,7 +170,7 @@ async fn api_state_get(
     match state.core.execute(
         CoreDeps {
             config: &state.config,
-            states: &state.states,
+            states: &*state.states,
             services: &state.services,
         },
         OperationRequest::GetEntityState {
@@ -241,7 +241,7 @@ async fn api_state_set(
     match app.core.execute(
         CoreDeps {
             config: &app.config,
-            states: &app.states,
+            states: &*app.states,
             services: &app.services,
         },
         OperationRequest::SetEntityState {
@@ -272,7 +272,7 @@ async fn api_services_list(State(app): State<Arc<AppState>>) -> Response {
     match app.core.execute(
         CoreDeps {
             config: &app.config,
-            states: &app.states,
+            states: &*app.states,
             services: &app.services,
         },
         OperationRequest::ListServices {
@@ -360,7 +360,7 @@ async fn api_service_call(
     match app.core.execute(
         CoreDeps {
             config: &app.config,
-            states: &app.states,
+            states: &*app.states,
             services: &app.services,
         },
         OperationRequest::CallService {
@@ -506,6 +506,7 @@ mod tests {
             home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
             mdns: Default::default(),
+            zigbee: None,
         };
         let storage = Storage::new_in_memory();
         let state = Arc::new(AppState::new(config, storage));

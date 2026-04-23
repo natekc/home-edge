@@ -343,7 +343,7 @@ async fn dispatch_command(
         "get_states" => match state.core.execute(
             CoreDeps {
                 config: &state.config,
-                states: &state.states,
+                states: &*state.states,
                 services: &state.services,
             },
             OperationRequest::ListEntityStates {
@@ -371,7 +371,7 @@ async fn dispatch_command(
         "get_config" => match state.core.execute(
             CoreDeps {
                 config: &state.config,
-                states: &state.states,
+                states: &*state.states,
                 services: &state.services,
             },
             OperationRequest::GetConfigSummary,
@@ -385,7 +385,7 @@ async fn dispatch_command(
         "get_services" => match state.core.execute(
             CoreDeps {
                 config: &state.config,
-                states: &state.states,
+                states: &*state.states,
                 services: &state.services,
             },
             OperationRequest::ListServices {
@@ -460,7 +460,7 @@ async fn dispatch_command(
             match state.core.execute(
                 CoreDeps {
                     config: &state.config,
-                    states: &state.states,
+                    states: &*state.states,
                     services: &state.services,
                 },
                 OperationRequest::CallService {
@@ -1174,6 +1174,7 @@ mod tests {
             home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
             mdns: Default::default(),
+            zigbee: None,
         };
         let storage = Storage::new_in_memory();
         storage

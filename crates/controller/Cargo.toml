@@ -9,6 +9,7 @@ rust-version.workspace = true
 default = ["transport_wifi"]
 transport_wifi = []
 transport_ble = []
+zigbee = ["dep:zigbee2mqtt-rs"]
 
 [dependencies]
 anyhow.workspace = true
@@ -30,6 +31,7 @@ local-ip-address.workspace = true
 mdns-sd.workspace = true
 minijinja.workspace = true
 uuid.workspace = true
+zigbee2mqtt-rs = { path = "../../../zigbee2mqtt-rs", optional = true }
 
 [dev-dependencies]
 axum-test.workspace = true

@@ -41,3 +41,9 @@ pub mod mobile_device_store;
 pub mod mobile_entity_store;
 #[cfg(feature = "transport_wifi")]
 pub mod zeroconf;
+#[cfg(feature = "zigbee")]
+pub mod zigbee_device_store;
+#[cfg(feature = "zigbee")]
+pub mod zigbee_entity_store;
+#[cfg(feature = "zigbee")]
+pub mod zigbee_integration;
