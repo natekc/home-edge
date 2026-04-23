@@ -5,7 +5,7 @@ target-dir = "target"
 xtask = "run --package xtask --"
 
 [target.arm-unknown-linux-gnueabihf]
-linker = "arm-linux-gnueabihf-gcc"
+linker = "arm-unknown-linux-gnueabihf-gcc"
 
 [env]
 RUSTFLAGS = "-C debuginfo=0"

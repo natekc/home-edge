@@ -25,6 +25,7 @@ toml.workspace = true
 tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+hostname.workspace = true
 local-ip-address.workspace = true
 mdns-sd.workspace = true
 minijinja.workspace = true
