@@ -19,6 +19,13 @@ use clap::{Parser, Subcommand};
 
 const DEFAULT_TARGET: &str = "arm-unknown-linux-gnueabihf";
 const DEFAULT_HOST: &str = "pi@raspberrypi.local";
+/// SSH ConnectTimeout in seconds (how long to wait for the initial TCP handshake).
+const DEFAULT_CONNECT_TIMEOUT: u32 = 10;
+/// ServerAliveInterval in seconds — SSH sends a keepalive probe every N seconds.
+const DEFAULT_ALIVE_INTERVAL: u32 = 5;
+/// How many unanswered keepalive probes before declaring the connection dead.
+/// Total stall tolerance = ALIVE_INTERVAL × ALIVE_COUNT  (default: 5×6 = 30 s).
+const DEFAULT_ALIVE_COUNT: u32 = 6;
 
 #[derive(Parser)]
 #[command(
@@ -69,6 +76,17 @@ enum Cmd {
         /// SSH destination (user@host).
         #[arg(long, default_value = DEFAULT_HOST)]
         host: String,
+        /// Seconds to wait for the initial SSH/SCP connection to succeed.
+        #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT)]
+        connect_timeout: u32,
+        /// Seconds between SSH keepalive probes once connected.
+        /// The transfer is aborted after connect_timeout + alive_interval × alive_count
+        /// seconds of total stall.
+        #[arg(long, default_value_t = DEFAULT_ALIVE_INTERVAL)]
+        alive_interval: u32,
+        /// Number of unanswered keepalive probes before the connection is killed.
+        #[arg(long, default_value_t = DEFAULT_ALIVE_COUNT)]
+        alive_count: u32,
     },
 
     /// Build from source, package, and push to a device (combines `package` + `push`).
@@ -79,6 +97,15 @@ enum Cmd {
         /// SSH destination (user@host).
         #[arg(long, default_value = DEFAULT_HOST)]
         host: String,
+        /// Seconds to wait for the initial SSH/SCP connection.
+        #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT)]
+        connect_timeout: u32,
+        /// Seconds between SSH keepalive probes once connected.
+        #[arg(long, default_value_t = DEFAULT_ALIVE_INTERVAL)]
+        alive_interval: u32,
+        /// Number of unanswered keepalive probes before the connection is killed.
+        #[arg(long, default_value_t = DEFAULT_ALIVE_COUNT)]
+        alive_count: u32,
     },
 
     /// Restore the previous binary on a device, rolling back the last upgrade.
@@ -89,6 +116,15 @@ enum Cmd {
         /// SSH destination (user@host).
         #[arg(long, default_value = DEFAULT_HOST)]
         host: String,
+        /// Seconds to wait for the initial SSH connection.
+        #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT)]
+        connect_timeout: u32,
+        /// Seconds between SSH keepalive probes once connected.
+        #[arg(long, default_value_t = DEFAULT_ALIVE_INTERVAL)]
+        alive_interval: u32,
+        /// Number of unanswered keepalive probes before the connection is killed.
+        #[arg(long, default_value_t = DEFAULT_ALIVE_COUNT)]
+        alive_count: u32,
     },
 }
 
@@ -98,14 +134,42 @@ fn main() -> Result<()> {
         Cmd::Package { target } => {
             package(&target)?;
         }
-        Cmd::Push { tarball, host } => push(&tarball, &host)?,
-        Cmd::Deploy { target, host } => {
-            let tarball = package(&target)?;
-            push(&tarball, &host)?;
+        Cmd::Push { tarball, host, connect_timeout, alive_interval, alive_count } => {
+            let opts = SshOpts { connect_timeout, alive_interval, alive_count };
+            push(&tarball, &host, &opts)?;
         }
-        Cmd::Rollback { host } => rollback(&host)?,
+        Cmd::Deploy { target, host, connect_timeout, alive_interval, alive_count } => {
+            let opts = SshOpts { connect_timeout, alive_interval, alive_count };
+            let tarball = package(&target)?;
+            push(&tarball, &host, &opts)?;
+        }
+        Cmd::Rollback { host, connect_timeout, alive_interval, alive_count } => {
+            let opts = SshOpts { connect_timeout, alive_interval, alive_count };
+            rollback(&host, &opts)?;
+        }
     }
     Ok(())
+}
+
+/// SSH connection and keepalive settings, applied uniformly to scp and ssh.
+struct SshOpts {
+    /// `-o ConnectTimeout=N` — seconds before the initial TCP handshake fails.
+    connect_timeout: u32,
+    /// `-o ServerAliveInterval=N` — keepalive probe cadence (seconds).
+    alive_interval: u32,
+    /// `-o ServerAliveCountMax=N` — probes before declaring the connection dead.
+    alive_count: u32,
+}
+
+impl SshOpts {
+    /// Returns the `-o Key=Value` arguments to pass to ssh or scp.
+    fn args(&self) -> Vec<String> {
+        vec![
+            format!("-o ConnectTimeout={}", self.connect_timeout),
+            format!("-o ServerAliveInterval={}", self.alive_interval),
+            format!("-o ServerAliveCountMax={}", self.alive_count),
+        ]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +219,7 @@ fn package(target: &str) -> Result<PathBuf> {
 }
 
 /// Transfer `tarball` to `host` via SCP and run the upgrade script there.
-fn push(tarball: &Path, host: &str) -> Result<()> {
+fn push(tarball: &Path, host: &str, opts: &SshOpts) -> Result<()> {
     if !tarball.exists() {
         bail!(
             "tarball not found: {}\n\n\
@@ -167,11 +231,17 @@ fn push(tarball: &Path, host: &str) -> Result<()> {
 
     eprintln!("Copying {} → {host}:/tmp/home-edge-update.tar.gz...", tarball.display());
     let mut cmd = Command::new("scp");
+    for o in opts.args() {
+        cmd.arg(o);
+    }
     cmd.arg(tarball).arg(format!("{host}:/tmp/home-edge-update.tar.gz"));
     run(&mut cmd)?;
 
     eprintln!("Running upgrade on {host}...");
     let mut cmd = Command::new("ssh");
+    for o in opts.args() {
+        cmd.arg(o);
+    }
     cmd.arg(host).arg(
         "mkdir -p /tmp/home-edge-update && \
          tar -xzf /tmp/home-edge-update.tar.gz -C /tmp/home-edge-update && \
@@ -184,9 +254,12 @@ fn push(tarball: &Path, host: &str) -> Result<()> {
 }
 
 /// SSH into `host` and restore the `.bak` binary saved by `upgrade.sh`.
-fn rollback(host: &str) -> Result<()> {
+fn rollback(host: &str, opts: &SshOpts) -> Result<()> {
     eprintln!("Rolling back on {host}...");
     let mut cmd = Command::new("ssh");
+    for o in opts.args() {
+        cmd.arg(o);
+    }
     cmd.arg(host).arg(
         "if [ -f /usr/local/bin/home-edge.bak ]; then \
            sudo systemctl stop home-edge.service 2>/dev/null || true; \
