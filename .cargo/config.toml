@@ -1,8 +1,10 @@
+[alias]
+# `cargo xtask <cmd>` runs the xtask crate as a build/deployment script.
+# See xtask/src/main.rs for available commands and --help for each.
+xtask = "run --package xtask --"
+
 [build]
 target-dir = "target"
-
-[alias]
-xtask = "run --package xtask --"
 
 # ---------------------------------------------------------------------------
 # Cross-compilation linker configuration

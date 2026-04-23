@@ -4,15 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ product_name }}</title>
-  <!-- Roboto — same font used by HA frontend -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <!-- No external CDN dependencies: fonts fall back to -apple-system (San Francisco on iOS),
+       htmx is inlined below. This keeps every navigation fast on a local LAN with no
+       internet, and — critically — lets us send connection-status:connected before any
+       network request can block the page, cancelling the iOS 10s disconnect timer. -->
   <style>{% include "_css.html" %}</style>
-  <!-- Stub window.hassConnection so WebSocketBridge.js (injected by iOS into every
-       WKWebView) stops spinning in waitForHassConnection(). conn methods are no-ops;
-       home-edge's own externalBus messages drive native iOS integration. -->
   <script>
+  /* ---- 1. Notify iOS we are connected IMMEDIATELY (top of <head>, before any resource
+              loads).  The iOS WKWebView sets state=.disconnected on didStartProvisionalNavigation
+              and starts a 10-second timer; if we don't reply in time it shows the empty/black
+              screen.  Firing here — before the HTML body, before htmx, before anything — cancels
+              that timer in the first few milliseconds of the page load. ---- */
+  (function() {
+    try {
+      window.webkit.messageHandlers.externalBus.postMessage(
+        {type: 'connection-status', payload: {event: 'connected'}}
+      );
+    } catch(e) {}
+  })();
+
+  /* ---- 2. Stub window.hassConnection so WebSocketBridge.js (injected by iOS into every
+              WKWebView) stops spinning in waitForHassConnection(). conn methods are no-ops;
+              home-edge's own externalBus messages drive native iOS integration. ---- */
   (function() {
     var noopCancel = { cancel: function() {} };
     var conn = {
@@ -22,24 +35,18 @@
     window.hassConnection = Promise.resolve({ conn: conn });
   })();
   </script>
-  <script src="https://unpkg.com/htmx.org@2.0.4" crossorigin="anonymous"></script>
+  <!-- htmx inlined: no CDN round-trip, always available on local LAN -->
+  <script>{% include "_htmx.js" %}</script>
 </head>
 <body>
 {% include "_icons.html" %}
 
 <!-- Mobile top app bar (HA-style sticky header; hidden on desktop, shown on narrow screens) -->
 <header class="app-header" id="app-header">
-  {% if back_url %}
-  <a href="{{ back_url }}" class="app-header-btn" aria-label="Go back">
-    <svg width="24" height="24"><use href="#icon-arrow-left"/></svg>
-  </a>
-  <span class="app-header-title">{{ nav_title if nav_title else location_name }}</span>
-  {% else %}
   <button class="app-header-btn" onclick="openMobileSidebar()" aria-label="Open menu">
     <svg width="24" height="24"><use href="#icon-menu"/></svg>
   </button>
   <span class="app-header-title">{{ location_name }}</span>
-  {% endif %}
 </header>
 <!-- Backdrop for mobile overlay -->
 <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
@@ -193,15 +200,17 @@ function openNativeSettings() {
 // Tell the native iOS layer the WebView is connected.
 // MUST be a plain JS object — NOT JSON.stringify(). Swift casts message.body
 // as [String: Any]; if it gets a string the cast returns nil silently.
+// NOTE: the first (critical) call fires at the top of <head> before anything else.
+// This copy is kept as a named function so iOS can invoke
+// checkForMissingHassConnectionAndReload() at any time after the page loads.
 function notifyNativeConnected() {
-  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.externalBus) {
+  try {
     window.webkit.messageHandlers.externalBus.postMessage(
       {type: 'connection-status', payload: {event: 'connected'}}
     );
-  }
+  } catch(e) {}
 }
 window.checkForMissingHassConnectionAndReload = notifyNativeConnected;
-window.addEventListener('load', notifyNativeConnected);
 
 /* --- Sidebar toggle ---------------------------------------------------- */
 function toggleSidebar() {

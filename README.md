@@ -22,6 +22,48 @@ This repository contains the Milestone 0 foundation for a standalone runtime tar
 - `systemd/`: native service unit
 - `scripts/`: installation helpers
 
+## Installing on a device (no Rust required)
+
+Download the pre-built tarball for your board from the [releases page](../../releases),
+then from your laptop/desktop (on the same network as the device):
+
+```bash
+# First-time install or upgrade
+cargo xtask push --tarball ~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz --host pi@192.168.1.50
+
+# Roll back to the previous binary
+cargo xtask rollback --host pi@192.168.1.50
+```
+
+`--host` is required and must be a `user@address` SSH destination.
+`cargo xtask` is just a Cargo alias — no extra tools required beyond `cargo`, `ssh`, and `scp`.
+
+Timeout defaults are 10 s connect + 30 s stall tolerance (5 s × 6 probes).
+Override with `--connect-timeout`, `--alive-interval`, `--alive-count`.
+
+If you don't have Rust at all, the same steps work directly:
+
+```bash
+scp home-edge-arm-unknown-linux-gnueabihf.tar.gz pi@192.168.1.50:/var/tmp/
+ssh pi@192.168.1.50 '
+  mkdir -p /var/tmp/home-edge-update &&
+  tar -xzf /var/tmp/home-edge-update.tar.gz -C /var/tmp/home-edge-update &&
+  sudo sh /var/tmp/home-edge-update/upgrade.sh
+'
+```
+
+The device does not need internet access — the tarball is transferred over your local
+network via SSH/SCP. `upgrade.sh` delegates to `install.sh` automatically on first run.
+
+### Release tarballs
+
+| Tarball | Board | Notes |
+|---|---|---|
+| `home-edge-arm-unknown-linux-gnueabihf.tar.gz` | Raspberry Pi Zero W, Pi 1 | ARMv6, hard-float |
+| `home-edge-armv7-unknown-linux-gnueabihf.tar.gz` | Raspberry Pi 2/3/4 (32-bit OS) | ARMv7 |
+| `home-edge-aarch64-unknown-linux-gnu.tar.gz` | Raspberry Pi 3/4/5 (64-bit OS), most SBCs | AArch64 |
+| `home-edge-riscv64gc-unknown-linux-gnu.tar.gz` | StarFive VisionFive 2, Milk-V Pioneer | RISC-V 64 |
+
 ## Local development
 
 ```bash
@@ -29,7 +71,9 @@ cargo test
 cargo run -- --config config/default.toml
 ```
 
-## Cross-compilation
+## Building from source
+
+### Cross-compilation
 
 Install Rust targets once:
 
@@ -49,28 +93,29 @@ brew tap messense/macos-cross-toolchains
 brew install messense/macos-cross-toolchains/arm-unknown-linux-gnueabihf
 ```
 
-On **Linux** (Debian/Ubuntu), install the distro cross package:
+On **Linux** (Debian/Ubuntu):
 
 ```bash
-sudo apt install gcc-arm-linux-gnueabihf        # ARMv6
-sudo apt install gcc-arm-linux-gnueabihf        # ARMv7 (same package)
+sudo apt install gcc-arm-linux-gnueabihf        # ARMv6 / ARMv7
 sudo apt install gcc-aarch64-linux-gnu          # AArch64
-```
-
-Build:
-
-```bash
-cargo build --release --target arm-unknown-linux-gnueabihf -p home-edge
-# binary: target/arm-unknown-linux-gnueabihf/release/home-edge
 ```
 
 See `.cargo/config.toml` for the full list of supported targets and required linker names.
 
+### Build and deploy from source
+
 ```bash
-docker build -f docker/Dockerfile.build --target runtime -t home-edge-build .
-docker create --name extract home-edge-build
-docker cp extract:/out/home-edge ./target/home-edge
+# Build, package, and push to device in one command:
+cargo xtask deploy --host pi@192.168.1.50
+cargo xtask deploy --target aarch64-unknown-linux-gnu --host ubuntu@myboard.local
+
+# Just build the tarball (e.g. for uploading to a release):
+cargo xtask package
+cargo xtask package --target aarch64-unknown-linux-gnu
+# → home-edge-<target>.tar.gz
 ```
+
+See `cargo xtask --help` and `cargo xtask <command> --help` for all options.
 
 ## Current endpoints
 

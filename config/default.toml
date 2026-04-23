@@ -6,7 +6,7 @@ port = 8124
 # log_level = "info"
 
 [storage]
-data_dir = "./var/lib/home-edge"
+data_dir = "/var/lib/home-edge"
 
 [ui]
 product_name = "Home Edge"
