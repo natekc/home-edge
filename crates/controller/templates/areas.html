@@ -39,5 +39,39 @@
     </div>
   </div>
 
+  <div class="ha-card" style="margin-bottom:16px;margin-top:24px">
+    <div class="ha-card-header"><h2>Zones</h2></div>
+    {% if zones | length == 0 %}
+    <div class="ha-card-body text-muted">No zones configured yet.</div>
+    {% else %}
+    <div class="ha-card-body" style="padding:0">
+      {% for zone in zones %}
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)">
+        <svg width="20" height="20" style="color:var(--ha-blue,#009ac7);fill:currentColor;flex-shrink:0">
+          <use href="#icon-map-marker"/>
+        </svg>
+        <span style="flex:1;font-size:.95rem">{{ zone.name }}</span>
+        <a href="/zones/{{ zone.zone_id }}" class="btn btn-secondary" style="font-size:.75rem;padding:4px 10px">Edit</a>
+        <form method="post" action="/zones/{{ zone.zone_id }}/delete" style="margin:0">
+          <button type="submit" class="btn btn-secondary" style="font-size:.75rem;padding:4px 10px"
+                  data-zone-name="{{ zone.name }}"
+                  onclick="return confirm('Delete zone \u201c' + this.dataset.zoneName + '\u201d?')">Delete</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="ha-card">
+    <div class="ha-card-header"><h2>Add zone</h2></div>
+    <div class="ha-card-body">
+      <form method="post" action="/zones" style="display:flex;gap:12px;align-items:center">
+        <input type="text" name="name" class="form-control" placeholder="e.g. Work" required maxlength="64" style="flex:1">
+        <button type="submit" class="btn btn-primary">Add</button>
+      </form>
+    </div>
+  </div>
+
 </div>
 {% endblock %}

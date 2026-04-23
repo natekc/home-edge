@@ -131,6 +131,7 @@ async fn build_server_and_state(
             product_name: "Test Home".into(),
         },
         areas: home_edge::config::AreasConfig::default(),
+        home_zone: home_edge::config::HomeZoneConfig::default(),
         history: home_edge::config::HistoryConfig::default(),
     };
     let state = Arc::new(

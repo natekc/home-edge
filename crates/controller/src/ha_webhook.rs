@@ -243,9 +243,28 @@ async fn handle_mobile_webhook(
         // Returns device and app configuration back to the companion app.
         "get_config" => get_config_command(state, device).await,
         // Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_get_zones
-        // Returns configured zones. Home-edge has no zone support yet; return empty list.
+        // Returns zone.home (synthetic, from OnboardingState) + all user-defined zones.
+        // Source: homeassistant/components/zone/__init__.py  get_zones returns all zone
+        //         entities including the synthetic zone.home entity.
         "get_zones" => {
-            (StatusCode::OK, Json(json!([]))).into_response()
+            let (onboarding, user_zones) = match tokio::try_join!(
+                state.storage.load_onboarding(),
+                state.zone_store.list(),
+            ) {
+                Ok(pair) => pair,
+                Err(_) => return (StatusCode::OK, Json(json!([]))).into_response(),
+            };
+            let mut zones: Vec<serde_json::Value> =
+                vec![crate::zone_store::home_zone_state(&onboarding)];
+            // Only include user zones that have coordinates — HAKit's Zone model
+            // decodes latitude/longitude as non-optional Double, so null coordinates
+            // would cause decoding failures in the iOS companion app.
+            zones.extend(
+                user_zones.iter()
+                    .filter(|z| z.latitude.is_some() && z.longitude.is_some())
+                    .map(crate::zone_store::zone_to_state)
+            );
+            (StatusCode::OK, Json(json!(zones))).into_response()
         }
         // Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_update_location
         // Accepts a device location update. Home-edge acknowledges but does not store.
@@ -641,6 +660,7 @@ mod tests {
                 product_name: "Test Home".into(),
             },
             areas: crate::config::AreasConfig::default(),
+            home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
         };
         let storage = Storage::new_in_memory();
@@ -729,6 +749,7 @@ mod tests {
                 product_name: "T".into(),
             },
             areas: crate::config::AreasConfig::default(),
+            home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
         };
         let webhooks = WebhookStore::new();
@@ -824,6 +845,7 @@ mod tests {
             },
             ui: UiConfig { product_name: "Test".into() },
             areas: crate::config::AreasConfig::default(),
+            home_zone: crate::config::HomeZoneConfig::default(),
             // Small capacity to keep tests fast
             history: HistoryConfig { capacity: 50 },
         };

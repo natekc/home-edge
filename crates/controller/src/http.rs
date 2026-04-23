@@ -51,14 +51,45 @@ fn unauthorized(msg: &'static str) -> Response {
     (StatusCode::UNAUTHORIZED, Json(ErrorResponse::new(msg.into()))).into_response()
 }
 
+/// Self-contained HTML error page for page-navigation contexts.
+/// Does NOT use the template engine (avoids recursion if templates fail).
+/// Fires `connection-status:connected` so the iOS 10-second disconnect timer is cancelled.
+fn page_error(status: StatusCode, msg: &str) -> Response {
+    let safe = msg.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let html = format!(
+        concat!(
+            "<!doctype html><html lang=\"en\"><head>",
+            "<meta charset=\"utf-8\">",
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+            "<title>Error</title>",
+            "<script>(function(){{try{{window.webkit.messageHandlers.externalBus",
+            ".postMessage({{type:\'connection-status\',payload:{{event:\'connected\'}}}});",
+            "}}catch(e){{}}}})()</script>",
+            "<style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;",
+            "padding:32px 24px;color:#333;background:#f5f5f5}}",
+            "h2{{font-weight:400;color:#c62828}}a{{color:#009ac7;text-decoration:none}}</style>",
+            "</head><body><h2>Error</h2><p>{safe}</p>",
+            "<p><a href=\"javascript:history.back()\">\u{2190} Go back</a></p>",
+            "</body></html>"
+        ),
+        safe = safe
+    );
+    (status, Html(html)).into_response()
+}
+
+/// Router-level 404 — unknown URLs return HTML so the connected script fires.
+async fn fallback_404() -> Response {
+    page_error(StatusCode::NOT_FOUND, "Page not found")
+}
+
 /// Render a named minijinja template into an HTML response.
 fn render_template(state: &AppState, name: &str, ctx: Value) -> Response {
     match state.render_html(name, ctx) {
         Ok(html) => Html(html).into_response(),
-        Err(err) => {
-            let err = anyhow::anyhow!("template {name}: {err}");
-            internal_error(&err)
-        }
+        Err(err) => page_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Template error ({name}): {err:#}"),
+        ),
     }
 }
 
@@ -74,6 +105,10 @@ fn local_host() -> String {
 
 async fn load_areas(state: &AppState) -> Vec<crate::area_registry_store::StoredArea> {
     state.area_registry.list().await.unwrap_or_default()
+}
+
+async fn load_zones(state: &AppState) -> Vec<crate::zone_store::StoredZone> {
+    state.zone_store.list().await.unwrap_or_default()
 }
 
 /// Load the configured location name («Nathan's Home») for the sidebar header.
@@ -100,6 +135,8 @@ macro_rules! app_ctx {
             server_host   => local_host(),
             server_port   => $state.config.server.port,
             areas         => Value::from_serialize($areas),
+            back_url      => "",
+            nav_title     => "",
             $($rest)*
         }
     };
@@ -139,6 +176,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/areas",                                             get(areas_page).post(areas_create))
         .route("/areas/{area_id}",                                   get(area_detail_page))
         .route("/areas/{area_id}/delete",                            post(area_delete))
+        // Zones (geographic geofence zones — mirrors HA core zone component)
+        .route("/zones",                                             post(zones_create))
+        .route("/zones/{zone_id}",                                   get(zone_edit_page).post(zone_update))
+        .route("/zones/{zone_id}/delete",                            post(zone_delete))
         // HTMX fragments
         .route("/fragments/dashboard-sensors",                   get(fragment_dashboard_sensors))
         .route("/fragments/area-sensors/{area_id}",              get(fragment_area_sensors))
@@ -170,6 +211,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/onboarding/integration/wait",               post(onboarding_integration_wait))
         .route("/api/onboarding/complete",                       post(complete_onboarding))
         .with_state(state)
+        // Any unmatched URL returns HTML 404 so the iOS connected script fires.
+        .fallback(fallback_404)
 }
 
 // ---------------------------------------------------------------------------
@@ -180,14 +223,16 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
     match state.core.onboarding_progress(&state.storage).await {
         Ok(progress) if !progress.onboarded => redirect("/onboarding"),
         Ok(_) => dashboard_response(&state).await,
-        Err(err) => internal_error(&err),
+        Err(err) => page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     }
 }
 
 fn redirect(path: &'static str) -> Response {
+    // 303 See Other: converts POST to GET (Post-Redirect-Get pattern).
+    // Using 307 would re-POST with empty body → axum 422 (no HTML) → iOS disconnect.
     let mut headers = HeaderMap::new();
     headers.insert(header::LOCATION, HeaderValue::from_static(path));
-    (StatusCode::TEMPORARY_REDIRECT, headers).into_response()
+    (StatusCode::SEE_OTHER, headers).into_response()
 }
 
 async fn profile_page(State(state): State<Arc<AppState>>) -> Response {
@@ -217,11 +262,11 @@ async fn profile_page(State(state): State<Arc<AppState>>) -> Response {
 async fn dashboard_response(state: &AppState) -> Response {
     let devices = match state.mobile_devices.all().await {
         Ok(d) => d,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let device_summaries: Vec<_> = devices
         .iter()
@@ -253,7 +298,7 @@ async fn dashboard_response(state: &AppState) -> Response {
 async fn onboarding_page(State(state): State<Arc<AppState>>) -> Response {
     let progress = match state.core.onboarding_progress(&state.storage).await {
         Ok(p) => p,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let steps = vec![
         json!({"done": progress.user_done,        "label": "Create owner account"}),
@@ -285,11 +330,11 @@ async fn settings_page(State(state): State<Arc<AppState>>) -> Response {
 async fn devices_list_page(State(state): State<Arc<AppState>>) -> Response {
     let devices = match state.mobile_devices.all().await {
         Ok(d) => d,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let device_summaries: Vec<_> = devices
         .iter()
@@ -311,7 +356,9 @@ async fn devices_list_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "settings", location_name.as_str(), &areas,
-        devices => Value::from_serialize(&device_summaries),
+        back_url  => "/settings",
+        nav_title => "Devices & services",
+        devices   => Value::from_serialize(&device_summaries),
     );
     render_template(&state, "devices.html", ctx)
 }
@@ -328,7 +375,7 @@ async fn history_page(State(state): State<Arc<AppState>>) -> Response {
     let areas = load_areas(&state).await;
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let mut entity_list: Vec<serde_json::Value> = all_entities
         .iter()
@@ -363,7 +410,7 @@ async fn developer_tools_page(State(state): State<Arc<AppState>>) -> Response {
     let areas = load_areas(&state).await;
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     // Include disabled entities intentionally — developer tools shows the full picture.
     // Reuse entity_to_view so the state fallback logic is not duplicated here.
@@ -400,6 +447,8 @@ async fn system_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "system", location_name.as_str(), &areas,
+        back_url     => "/settings",
+        nav_title    => "System",
         version      => env!("CARGO_PKG_VERSION"),
         runtime_mode => mode.as_str(),
     );
@@ -409,7 +458,12 @@ async fn system_page(State(state): State<Arc<AppState>>) -> Response {
 async fn areas_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,);
+    let zones = load_zones(&state).await;
+    let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,
+        zones     => Value::from_serialize(&zones),
+        back_url  => "/settings",
+        nav_title => "Areas, labels & zones",
+    );
     render_template(&state, "areas.html", ctx)
 }
 
@@ -427,7 +481,7 @@ async fn areas_create(
         return redirect("/areas");
     }
     if let Err(err) = state.area_registry.create(name).await {
-        return internal_error(&err);
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
     }
     redirect("/areas")
 }
@@ -437,7 +491,139 @@ async fn area_delete(
     Path(area_id): Path<String>,
 ) -> Response {
     if let Err(err) = state.area_registry.delete(&area_id).await {
-        return internal_error(&err);
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
+    }
+    redirect("/areas")
+}
+
+// ---------------------------------------------------------------------------
+// Zone handlers
+// Source: homeassistant/components/zone/__init__.py
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ZoneCreateForm {
+    name: String,
+}
+
+async fn zones_create(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Form(form): axum::extract::Form<ZoneCreateForm>,
+) -> Response {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return redirect("/areas");
+    }
+    match state.zone_store.create(name, None, None, None, None, None).await {
+        Ok(zone) => {
+            // Redirect to edit page so the user can set coordinates immediately.
+            let path = format!("/zones/{}", zone.zone_id);
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::LOCATION,
+                HeaderValue::from_str(&path).unwrap_or_else(|_| HeaderValue::from_static("/areas")),
+            );
+            (StatusCode::SEE_OTHER, headers).into_response()
+        }
+        Err(err) => page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
+    }
+}
+
+async fn zone_edit_page(
+    State(state): State<Arc<AppState>>,
+    Path(zone_id): Path<String>,
+) -> Response {
+    let zone = match state.zone_store.list().await {
+        Ok(list) => list.into_iter().find(|z| z.zone_id == zone_id),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
+    };
+    let zone = match zone {
+        Some(z) => z,
+        None => return page_error(StatusCode::NOT_FOUND, "Zone not found"),
+    };
+    let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,
+        zones     => Value::from_serialize(&load_zones(&state).await),
+        zone      => Value::from_serialize(&zone),
+        saved     => false,
+        back_url  => "/areas",
+        nav_title => "Edit Zone",
+    );
+    render_template(&state, "zone_edit.html", ctx)
+}
+
+#[derive(Deserialize)]
+struct ZoneUpdateForm {
+    name: String,
+    // Empty string when the field is left blank; parsed as Option<f64> manually.
+    #[serde(default)]
+    latitude: String,
+    #[serde(default)]
+    longitude: String,
+    #[serde(default)]
+    radius: String,
+    // Checkboxes are only present when checked.
+    passive: Option<String>,
+    #[serde(default)]
+    icon: String,
+}
+
+async fn zone_update(
+    State(state): State<Arc<AppState>>,
+    Path(zone_id): Path<String>,
+    axum::extract::Form(form): axum::extract::Form<ZoneUpdateForm>,
+) -> Response {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return redirect("/areas");
+    }
+    // Empty field → don't touch the stored value (pass None = "leave unchanged").
+    // Non-empty field → parse and set (Some(Some(val)) = "set to val").
+    let latitude = if form.latitude.trim().is_empty() {
+        None
+    } else {
+        Some(form.latitude.trim().parse::<f64>().ok())
+    };
+    let longitude = if form.longitude.trim().is_empty() {
+        None
+    } else {
+        Some(form.longitude.trim().parse::<f64>().ok())
+    };
+    let radius = form.radius.trim().parse::<f64>().ok();
+    let passive = Some(form.passive.is_some());
+    let icon_s = form.icon.trim();
+    let icon = Some(if icon_s.is_empty() { None } else { Some(icon_s.to_string()) });
+
+    match state.zone_store.update(&zone_id, Some(name), latitude, longitude, radius, passive, icon).await {
+        Ok(Some(zone)) => {
+            let location_name = load_location_name(&state).await;
+            let areas = load_areas(&state).await;
+            let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,
+                zones     => Value::from_serialize(&load_zones(&state).await),
+                zone      => Value::from_serialize(&zone),
+                saved     => true,
+                back_url  => "/areas",
+                nav_title => "Edit Zone",
+            );
+            render_template(&state, "zone_edit.html", ctx)
+        }
+        Ok(None) => page_error(StatusCode::NOT_FOUND, "Zone not found"),
+        Err(err) => page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
+    }
+}
+
+async fn zone_delete(
+    State(state): State<Arc<AppState>>,
+    Path(zone_id): Path<String>,
+) -> Response {
+    // zone.home is synthetic; guard explicitly for a clear error rather than
+    // silently returning false from the store.
+    if zone_id == "home" {
+        return page_error(StatusCode::FORBIDDEN, "zone.home cannot be deleted");
+    }
+    if let Err(err) = state.zone_store.delete(&zone_id).await {
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
     }
     redirect("/areas")
 }
@@ -448,17 +634,17 @@ async fn area_detail_page(
 ) -> Response {
     let area = match state.area_registry.list().await {
         Ok(list) => list.into_iter().find(|a| a.area_id == area_id),
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let area = match area {
         Some(a) => a,
-        None => return (StatusCode::NOT_FOUND, "Area not found").into_response(),
+        None => return page_error(StatusCode::NOT_FOUND, "Area not found"),
     };
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let all_entities = match state.mobile_entities.all().await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let all_cards = build_area_cards(&state, &all_entities).await;
     let area_cards: Vec<AreaCard> = all_cards.into_iter()
@@ -504,12 +690,12 @@ async fn device_detail_page(
 ) -> Response {
     let device = match state.mobile_devices.get_by_webhook_id(&webhook_id).await {
         Ok(Some(d)) => d,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return internal_error(&err),
+        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Device not found"),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let raw_entities = match state.mobile_entities.list_by_webhook_id(&webhook_id).await {
         Ok(e) => e,
-        Err(err) => return internal_error(&err),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let entities: Vec<_> = raw_entities
         .iter()
@@ -518,8 +704,10 @@ async fn device_detail_page(
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
-        device   => Value::from_serialize(&device),
-        entities => Value::from_serialize(&entities),
+        back_url  => "/devices",
+        nav_title => device.display_name(),
+        device    => Value::from_serialize(&device),
+        entities  => Value::from_serialize(&entities),
     );
     render_template(&state, "device_detail.html", ctx)
 }
@@ -531,13 +719,13 @@ async fn entity_edit_page(
 ) -> Response {
     let device = match state.mobile_devices.get_by_webhook_id(&webhook_id).await {
         Ok(Some(d)) => d,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return internal_error(&err),
+        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Device not found"),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let entity_record = match state.mobile_entities.get_by_entity_id(&entity_id).await {
         Ok(Some(e)) => e,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Entity not found").into_response(),
-        Err(err) => return internal_error(&err),
+        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Entity not found"),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
     let history = state.history.last_n(&entity_id, 100).await;
     let sparkline = if history.len() >= 2 {
@@ -548,7 +736,10 @@ async fn entity_edit_page(
     let entity_view = entity_to_view(&entity_record, &state);
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
+    let back = format!("/devices/{webhook_id}");
     let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
+        back_url      => back.as_str(),
+        nav_title     => entity_view.display_name.as_str(),
         device        => Value::from_serialize(&device),
         entity        => Value::from_serialize(&entity_view),
         saved         => params.saved.unwrap_or(false),
@@ -604,7 +795,7 @@ async fn entity_edit_save(
             );
             (StatusCode::SEE_OTHER, headers).into_response()
         }
-        Err(err) => internal_error(&err),
+        Err(err) => page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     }
 }
 
