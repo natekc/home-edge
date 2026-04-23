@@ -498,3 +498,112 @@ pub async fn start(
 
     ZigbeeHandle { cmd_tx }
 }
+
+// ---------------------------------------------------------------------------
+// Presentation helpers (transport_wifi only)
+// ---------------------------------------------------------------------------
+
+/// Build an [`EntityView`][crate::entity_view::EntityView] from a Zigbee entity
+/// record and the live state store.
+///
+/// This function lives here (the Zigbee backend module) rather than in
+/// `http.rs` so that icon selection, service-action rules, and any other
+/// Zigbee-specific presentation logic are co-located with the rest of the
+/// Zigbee integration.  The HTTP layer calls this via
+/// `crate::http::fetch_entity_view`; no HTTP concern leaks in here.
+///
+/// # Pattern for future backends
+/// A WiFi-sensor backend would add an analogous function in its own module:
+/// ```ignore
+/// // wifi_sensor_store.rs
+/// pub(crate) fn entity_view_for(
+///     entity: &WifiSensorRecord,
+///     states: &crate::state_store::StateStore,
+/// ) -> crate::entity_view::EntityView { ... }
+/// ```
+/// Then `fetch_entity_view` gets one new `#[cfg(feature = "wifi_sensors")]` arm.
+#[cfg(feature = "transport_wifi")]
+pub(crate) fn entity_view_for(
+    entity: &ZigbeeEntityRecord,
+    states: &StateStore,
+) -> crate::entity_view::EntityView {
+    let value = states
+        .get(&entity.entity_id)
+        .map(|s| s.state.clone())
+        .unwrap_or_else(|| "unavailable".to_string());
+    let attrs = states
+        .get(&entity.entity_id)
+        .map(|s| s.attributes)
+        .unwrap_or_default();
+
+    let brightness = attrs
+        .get("brightness")
+        .and_then(|v| v.as_u64())
+        .map(|v| v.min(255) as u8);
+    let color_temp_kelvin = attrs
+        .get("color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16);
+    let min_color_temp_kelvin = attrs
+        .get("min_color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16)
+        .unwrap_or(2000);
+    let max_color_temp_kelvin = attrs
+        .get("max_color_temp_kelvin")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16)
+        .unwrap_or(6535);
+
+    let icon_name = match entity.domain.as_str() {
+        "light"  => "lightbulb",
+        "switch" => if value == "on" { "toggle-switch" } else { "toggle-switch-off" },
+        "sensor" => match entity.device_class.as_deref() {
+            Some("temperature")           => "thermometer",
+            Some("humidity")              => "water-percent",
+            Some("illuminance")           => "weather-sunny",
+            Some("battery")               => "battery",
+            Some("voltage")               => "lightning-bolt",
+            Some("atmospheric_pressure")  => "gauge",
+            _                             => "gauge",
+        },
+        "binary_sensor" => match entity.device_class.as_deref() {
+            Some("occupancy") | Some("motion") => "motion-sensor",
+            Some("door") | Some("window")      => "door",
+            Some("tamper")                     => "shield-alert",
+            Some("battery")                    => "battery-alert",
+            _                                  => "radiobox-marked",
+        },
+        _ => "home",
+    };
+
+    let service_action = match entity.domain.as_str() {
+        "light" | "switch" => "toggle",
+        _                  => "",
+    };
+
+    crate::entity_view::EntityView {
+        entity_id:             entity.entity_id.clone(),
+        webhook_id:            String::new(),
+        display_name:          entity.display_name().to_string(),
+        entity_type:           entity.domain.clone(),
+        icon_name:             icon_name.to_string(),
+        value,
+        unit:                  entity.unit_of_measurement.clone().unwrap_or_default(),
+        device_class:          entity.device_class.clone().unwrap_or_default(),
+        user_area_id:          entity.user_area_id.clone().unwrap_or_default(),
+        unit_of_measurement:   entity.unit_of_measurement.clone(),
+        disabled:              false,
+        service_action:        service_action.to_string(),
+        current_temperature:   None,
+        target_temperature:    None,
+        hvac_modes:            vec![],
+        brightness,
+        color_temp_kelvin,
+        min_color_temp_kelvin,
+        max_color_temp_kelvin,
+        options:               vec![],
+        current_position:      None,
+        fan_percentage:        None,
+    }
+}

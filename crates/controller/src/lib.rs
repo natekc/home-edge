@@ -34,6 +34,8 @@ pub mod ha_webhook;
 #[cfg(feature = "transport_wifi")]
 pub mod ha_ws;
 #[cfg(feature = "transport_wifi")]
+pub mod entity_view;
+#[cfg(feature = "transport_wifi")]
 pub mod http;
 #[cfg(feature = "transport_wifi")]
 pub mod mobile_device_store;

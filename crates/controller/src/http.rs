@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, json};
 
 use crate::app::AppState;
+use crate::entity_view::{AreaCard, EntityView};
 use crate::core::{
     CompleteAnalyticsOutcome, CompleteIntegrationOutcome, CompleteCoreConfigOutcome,
     Consistency, CoreDeps, DeadlineClass, CreateOnboardingUserOutcome, OnboardingCoreConfigInput,
@@ -836,13 +837,25 @@ async fn fragment_dashboard_sensors(State(state): State<Arc<AppState>>) -> Respo
     render_template(&state, "fragments/sensors.html", ctx)
 }
 
-/// Resolve an entity into an `(EntityView, entity_type)` pair, checking
-/// mobile entities first and then the Zigbee store.  Storage errors are
-/// returned as `Err(Response)` so the caller can propagate them immediately.
+/// Resolve an entity into an `(EntityView, entity_type)` pair by querying each
+/// registered backend in priority order.  Returns `Ok(None)` when no backend
+/// owns the entity, `Err(Response)` on a storage error.
+///
+/// # Extension point
+/// Add new entity backends here following the Zigbee example:
+/// ```ignore
+/// #[cfg(feature = "wifi_sensors")]
+/// if let Some(v) = state.wifi_sensor_entities.get(entity_id).await
+///     .map_err(|e| internal_error(&e))?
+/// {
+///     return Ok(Some((crate::wifi_sensor_store::entity_view_for(&v, &state.states), v.domain)));
+/// }
+/// ```
 async fn fetch_entity_view(
     entity_id: &str,
     state: &AppState,
 ) -> Result<Option<(EntityView, String)>, Response> {
+    // ── Mobile (webhook-registered) entities ─────────────────────────────
     if let Some(e) = state
         .mobile_entities
         .get_by_entity_id(entity_id)
@@ -851,6 +864,8 @@ async fn fetch_entity_view(
     {
         return Ok(Some((entity_to_view(&e, state), e.entity_type)));
     }
+
+    // ── Zigbee entities ───────────────────────────────────────────────────
     #[cfg(feature = "zigbee")]
     if let Some(ze) = state
         .zigbee_entities
@@ -858,8 +873,12 @@ async fn fetch_entity_view(
         .await
         .map_err(|e| internal_error(&e))?
     {
-        return Ok(Some((zigbee_entity_to_view(&ze, state), ze.domain)));
+        return Ok(Some((
+            crate::zigbee_integration::entity_view_for(&ze, &state.states),
+            ze.domain,
+        )));
     }
+
     Ok(None)
 }
 
@@ -1367,53 +1386,12 @@ async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoRes
 // ---------------------------------------------------------------------------
 // Entity / device view helpers
 // ---------------------------------------------------------------------------
-
-/// A serializable view of a sensor entity for use in templates.
-#[derive(Serialize)]
-struct EntityView {
-    entity_id: String,
-    webhook_id: String,
-    display_name: String,
-    entity_type: String,
-    icon_name: String,
-    value: String,
-    unit: String,
-    device_class: String,
-    user_area_id: String,
-    unit_of_measurement: Option<String>,
-    disabled: bool,
-    /// The HA service action for this entity (e.g. "toggle", "press", "activate");
-    /// empty string for read-only entities such as sensor and binary_sensor.
-    service_action: String,
-    current_temperature: Option<f64>,
-    target_temperature: Option<f64>,
-    hvac_modes: Vec<String>,
-    /// Light brightness 0–255, None if unavailable.
-    brightness: Option<u8>,
-    /// Light color temperature in kelvin, None if unavailable.
-    /// Source: homeassistant/components/light/__init__.py ATTR_COLOR_TEMP_KELVIN
-    color_temp_kelvin: Option<u16>,
-    /// Per-device minimum color temperature in kelvin.
-    /// Source: homeassistant/components/light/__init__.py ATTR_MIN_COLOR_TEMP_KELVIN, DEFAULT_MIN_KELVIN = 2000
-    min_color_temp_kelvin: u16,
-    /// Per-device maximum color temperature in kelvin.
-    /// Source: homeassistant/components/light/__init__.py ATTR_MAX_COLOR_TEMP_KELVIN, DEFAULT_MAX_KELVIN = 6535
-    max_color_temp_kelvin: u16,
-    /// Select entity available options.
-    options: Vec<String>,
-    /// Cover current position 0–100, None if unavailable
-    current_position: Option<u8>,
-    /// Fan speed percentage 0–100, None if unavailable.
-    /// Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
-    fan_percentage: Option<u8>,
-}
-
-/// Area-grouped card view passed to dashboard templates.
-#[derive(Serialize)]
-struct AreaCard {
-    area_name: String,
-    entities: Vec<EntityView>,
-}
+//
+// EntityView and AreaCard live in crate::entity_view (backend-agnostic).
+// Each backend module owns its own `entity_view_for(record, states)` function:
+//   • mobile   → entity_to_view()           (below, uses MobileEntityRecord)
+//   • Zigbee   → zigbee_integration::entity_view_for()  (zigbee_integration.rs)
+//   • <future> → <backend_module>::entity_view_for()    (see entity_view.rs docs)
 
 fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
     let value = state
@@ -1489,101 +1467,6 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         options,
         current_position,
         fan_percentage,
-    }
-}
-
-/// Build an [`EntityView`] from a Zigbee entity record and the live state store.
-///
-/// Zigbee entities are read-only from the UI perspective (no webhook_id);
-/// the service_action is empty for binary_sensor and sensor, "toggle" for
-/// light/switch (controlled via the Zigbee command path, not HA webhooks).
-#[cfg(feature = "zigbee")]
-fn zigbee_entity_to_view(
-    entity: &crate::zigbee_entity_store::ZigbeeEntityRecord,
-    state: &AppState,
-) -> EntityView {
-    let value = state
-        .states
-        .get(&entity.entity_id)
-        .map(|s| s.state.clone())
-        .unwrap_or_else(|| "unavailable".to_string());
-    let attrs = state
-        .states
-        .get(&entity.entity_id)
-        .map(|s| s.attributes)
-        .unwrap_or_default();
-
-    let brightness = attrs
-        .get("brightness")
-        .and_then(|v| v.as_u64())
-        .map(|v| v.min(255) as u8);
-    let color_temp_kelvin = attrs
-        .get("color_temp_kelvin")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u16);
-    let min_color_temp_kelvin = attrs
-        .get("min_color_temp_kelvin")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u16)
-        .unwrap_or(2000);
-    let max_color_temp_kelvin = attrs
-        .get("max_color_temp_kelvin")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u16)
-        .unwrap_or(6535);
-
-    let icon_name = match entity.domain.as_str() {
-        "light" => "lightbulb",
-        "switch" => {
-            if value == "on" { "toggle-switch" } else { "toggle-switch-off" }
-        }
-        "sensor" => match entity.device_class.as_deref() {
-            Some("temperature")           => "thermometer",
-            Some("humidity")              => "water-percent",
-            Some("illuminance")           => "weather-sunny",
-            Some("battery")              => "battery",
-            Some("voltage")              => "lightning-bolt",
-            Some("atmospheric_pressure") => "gauge",
-            _                            => "gauge",
-        },
-        "binary_sensor" => match entity.device_class.as_deref() {
-            Some("occupancy") | Some("motion") => "motion-sensor",
-            Some("door") | Some("window")      => "door",
-            Some("tamper")                     => "shield-alert",
-            Some("battery")                    => "battery-alert",
-            _                                  => "radiobox-marked",
-        },
-        _ => "home",
-    };
-
-    let service_action = match entity.domain.as_str() {
-        "light" | "switch" => "toggle",
-        _                  => "",
-    };
-
-    EntityView {
-        entity_id:             entity.entity_id.clone(),
-        webhook_id:            String::new(),
-        display_name:          entity.display_name().to_string(),
-        entity_type:           entity.domain.clone(),
-        icon_name:             icon_name.to_string(),
-        value,
-        unit:                  entity.unit_of_measurement.clone().unwrap_or_default(),
-        device_class:          entity.device_class.clone().unwrap_or_default(),
-        user_area_id:          entity.user_area_id.clone().unwrap_or_default(),
-        unit_of_measurement:   entity.unit_of_measurement.clone(),
-        disabled:              false,
-        service_action:        service_action.to_string(),
-        current_temperature:   None,
-        target_temperature:    None,
-        hvac_modes:            vec![],
-        brightness,
-        color_temp_kelvin,
-        min_color_temp_kelvin,
-        max_color_temp_kelvin,
-        options:               vec![],
-        current_position:      None,
-        fan_percentage:        None,
     }
 }
 
@@ -1903,7 +1786,7 @@ async fn zigbee_device_detail_page(
     };
     let entities: Vec<EntityView> = entity_records
         .iter()
-        .map(|e| zigbee_entity_to_view(e, &state))
+        .map(|e| crate::zigbee_integration::entity_view_for(e, &state.states))
         .collect();
     let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
         device   => Value::from_serialize(&device),
