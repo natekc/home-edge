@@ -22,6 +22,45 @@ This repository contains the Milestone 0 foundation for a standalone runtime tar
 - `systemd/`: native service unit
 - `scripts/`: installation helpers
 
+## Installing on a device (no Rust required)
+
+Download the pre-built tarball for your board from the [releases page](../../releases),
+then from your laptop/desktop (on the same network as the device):
+
+```bash
+# First-time install
+make push TARBALL=~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz HOST=pi@raspberrypi.local
+
+# Upgrade
+make push TARBALL=~/Downloads/home-edge-arm-unknown-linux-gnueabihf.tar.gz HOST=pi@raspberrypi.local
+
+# Rollback to the previous binary
+make rollback HOST=pi@raspberrypi.local
+```
+
+Or without `make`, entirely by hand:
+
+```bash
+scp home-edge-arm-unknown-linux-gnueabihf.tar.gz pi@raspberrypi.local:/tmp/
+ssh pi@raspberrypi.local '
+  mkdir -p /tmp/home-edge-update &&
+  tar -xzf /tmp/home-edge-update.tar.gz -C /tmp/home-edge-update &&
+  sudo sh /tmp/home-edge-update/upgrade.sh
+'
+```
+
+The device does not need internet access — the tarball is transferred over your local
+network via SSH/SCP.  `upgrade.sh` delegates to `install.sh` automatically on first run.
+
+### Release tarballs
+
+| Tarball | Board | Notes |
+|---|---|---|
+| `home-edge-arm-unknown-linux-gnueabihf.tar.gz` | Raspberry Pi Zero W, Pi 1 | ARMv6, hard-float |
+| `home-edge-armv7-unknown-linux-gnueabihf.tar.gz` | Raspberry Pi 2/3/4 (32-bit OS) | ARMv7 |
+| `home-edge-aarch64-unknown-linux-gnu.tar.gz` | Raspberry Pi 3/4/5 (64-bit OS), most SBCs | AArch64 |
+| `home-edge-riscv64gc-unknown-linux-gnu.tar.gz` | StarFive VisionFive 2, Milk-V Pioneer | RISC-V 64 |
+
 ## Local development
 
 ```bash
@@ -29,7 +68,9 @@ cargo test
 cargo run -- --config config/default.toml
 ```
 
-## Cross-compilation
+## Building from source
+
+### Cross-compilation
 
 Install Rust targets once:
 
@@ -49,27 +90,27 @@ brew tap messense/macos-cross-toolchains
 brew install messense/macos-cross-toolchains/arm-unknown-linux-gnueabihf
 ```
 
-On **Linux** (Debian/Ubuntu), install the distro cross package:
+On **Linux** (Debian/Ubuntu):
 
 ```bash
-sudo apt install gcc-arm-linux-gnueabihf        # ARMv6
-sudo apt install gcc-arm-linux-gnueabihf        # ARMv7 (same package)
+sudo apt install gcc-arm-linux-gnueabihf        # ARMv6 / ARMv7
 sudo apt install gcc-aarch64-linux-gnu          # AArch64
-```
-
-Build:
-
-```bash
-cargo build --release --target arm-unknown-linux-gnueabihf -p home-edge
-# binary: target/arm-unknown-linux-gnueabihf/release/home-edge
 ```
 
 See `.cargo/config.toml` for the full list of supported targets and required linker names.
 
+### Build and deploy from source
+
 ```bash
-docker build -f docker/Dockerfile.build --target runtime -t home-edge-build .
-docker create --name extract home-edge-build
-docker cp extract:/out/home-edge ./target/home-edge
+# Build, package, and push to device in one command:
+make deploy HOST=pi@raspberrypi.local
+
+# Different board:
+make deploy TARGET=aarch64-unknown-linux-gnu HOST=ubuntu@myboard.local
+
+# Just build the tarball (for uploading to a release):
+make package TARGET=arm-unknown-linux-gnueabihf
+# → home-edge-arm-unknown-linux-gnueabihf.tar.gz
 ```
 
 ## Current endpoints
