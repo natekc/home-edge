@@ -21,6 +21,7 @@ use tracing::info;
 use crate::area_registry_store::AreaRegistryStore;
 #[cfg(feature = "transport_wifi")]
 use crate::notification_store::NotificationStore;
+use crate::zone_store::ZoneStore;
 #[cfg(feature = "transport_wifi")]
 use crate::auth_store::AuthStore;
 #[cfg(feature = "transport_wifi")]
@@ -51,6 +52,7 @@ pub struct AppState {
     pub storage: Storage,
     pub auth: AuthStore,
     pub area_registry: AreaRegistryStore,
+    pub zone_store: ZoneStore,
     pub mobile_devices: MobileDeviceStore,
     pub mobile_entities: MobileEntityStore,
     pub states: StateStore,
@@ -69,6 +71,7 @@ impl AppState {
     pub fn new(config: AppConfig, storage: Storage) -> Self {
         let auth = AuthStore::new(storage.root().to_path_buf());
         let area_registry = AreaRegistryStore::new(storage.root().to_path_buf());
+        let zone_store = ZoneStore::new(storage.root().to_path_buf());
         let mobile_devices = MobileDeviceStore::new(storage.root().to_path_buf());
         let mobile_entities = MobileEntityStore::new(storage.root().to_path_buf());
         let tokens = TokenStore::new(storage.root().to_path_buf());
@@ -77,6 +80,7 @@ impl AppState {
             core: AppCore::new(),
             auth,
             area_registry,
+            zone_store,
             mobile_devices,
             mobile_entities,
             config,
@@ -103,6 +107,17 @@ impl AppState {
         state
             .area_registry
             .seed_if_empty(&state.config.areas.names)
+            .await?;
+        // Seed the home zone coordinates from config.toml on first boot.
+        // If OnboardingState already has coordinates (set during or after onboarding)
+        // this is a no-op — matching the same once-only-seed pattern as [areas].
+        state
+            .storage
+            .seed_home_zone_coords_if_unset(
+                state.config.home_zone.latitude,
+                state.config.home_zone.longitude,
+                state.config.home_zone.radius,
+            )
             .await?;
         Ok(state)
     }
@@ -249,6 +264,7 @@ mod tests {
                 product_name: "Test Home".into(),
             },
             areas: AreasConfig::default(),
+            home_zone: crate::config::HomeZoneConfig::default(),
             history: crate::config::HistoryConfig::default(),
         }
     }

@@ -12,6 +12,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub areas: AreasConfig,
     #[serde(default)]
+    pub home_zone: HomeZoneConfig,
+    #[serde(default)]
     pub history: HistoryConfig,
 }
 
@@ -33,11 +35,35 @@ pub struct AreasConfig {
 }
 
 fn default_areas() -> Vec<String> {
-    vec![
-        "Living Room".into(),
-        "Kitchen".into(),
-        "Bedroom".into(),
-    ]
+    vec![]
+}
+
+/// Initial home zone coordinates used to seed `OnboardingState` on first boot.
+///
+/// After onboarding, the values in `onboarding.json` take precedence and this
+/// section is ignored for the home zone — matching the pattern of `[areas]`
+/// seeding the area registry only once.
+///
+/// This allows a deployment at a fixed location to be pre-configured without
+/// requiring manual coordinate entry during onboarding.
+///
+/// ```toml
+/// [home_zone]
+/// latitude  = 51.5074
+/// longitude = -0.1278
+/// radius    = 100.0     # metres; optional, default 100
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct HomeZoneConfig {
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    /// Geofence radius in metres. Default: 100 m (matches HA core DEFAULT_RADIUS).
+    #[serde(default = "default_home_zone_radius")]
+    pub radius: f64,
+}
+
+fn default_home_zone_radius() -> f64 {
+    100.0
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -14,6 +14,15 @@ product_name = "Home Edge"
 [areas]
 names = ["Living Room", "Kitchen", "Bedroom"]
 
+# Pre-configure the home zone coordinates (optional).
+# These values seed OnboardingState on first boot only — once onboarding
+# sets coordinates, this section is ignored, just like [areas].names.
+#
+# [home_zone]
+# latitude  = 51.5074
+# longitude = -0.1278
+# radius    = 100.0
+
 # History ring-buffer settings.
 # capacity: maximum sensor readings retained per entity (oldest evicted first).
 # [history]
