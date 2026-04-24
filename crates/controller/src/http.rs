@@ -162,6 +162,9 @@ fn zigbee_router(state: Arc<AppState>) -> Router {
             // REST
             .route("/api/zigbee/devices",                    get(api_zigbee_devices))
             .route("/api/zigbee/devices/{ieee}",             patch(api_zigbee_device_rename).delete(api_zigbee_device_delete))
+            // POST /delete mirrors the pattern used by area_delete and zone_delete so that
+            // plain HTML forms (which only support GET/POST) can trigger device removal.
+            .route("/api/zigbee/devices/{ieee}/delete",      post(api_zigbee_device_delete))
             .route("/api/zigbee/entities/{entity_id}",       patch(api_zigbee_entity_update))
             .route("/api/zigbee/permit_join",                post(api_zigbee_permit_join))
             .route("/api/zigbee/permit_join/stop",           post(api_zigbee_permit_join_stop))
@@ -1697,22 +1700,33 @@ async fn api_zigbee_devices(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+/// Form used by `PATCH /api/zigbee/devices/{ieee}` (from both the rename card and the
+/// area-picker card on the device detail page).
+///
+/// Both fields use `#[serde(default)]` so each form only needs to submit the field
+/// it cares about; absent fields produce `None` and leave the stored value untouched.
+/// An empty string for `user_area_id` is interpreted as "clear the area".
 #[cfg(feature = "zigbee")]
 #[derive(Debug, Deserialize)]
-struct ZigbeeDeviceRenamePayload {
-    name_by_user: Option<Option<String>>,
-    user_area_id: Option<Option<String>>,
+struct ZigbeeDeviceRenameForm {
+    #[serde(default)]
+    name_by_user: Option<String>,
+    #[serde(default)]
+    user_area_id: Option<String>,
 }
 
 #[cfg(feature = "zigbee")]
 async fn api_zigbee_device_rename(
     State(state): State<Arc<AppState>>,
     Path(ieee): Path<String>,
-    Json(payload): Json<ZigbeeDeviceRenamePayload>,
+    axum::extract::Form(form): axum::extract::Form<ZigbeeDeviceRenameForm>,
 ) -> Response {
     let update = ZigbeeDeviceMetaUpdate {
-        name_by_user: payload.name_by_user,
-        user_area_id: payload.user_area_id,
+        // None  → field absent → don't touch stored value
+        // Some(None)  → field submitted but empty → clear
+        // Some(Some(s)) → field submitted with value → set
+        name_by_user: form.name_by_user.map(|s| if s.trim().is_empty() { None } else { Some(s.trim().to_string()) }),
+        user_area_id: form.user_area_id.map(|s| if s.is_empty() { None } else { Some(s) }),
     };
     match state.zigbee_devices.update_meta(&ieee, update).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
@@ -1750,23 +1764,27 @@ async fn api_zigbee_device_delete(
     }
 }
 
+/// Form used by `PATCH /api/zigbee/entities/{entity_id}` from the area-picker
+/// column in the device detail entities table.
 #[cfg(feature = "zigbee")]
 #[derive(Debug, Deserialize)]
-struct ZigbeeEntityUpdatePayload {
-    name_by_user: Option<Option<String>>,
-    user_area_id: Option<Option<String>>,
+struct ZigbeeEntityUpdateForm {
+    #[serde(default)]
+    name_by_user: Option<String>,
+    #[serde(default)]
+    user_area_id: Option<String>,
 }
 
 #[cfg(feature = "zigbee")]
 async fn api_zigbee_entity_update(
     State(state): State<Arc<AppState>>,
     Path(entity_id): Path<String>,
-    Json(payload): Json<ZigbeeEntityUpdatePayload>,
+    axum::extract::Form(form): axum::extract::Form<ZigbeeEntityUpdateForm>,
 ) -> Response {
     use crate::zigbee_entity_store::ZigbeeEntityMetaUpdate;
     let update = ZigbeeEntityMetaUpdate {
-        name_by_user: payload.name_by_user,
-        user_area_id: payload.user_area_id,
+        name_by_user: form.name_by_user.map(|s| if s.trim().is_empty() { None } else { Some(s.trim().to_string()) }),
+        user_area_id: form.user_area_id.map(|s| if s.is_empty() { None } else { Some(s) }),
     };
     match state.zigbee_entities.update_meta(&entity_id, update).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),

@@ -294,10 +294,11 @@ async fn patch_device_updates_name_by_user() {
         Arc::clone(&state.states),
     ).await;
 
-    // Rename via PATCH (handler returns 204 No Content on success).
+    // Rename via PATCH using form-encoded body (handler now uses Form extractor).
     let resp = server
         .patch(&format!("/api/zigbee/devices/{}", ieee.as_hex()))
-        .json(&json!({"name_by_user": "Living Room Plug"}))
+        .content_type("application/x-www-form-urlencoded")
+        .bytes(b"name_by_user=Living+Room+Plug".as_slice().into())
         .await;
     resp.assert_status(StatusCode::NO_CONTENT);
 
