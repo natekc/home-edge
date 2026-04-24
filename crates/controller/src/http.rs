@@ -1880,9 +1880,15 @@ async fn zigbee_devices_page(State(state): State<Arc<AppState>>) -> Response {
         .as_ref()
         .map(|h| h.permit_join_remaining_secs())
         .unwrap_or(0);
+    let bridge_error: Option<String> = state.zigbee.as_ref().and_then(|h| h.bridge_error());
+    let serial_port: String = state.zigbee.as_ref()
+        .map(|h| h.serial_port.clone())
+        .unwrap_or_default();
     let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
         devices               => Value::from_serialize(&devices),
         bridge_running        => bridge_running,
+        bridge_error          => bridge_error,
+        serial_port           => serial_port,
         pairing_remaining_secs => pairing_remaining_secs,
     );
     render_template(&state, "zigbee_devices.html", ctx)

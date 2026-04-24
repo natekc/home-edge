@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc;
@@ -46,6 +47,10 @@ pub struct ZigbeeHandle {
     /// Unix-epoch seconds when permit-join expires.  0 = not active.
     /// Written from the HTTP layer; read by the status endpoint.
     permit_join_expires_at: Arc<AtomicU64>,
+    /// Set by the bridge task if it exits with an error (e.g. serial port not found).
+    pub bridge_error: Arc<Mutex<Option<String>>>,
+    /// The serial port path from config, for display in diagnostics.
+    pub serial_port: String,
 }
 
 impl ZigbeeHandle {
@@ -95,6 +100,11 @@ impl ZigbeeHandle {
             .send(BridgeCommand::Stop)
             .await
             .map_err(|_| anyhow::anyhow!("bridge task has stopped"))
+    }
+
+    /// Returns the bridge error message if the bridge task has crashed, otherwise `None`.
+    pub fn bridge_error(&self) -> Option<String> {
+        self.bridge_error.lock().ok()?.clone()
     }
 }
 
@@ -516,10 +526,19 @@ pub async fn start(
     let config_path = std::path::PathBuf::from("/dev/null"); // not used without MQTT/DB
     let (bridge, event_rx, cmd_tx) = Bridge::start(z2m_cfg, config_path);
 
-    // Spawn the bridge task.
+    // Shared slot for bridge task errors (e.g. serial port not found).
+    let bridge_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    // Spawn the bridge task.  Capture any startup error so the HTTP layer
+    // can surface it in the diagnostics UI (e.g. serial port not found).
+    let bridge_error_tx = Arc::clone(&bridge_error);
     tokio::spawn(async move {
         if let Err(e) = bridge.run().await {
-            error!("Zigbee bridge exited with error: {e:#}");
+            let msg = format!("{e:#}");
+            error!("Zigbee bridge exited with error: {msg}");
+            if let Ok(mut guard) = bridge_error_tx.lock() {
+                *guard = Some(msg);
+            }
         }
     });
 
@@ -529,6 +548,8 @@ pub async fn start(
     ZigbeeHandle {
         cmd_tx,
         permit_join_expires_at: Arc::new(AtomicU64::new(0)),
+        bridge_error,
+        serial_port: cfg.serial_port.clone(),
     }
 }
 

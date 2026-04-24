@@ -56,6 +56,39 @@ adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
     </div>
   </div>
 
+  {% elif bridge_error %}
+  {# ── Bridge configured but failed to start ────────────────────────── #}
+  <div class="ha-card" style="margin-bottom:16px;border:2px solid var(--color-error,#d32f2f)">
+    <div class="ha-card-header">
+      <span class="ha-card-title" style="color:var(--color-error,#d32f2f)">⚠ Zigbee bridge failed to start</span>
+    </div>
+    <div class="ha-card-body">
+      <p style="margin-bottom:12px">
+        The bridge is configured but could not connect to the coordinator. Check the
+        serial port is correct and the dongle is plugged in.
+      </p>
+      <table style="font-size:.88rem;border-collapse:collapse;width:100%">
+        <tr>
+          <td style="padding:4px 12px 4px 0;color:var(--text-secondary);white-space:nowrap;font-weight:500">Configured port</td>
+          <td><code>{{ serial_port }}</code></td>
+        </tr>
+        <tr>
+          <td style="padding:4px 12px 4px 0;color:var(--text-secondary);white-space:nowrap;font-weight:500">Error</td>
+          <td><code style="color:var(--color-error,#d32f2f)">{{ bridge_error }}</code></td>
+        </tr>
+      </table>
+      <div style="margin-top:16px;font-size:.82rem;color:var(--text-secondary)">
+        <strong>Things to check:</strong>
+        <ul style="margin:6px 0 0 16px;padding:0">
+          <li>Is the Zigbee USB dongle plugged in? Run <code>ls /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/</code> on the device.</li>
+          <li>Does the path in <code>serial_port</code> match the actual device node?</li>
+          <li>Does the <code>home-edge</code> process have permission to open the port? (Try adding it to the <code>dialout</code> group.)</li>
+        </ul>
+        After fixing, restart the home-edge service to retry.
+      </div>
+    </div>
+  </div>
+
   {% else %}
 
   {# ── Pairing-mode active banner ───────────────────────────────────── #}
