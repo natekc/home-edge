@@ -34,16 +34,20 @@
   <div class="ha-card" style="margin-bottom:16px">
     <div class="ha-card-body">
       <div class="empty-state">
-        <svg><use href="#icon-warning"/></svg>
-        <h3>Bridge not running</h3>
+        <svg><use href="#icon-devices"/></svg>
+        <h3>Zigbee bridge not configured</h3>
         <p>
-          Add a <code>[zigbee]</code> section to <code>config.toml</code> to start the
-          Zigbee coordinator.  The Zigbee integration works independently of your
-          client transport (WiFi or BLE).
+          To add Zigbee devices, plug in a Zigbee coordinator (e.g. a CC2652 or Sonoff Zigbee 3.0 USB dongle)
+          and add a <code>[zigbee]</code> section to <code>config.toml</code>, then restart home-edge.
         </p>
-        <pre style="text-align:left;background:var(--bg-secondary);padding:12px;border-radius:6px;font-size:.82rem">[zigbee]
-serial_port = "/dev/ttyUSB0"
-adapter = "auto"</pre>
+        <pre style="text-align:left;background:var(--bg-secondary);padding:12px;border-radius:6px;font-size:.82rem;white-space:pre-wrap">[zigbee]
+serial_port = "/dev/ttyUSB0"   # path to your coordinator's serial port
+adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
+# permit_join_on_startup = false</pre>
+        <p style="font-size:.82rem;color:var(--text-secondary);margin-top:12px">
+          The Zigbee coordinator connects over a local serial port and works independently
+          of how your phone connects to home-edge (WiFi or BLE).
+        </p>
       </div>
     </div>
   </div>
