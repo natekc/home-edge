@@ -89,24 +89,6 @@
           </li>
           {% endfor %}
 
-          {% if is_ble_build %}
-          <li class="nav-item {{ 'selected' if active_page == 'ble' else '' }}">
-            <a href="/ble" role="listitem">
-              <svg class="nav-icon"><use href="#icon-bluetooth"/></svg>
-              <span class="item-text">Bluetooth</span>
-            </a>
-          </li>
-          {% endif %}
-
-          {% if zigbee_enabled %}
-          <li class="nav-item {{ 'selected' if active_page == 'zigbee' else '' }}">
-            <a href="/zigbee" role="listitem">
-              <svg class="nav-icon"><use href="#icon-devices"/></svg>
-              <span class="item-text">Zigbee</span>
-            </a>
-          </li>
-          {% endif %}{# zigbee_enabled: true whenever the zigbee feature is compiled in #}
-
           <li class="nav-item {{ 'selected' if active_page == 'logbook' else '' }}">
             <a href="/logbook" role="listitem">
               <svg class="nav-icon"><use href="#icon-format-list"/></svg>
