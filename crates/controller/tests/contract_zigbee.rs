@@ -322,7 +322,8 @@ async fn permit_join_returns_503_when_bridge_not_configured() {
 
     let resp = server
         .post("/api/zigbee/permit_join")
-        .json(&json!({"duration": 60}))
+        .content_type("application/x-www-form-urlencoded")
+        .bytes(b"duration=60".as_slice().into())
         .await;
     resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 }

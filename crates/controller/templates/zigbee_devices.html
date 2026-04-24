@@ -15,8 +15,12 @@
     <div>
       <form hx-post="/api/zigbee/permit_join"
             hx-target="body"
-            style="display:inline">
-        <input type="hidden" name="duration" value="254">
+            style="display:inline-flex;align-items:center;gap:8px">
+        <select name="duration" class="form-control form-control-sm" style="width:auto">
+          <option value="60" selected>1 min</option>
+          <option value="120">2 min</option>
+          <option value="254">Max (4 min)</option>
+        </select>
         <button type="submit" class="btn btn-primary" style="display:flex;align-items:center;gap:5px">
           <svg width="16" height="16"><use href="#icon-plus"/></svg>
           Add Device
