@@ -177,6 +177,22 @@ impl ZigbeeDeviceStore {
         Ok(true)
     }
 
+    /// Set the `last_seen` timestamp without touching user-set fields.
+    ///
+    /// Called on every `StateChanged` event so the device list shows freshness.
+    pub async fn touch_last_seen(&self, ieee_addr: &str, ts: String) -> Result<bool> {
+        let _guard = self.lock.lock().await;
+        self.ensure_loaded().await?;
+        let mut cache = self.cache.write().await;
+        let data = cache.as_mut().expect("cache populated above");
+        let Some(dev) = data.devices.iter_mut().find(|d| d.ieee_addr == ieee_addr) else {
+            return Ok(false);
+        };
+        dev.last_seen = Some(ts);
+        self.save(data).await?;
+        Ok(true)
+    }
+
     /// Remove a device record permanently.
     pub async fn remove(&self, ieee_addr: &str) -> Result<bool> {
         let _guard = self.lock.lock().await;

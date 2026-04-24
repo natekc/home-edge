@@ -24,7 +24,7 @@ use serde::Serialize;
 ///
 /// All fields are `pub(crate)` so every backend module can construct the
 /// struct directly without indirection.
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub(crate) struct EntityView {
     pub(crate) entity_id: String,
     /// Webhook registration ID for mobile-app entities.

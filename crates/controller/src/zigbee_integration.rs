@@ -469,6 +469,9 @@ pub async fn run_event_loop(
                 if let Ok(entities) = entity_store.list_for_device(&ieee).await {
                     push_state(&state, &entities, &state_store);
                 }
+                // Record freshness — mirrors HA's last_seen tracking on state updates.
+                let ts = now_iso8601();
+                let _ = device_store.touch_last_seen(&ieee, ts).await;
             }
         }
     }

@@ -1,5 +1,15 @@
 {% extends "_base_app.html" %}
 {% block content %}
+{# ── Auto-refresh while interview is still pending ──────────────────────── #}
+{% if not device.interview_complete %}
+<div
+  hx-get="/zigbee/{{ device.ieee_addr }}"
+  hx-trigger="every 3s"
+  hx-target="body"
+  hx-swap="outerHTML"
+  style="display:none">
+</div>
+{% endif %}
 <div class="page-header">
   <div class="breadcrumb">
     <a href="/">Overview</a>
@@ -33,11 +43,26 @@
         <dt>Model</dt>         <dd>{{ device.model | default("Unknown") }}</dd>
         <dt>Power source</dt>  <dd>{{ device.power_source | default("Unknown") }}</dd>
         <dt>SW build</dt>      <dd>{{ device.sw_build_id | default("—") }}</dd>
-        <dt>Interview</dt>     <dd>{% if device.interview_complete %}<span class="badge badge-success">Complete</span>{% else %}<span class="badge badge-warning">Pending</span>{% endif %}</dd>
+        <dt>Interview</dt>     <dd>{% if device.interview_complete %}<span class="badge badge-success">Complete</span>{% else %}<span class="badge badge-warning">Pending — page refreshes automatically</span>{% endif %}</dd>
         <dt>Last seen</dt>     <dd>{{ device.last_seen | default("—") }}</dd>
-        {% if device.user_area_id %}
-        <dt>Area</dt>          <dd>{{ device.user_area_id }}</dd>
-        {% endif %}
+        <dt>Area</dt>
+        <dd>
+          {# Inline area picker for the device itself #}
+          <form
+            hx-patch="/api/zigbee/devices/{{ device.ieee_addr }}"
+            hx-ext="json-enc"
+            hx-swap="none"
+            style="display:inline-flex;gap:6px;align-items:center"
+          >
+            <select name="user_area_id" class="form-control form-control-sm" style="min-width:120px">
+              <option value="">— None —</option>
+              {% for area in areas %}
+              <option value="{{ area.area_id }}" {% if device.user_area_id == area.area_id %}selected{% endif %}>{{ area.name }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-secondary btn-sm">Set</button>
+          </form>
+        </dd>
       </dl>
     </div>
   </div>
@@ -91,6 +116,7 @@
             <th>Device class</th>
             <th>State</th>
             <th>Unit</th>
+            <th>Area</th>
           </tr>
         </thead>
         <tbody>
@@ -109,6 +135,22 @@
             <td>{{ ent.device_class if ent.device_class else "—" }}</td>
             <td>{{ ent.value }}</td>
             <td>{{ ent.unit if ent.unit else "—" }}</td>
+            <td>
+              <form
+                hx-patch="/api/zigbee/entities/{{ ent.entity_id }}"
+                hx-ext="json-enc"
+                hx-swap="none"
+                style="display:inline-flex;gap:4px;align-items:center"
+              >
+                <select name="user_area_id" class="form-control form-control-sm" style="min-width:100px;font-size:.78rem">
+                  <option value="">— None —</option>
+                  {% for area in areas %}
+                  <option value="{{ area.area_id }}" {% if ent.user_area_id == area.area_id %}selected{% endif %}>{{ area.name }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-secondary btn-sm" style="font-size:.78rem;padding:2px 8px">Set</button>
+              </form>
+            </td>
           </tr>
           {% endfor %}
         </tbody>

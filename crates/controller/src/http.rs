@@ -162,6 +162,7 @@ fn zigbee_router(state: Arc<AppState>) -> Router {
             // REST
             .route("/api/zigbee/devices",                    get(api_zigbee_devices))
             .route("/api/zigbee/devices/{ieee}",             patch(api_zigbee_device_rename).delete(api_zigbee_device_delete))
+            .route("/api/zigbee/entities/{entity_id}",       patch(api_zigbee_entity_update))
             .route("/api/zigbee/permit_join",                post(api_zigbee_permit_join))
             .route("/api/zigbee/permit_join/stop",           post(api_zigbee_permit_join_stop))
             .route("/api/zigbee/permit_join/status",         get(api_zigbee_permit_join_status))
@@ -321,7 +322,11 @@ async fn dashboard_response(state: &AppState) -> Response {
             })
         })
         .collect();
-    let area_cards = build_area_cards(state, &all_entities).await;
+    let all_views = match collect_all_entity_views(state).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let area_cards = build_area_cards(state, &all_views).await;
     let location_name = load_location_name(state).await;
     let areas = load_areas(state).await;
     let ctx = app_ctx!(state, "dashboard", location_name.as_str(), &areas,
@@ -674,11 +679,11 @@ async fn area_detail_page(
     };
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let all_entities = match state.mobile_entities.all().await {
-        Ok(e) => e,
-        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
+    let all_views = match collect_all_entity_views(&state).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
-    let all_cards = build_area_cards(&state, &all_entities).await;
+    let all_cards = build_area_cards(&state, &all_views).await;
     let area_cards: Vec<AreaCard> = all_cards.into_iter()
         .filter(|c| c.area_name == area.name)
         .collect();
@@ -702,11 +707,11 @@ async fn fragment_area_sensors(
         Some(a) => a,
         None => return (StatusCode::NOT_FOUND, Html("<p>Area not found</p>".to_string())).into_response(),
     };
-    let all_entities = match state.mobile_entities.all().await {
-        Ok(e) => e,
-        Err(err) => return internal_error(&err),
+    let all_views = match collect_all_entity_views(&state).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
-    let all_cards = build_area_cards(&state, &all_entities).await;
+    let all_cards = build_area_cards(&state, &all_views).await;
     let area_cards: Vec<AreaCard> = all_cards.into_iter()
         .filter(|c| c.area_name == area.name)
         .collect();
@@ -831,11 +836,11 @@ async fn entity_edit_save(
 // ---------------------------------------------------------------------------
 
 async fn fragment_dashboard_sensors(State(state): State<Arc<AppState>>) -> Response {
-    let all_entities = match state.mobile_entities.all().await {
-        Ok(e) => e,
-        Err(err) => return internal_error(&err),
+    let all_views = match collect_all_entity_views(&state).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
-    let area_cards = build_area_cards(&state, &all_entities).await;
+    let area_cards = build_area_cards(&state, &all_views).await;
     let ctx = context! { area_cards => Value::from_serialize(&area_cards) };
     render_template(&state, "fragments/sensors.html", ctx)
 }
@@ -1502,7 +1507,35 @@ fn entity_icon_name_with_state(entity: &MobileEntityRecord, value: &str) -> &'st
     }
 }
 
-async fn build_area_cards(state: &AppState, all_entities: &[MobileEntityRecord]) -> Vec<AreaCard> {
+/// Collect `EntityView`s from every registered backend.
+///
+/// Mobile (webhook) entities are always included.  Zigbee entities are merged
+/// in when the `zigbee` feature is compiled in.  Each additional backend
+/// should add one arm following the Zigbee pattern.
+async fn collect_all_entity_views(state: &AppState) -> Result<Vec<EntityView>, Response> {
+    let mobile = state
+        .mobile_entities
+        .all()
+        .await
+        .map_err(|e| internal_error(&e))?;
+    let mut views: Vec<EntityView> = mobile.iter().map(|e| entity_to_view(e, state)).collect();
+
+    #[cfg(feature = "zigbee")]
+    {
+        let zigbee = state
+            .zigbee_entities
+            .list()
+            .await
+            .unwrap_or_default();
+        for ze in &zigbee {
+            views.push(crate::zigbee_integration::entity_view_for(ze, &state.states));
+        }
+    }
+
+    Ok(views)
+}
+
+async fn build_area_cards(state: &AppState, all_views: &[EntityView]) -> Vec<AreaCard> {
     let areas = state.area_registry.list().await.unwrap_or_default();
     let area_name_map: std::collections::HashMap<&str, &str> = areas
         .iter()
@@ -1511,20 +1544,22 @@ async fn build_area_cards(state: &AppState, all_entities: &[MobileEntityRecord])
 
     let mut area_map: std::collections::HashMap<String, Vec<EntityView>> =
         std::collections::HashMap::new();
-    for entity in all_entities {
+    for entity in all_views {
         if entity.disabled {
             continue;
         }
-        let area_name = entity
-            .user_area_id
-            .as_deref()
-            .and_then(|id| area_name_map.get(id).copied())
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "Unassigned".to_string());
+        let area_name = if entity.user_area_id.is_empty() {
+            "Unassigned".to_string()
+        } else {
+            area_name_map
+                .get(entity.user_area_id.as_str())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "Unassigned".to_string())
+        };
         area_map
             .entry(area_name)
             .or_default()
-            .push(entity_to_view(entity, state));
+            .push(entity.clone());
     }
 
     let mut cards: Vec<AreaCard> = area_map
@@ -1711,6 +1746,31 @@ async fn api_zigbee_device_delete(
     match state.zigbee_devices.remove(&ieee).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, Json(ErrorResponse::new("device not found".into()))).into_response(),
+        Err(e) => internal_error(&e),
+    }
+}
+
+#[cfg(feature = "zigbee")]
+#[derive(Debug, Deserialize)]
+struct ZigbeeEntityUpdatePayload {
+    name_by_user: Option<Option<String>>,
+    user_area_id: Option<Option<String>>,
+}
+
+#[cfg(feature = "zigbee")]
+async fn api_zigbee_entity_update(
+    State(state): State<Arc<AppState>>,
+    Path(entity_id): Path<String>,
+    Json(payload): Json<ZigbeeEntityUpdatePayload>,
+) -> Response {
+    use crate::zigbee_entity_store::ZigbeeEntityMetaUpdate;
+    let update = ZigbeeEntityMetaUpdate {
+        name_by_user: payload.name_by_user,
+        user_area_id: payload.user_area_id,
+    };
+    match state.zigbee_entities.update_meta(&entity_id, update).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(ErrorResponse::new("entity not found".into()))).into_response(),
         Err(e) => internal_error(&e),
     }
 }
