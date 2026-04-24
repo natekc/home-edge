@@ -115,8 +115,9 @@ pub fn build_env() -> Environment<'static> {
     env.add_template("more_info/_select.html",        include_str!("../templates/more_info/_select.html")).expect("more_info/_select.html");
     env.add_template("more_info/_climate.html",       include_str!("../templates/more_info/_climate.html")).expect("more_info/_climate.html");
     env.add_template("more_info/_default.html",       include_str!("../templates/more_info/_default.html")).expect("more_info/_default.html");
-    env.add_template("zigbee_devices.html",       include_str!("../templates/zigbee_devices.html")).expect("zigbee_devices.html");
-    env.add_template("zigbee_device_detail.html", include_str!("../templates/zigbee_device_detail.html")).expect("zigbee_device_detail.html");
+    env.add_template("zigbee_devices.html",             include_str!("../templates/zigbee_devices.html")).expect("zigbee_devices.html");
+    env.add_template("zigbee_device_detail.html",       include_str!("../templates/zigbee_device_detail.html")).expect("zigbee_device_detail.html");
+    env.add_template("fragments/zigbee_devices.html",   include_str!("../templates/fragments/zigbee_devices.html")).expect("fragments/zigbee_devices.html");
 
     env
 }

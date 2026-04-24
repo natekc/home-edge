@@ -27,8 +27,10 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub(crate) struct EntityView {
     pub(crate) entity_id: String,
-    /// Webhook registration ID (empty string for non-mobile backends).
-    pub(crate) webhook_id: String,
+    /// Webhook registration ID for mobile-app entities.
+    /// `None` for Zigbee entities and any other non-mobile backend.
+    /// Templates that navigate to mobile-device pages must check for `Some`.
+    pub(crate) webhook_id: Option<String>,
     pub(crate) display_name: String,
     /// HA platform domain: `light`, `switch`, `sensor`, `binary_sensor`, …
     pub(crate) entity_type: String,
