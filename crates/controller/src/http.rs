@@ -1797,22 +1797,25 @@ async fn api_zigbee_entity_update(
     }
 }
 
+/// Form sent by the Add Device button.  Duration matches ZHA's default of 60 s.
+/// Source: homeassistant/components/zha/websocket_api.py SERVICE_PERMIT_PARAMS
+///   vol.Optional(ATTR_DURATION, default=60): vol.All(vol.Coerce(int), vol.Range(0, 254))
 #[cfg(feature = "zigbee")]
 #[derive(Debug, Deserialize)]
-struct PermitJoinPayload {
+struct PermitJoinForm {
     #[serde(default = "default_permit_join_duration")]
     duration: u8,
 }
 
 #[cfg(feature = "zigbee")]
-fn default_permit_join_duration() -> u8 { 254 }
+fn default_permit_join_duration() -> u8 { 60 }
 
 #[cfg(feature = "zigbee")]
 async fn api_zigbee_permit_join(
     State(state): State<Arc<AppState>>,
-    payload: Option<Json<PermitJoinPayload>>,
+    axum::extract::Form(form): axum::extract::Form<PermitJoinForm>,
 ) -> Response {
-    let duration = payload.map(|p| p.duration).unwrap_or(254);
+    let duration = form.duration;
     match &state.zigbee {
         Some(handle) => match handle.permit_join(duration).await {
             Ok(()) => {
