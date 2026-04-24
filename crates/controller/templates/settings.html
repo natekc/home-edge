@@ -19,6 +19,32 @@
         <div class="settings-row-chevron">›</div>
       </a>
 
+      {% if zigbee_enabled %}
+      <a href="/zigbee" class="settings-row">
+        <div class="settings-row-icon" style="background:#e65100">
+          <svg><use href="#icon-devices"/></svg>
+        </div>
+        <div class="settings-row-text">
+          <div class="settings-row-title">Zigbee</div>
+          <div class="settings-row-sub">Manage Zigbee devices and pairing</div>
+        </div>
+        <div class="settings-row-chevron">›</div>
+      </a>
+      {% endif %}
+
+      {% if is_ble_build %}
+      <a href="/ble" class="settings-row">
+        <div class="settings-row-icon" style="background:#1976d2">
+          <svg><use href="#icon-bluetooth"/></svg>
+        </div>
+        <div class="settings-row-text">
+          <div class="settings-row-title">Bluetooth</div>
+          <div class="settings-row-sub">Manage Bluetooth devices</div>
+        </div>
+        <div class="settings-row-chevron">›</div>
+      </a>
+      {% endif %}
+
       <a href="/areas" class="settings-row">
         <div class="settings-row-icon" style="background:#e65100">
           <svg><use href="#icon-home"/></svg>
