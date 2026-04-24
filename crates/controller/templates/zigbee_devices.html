@@ -82,8 +82,9 @@ adapter = "auto"</pre>
       rem--;
       if(rem <= 0){
         clearInterval(timer);
-        if(banner) banner.style.display = 'none';
-        el && (el.textContent = '0');
+        // Reload the full page so the Add Device button is restored
+        // and polling stops cleanly.
+        window.location.reload();
         return;
       }
       el && (el.textContent = rem);
