@@ -139,7 +139,11 @@ macro_rules! app_ctx {
             location_name => $location_name,
             transport     => if cfg!(feature = "transport_wifi") { "WiFi" } else { "BLE" },
             is_ble_build  => cfg!(feature = "transport_ble"),
-            zigbee_enabled => cfg!(feature = "zigbee") && $state.config.zigbee.is_some(),
+            // Show the Zigbee nav link whenever the feature is compiled in.
+            // The /zigbee page itself handles the "no bridge configured" empty state,
+            // so hiding the link just makes the feature invisible to the user.
+            zigbee_enabled => cfg!(feature = "zigbee"),
+            zigbee_configured => cfg!(feature = "zigbee") && $state.config.zigbee.is_some(),
             active_page   => $active,
             server_host   => local_host(),
             server_port   => $state.config.server.port,

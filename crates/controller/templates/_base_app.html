@@ -105,7 +105,7 @@
               <span class="item-text">Zigbee</span>
             </a>
           </li>
-          {% endif %}
+          {% endif %}{# zigbee_enabled: true whenever the zigbee feature is compiled in #}
 
           <li class="nav-item {{ 'selected' if active_page == 'logbook' else '' }}">
             <a href="/logbook" role="listitem">
