@@ -164,6 +164,9 @@ fn zigbee_router(state: Arc<AppState>) -> Router {
             .route("/api/zigbee/devices/{ieee}",             patch(api_zigbee_device_rename).delete(api_zigbee_device_delete))
             .route("/api/zigbee/permit_join",                post(api_zigbee_permit_join))
             .route("/api/zigbee/permit_join/stop",           post(api_zigbee_permit_join_stop))
+            .route("/api/zigbee/permit_join/status",         get(api_zigbee_permit_join_status))
+            // HTMX fragments (transport_wifi UI)
+            .route("/fragments/zigbee/devices",              get(fragment_zigbee_devices))
             // UI pages
             .route("/zigbee",                                get(zigbee_devices_page))
             .route("/zigbee/{ieee}",                         get(zigbee_device_detail_page))
@@ -1446,7 +1449,7 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         .map(|v| v.min(100) as u8);
     EntityView {
         entity_id: entity.entity_id.clone(),
-        webhook_id: entity.webhook_id.clone(),
+        webhook_id: Some(entity.webhook_id.clone()),
         display_name: entity.display_name().to_string(),
         entity_type: entity.entity_type.clone(),
         icon_name: entity_icon_name_with_state(entity, &value).to_owned(),
@@ -1730,7 +1733,17 @@ async fn api_zigbee_permit_join(
     let duration = payload.map(|p| p.duration).unwrap_or(254);
     match &state.zigbee {
         Some(handle) => match handle.permit_join(duration).await {
-            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Ok(()) => {
+                // HTMX clients follow HX-Redirect for a full client-side navigation.
+                // Plain browser and API clients follow the 303 Location header.
+                axum::response::Response::builder()
+                    .status(StatusCode::SEE_OTHER)
+                    .header("Location", "/zigbee")
+                    .header("HX-Redirect", "/zigbee")
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+                    .into_response()
+            }
             Err(e) => internal_error(&e),
         },
         None => (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new("zigbee bridge not running".into()))).into_response(),
@@ -1741,11 +1754,28 @@ async fn api_zigbee_permit_join(
 async fn api_zigbee_permit_join_stop(State(state): State<Arc<AppState>>) -> Response {
     match &state.zigbee {
         Some(handle) => match handle.permit_join(0).await {
-            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Ok(()) => {
+                axum::response::Response::builder()
+                    .status(StatusCode::SEE_OTHER)
+                    .header("Location", "/zigbee")
+                    .header("HX-Redirect", "/zigbee")
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+                    .into_response()
+            }
             Err(e) => internal_error(&e),
         },
         None => (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new("zigbee bridge not running".into()))).into_response(),
     }
+}
+
+#[cfg(feature = "zigbee")]
+async fn api_zigbee_permit_join_status(State(state): State<Arc<AppState>>) -> Response {
+    let remaining = state.zigbee
+        .as_ref()
+        .map(|h| h.permit_join_remaining_secs())
+        .unwrap_or(0);
+    Json(json!({ "active": remaining > 0, "remaining_secs": remaining })).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -1761,11 +1791,34 @@ async fn zigbee_devices_page(State(state): State<Arc<AppState>>) -> Response {
         Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
     };
     let bridge_running = state.zigbee.is_some();
+    let pairing_remaining_secs: u8 = state.zigbee
+        .as_ref()
+        .map(|h| h.permit_join_remaining_secs())
+        .unwrap_or(0);
     let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
-        devices       => Value::from_serialize(&devices),
-        bridge_running => bridge_running,
+        devices               => Value::from_serialize(&devices),
+        bridge_running        => bridge_running,
+        pairing_remaining_secs => pairing_remaining_secs,
     );
     render_template(&state, "zigbee_devices.html", ctx)
+}
+
+/// HTMX fragment that returns just the device list rows for live polling.
+#[cfg(feature = "zigbee")]
+async fn fragment_zigbee_devices(State(state): State<Arc<AppState>>) -> Response {
+    let devices = match state.zigbee_devices.list().await {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Html(format!("{e:#}"))).into_response(),
+    };
+    let pairing_remaining_secs: u8 = state.zigbee
+        .as_ref()
+        .map(|h| h.permit_join_remaining_secs())
+        .unwrap_or(0);
+    let ctx = context! {
+        devices               => Value::from_serialize(&devices),
+        pairing_remaining_secs => pairing_remaining_secs,
+    };
+    render_template(&state, "fragments/zigbee_devices.html", ctx)
 }
 
 #[cfg(feature = "zigbee")]
