@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["transport_wifi"]
+default = ["transport_wifi", "zigbee"]
 transport_wifi = []
 transport_ble = []
 zigbee = ["dep:zigbee2mqtt-rs"]
