@@ -73,6 +73,9 @@ pub(crate) struct EntityView {
     /// Used to group unassigned entities by device on the dashboard overview.
     /// `None` for mobile-app entities.
     pub(crate) device_name: Option<String>,
+    /// True when the entity state is `"unavailable"` or `"unknown"`.
+    /// Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
+    pub(crate) is_unavailable: bool,
 }
 
 /// Area-grouped card passed to the dashboard template.

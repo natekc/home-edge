@@ -744,8 +744,32 @@ pub async fn start(
         }
     });
 
-    // Spawn the event fan-out task.
-    tokio::spawn(run_event_loop(event_rx, device_store, entity_store, state_store, history_store, logbook_store));
+    // Spawn the event fan-out task.  After the loop exits (coordinator
+    // disconnected), mark all known Zigbee entities unavailable.
+    // Source: homeassistant/components/zha/core/gateway.py ZHAGateway.async_disconnect
+    tokio::spawn(async move {
+        run_event_loop(
+            event_rx,
+            Arc::clone(&device_store),
+            Arc::clone(&entity_store),
+            Arc::clone(&state_store),
+            Arc::clone(&history_store),
+            Arc::clone(&logbook_store),
+        ).await;
+        // When the coordinator disconnects, mark all Zigbee entities unavailable.
+        if let Ok(entities) = entity_store.list().await {
+            let count = entities.len();
+            let ts = now_iso8601();
+            for ent in entities {
+                if let Some(mut st) = state_store.get(&ent.entity_id) {
+                    st.state = "unavailable".to_string();
+                    st.last_updated = ts.clone();
+                    let _ = state_store.set(st);
+                }
+            }
+            info!("Zigbee coordinator disconnected: marked {count} entities unavailable");
+        }
+    });
 
     ZigbeeHandle {
         cmd_tx,
@@ -847,6 +871,9 @@ pub(crate) fn entity_view_for(
         _                  => "",
     };
 
+    // Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
+    let is_unavailable = value == "unavailable" || value == "unknown";
+
     crate::entity_view::EntityView {
         entity_id:             entity.entity_id.clone(),
         webhook_id:            None, // Zigbee entities have no webhook registration
@@ -871,6 +898,8 @@ pub(crate) fn entity_view_for(
         current_position:      None,
         fan_percentage:        None,
         device_name,
+        // Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
+        is_unavailable,
     }
 }
 
