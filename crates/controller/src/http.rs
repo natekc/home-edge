@@ -251,6 +251,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         // Edge-internal history API. Not a replica of HA's /api/history/period endpoint
         // (which uses compressed-state wire format: {"s", "a", "lu"}).
         .route("/api/edge/history/{entity_id}",                  get(api_history))
+        // Long-term statistics API — mirrors HA's ws_get_statistics_during_period format.
+        // Source: homeassistant/components/recorder/websocket_api.py
+        .route("/api/edge/statistics/{entity_id}",               get(api_statistics))
         // System API
         .route("/api/system/restart",                            post(api_system_restart))
         // Health + onboarding REST API
@@ -570,22 +573,52 @@ async fn history_page(
     });
 
     // Compute stats for the selected entity (non-binary sensors only).
-    // Source: homeassistant/components/recorder/statistics.py
-    let (stat_min, stat_mean, stat_max): (Option<String>, Option<String>, Option<String>) =
-        if !selected_entity.is_empty() && !selected_entity.starts_with("binary_sensor.") {
+    // Source: homeassistant/components/recorder/statistics.py compile_statistics
+    let use_stats = range_secs > 86_400;
+    let (stat_min, stat_mean, stat_max, chart_svg): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = if !selected_entity.is_empty() && !selected_entity.starts_with("binary_sensor.") {
+        if use_stats {
+            // Long-range (> 24 h): aggregate from 5-minute stats buckets.
+            // Source: homeassistant/components/recorder/statistics.py compile_statistics
+            let buckets = state.history.stats_since(&selected_entity, since_ts).await;
+            if !buckets.is_empty() {
+                let min = buckets.iter().map(|b| b.min).fold(f64::INFINITY, f64::min);
+                let max = buckets.iter().map(|b| b.max).fold(f64::NEG_INFINITY, f64::max);
+                let mean = buckets.iter().map(|b| b.mean).sum::<f64>() / buckets.len() as f64;
+                let entries: Vec<history_store::HistoryEntry> = buckets
+                    .iter()
+                    .map(|b| history_store::HistoryEntry { ts: b.bucket_ts, value: b.mean })
+                    .collect();
+                let svg = history_store::render_history_chart(&entries, 400, 120);
+                (
+                    Some(format!("{min:.1}")),
+                    Some(format!("{mean:.1}")),
+                    Some(format!("{max:.1}")),
+                    Some(svg),
+                )
+            } else {
+                (None, None, None, None)
+            }
+        } else {
             let entries = state.history.since(&selected_entity, since_ts).await;
             if let Some((mn, av, mx)) = history_store::stats_for_slice(&entries) {
                 (
                     Some(format!("{mn:.1}")),
                     Some(format!("{av:.1}")),
                     Some(format!("{mx:.1}")),
+                    None,
                 )
             } else {
-                (None, None, None)
+                (None, None, None, None)
             }
-        } else {
-            (None, None, None)
-        };
+        }
+    } else {
+        (None, None, None, None)
+    };
 
     let ctx = app_ctx!(state, "history", location_name.as_str(), &areas,
         entities        => Value::from_serialize(&entity_list),
@@ -596,6 +629,8 @@ async fn history_page(
         stat_min        => Value::from_serialize(&stat_min),
         stat_mean       => Value::from_serialize(&stat_mean),
         stat_max        => Value::from_serialize(&stat_max),
+        chart_svg       => Value::from_serialize(&chart_svg),
+        use_stats       => Value::from_serialize(&use_stats),
     );
     render_template(&state, "history.html", ctx)
 }
@@ -1707,6 +1742,46 @@ async fn api_history(
         let entries = state.history.last_n(&entity_id, n).await;
         Json(entries).into_response()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Statistics endpoint
+// Source: homeassistant/components/recorder/websocket_api.py ws_get_statistics_during_period
+// ---------------------------------------------------------------------------
+
+/// Query parameters for `GET /api/edge/statistics/{entity_id}`.
+#[derive(Deserialize)]
+struct StatisticsQuery {
+    /// Start of the time window (unix seconds, inclusive). Defaults to all-time.
+    start: Option<u64>,
+    /// End of the time window (unix seconds, inclusive). Defaults to no upper bound.
+    end: Option<u64>,
+}
+
+/// GET /api/edge/statistics/{entity_id}?start={unix_ts}&end={unix_ts}
+///
+/// Returns 5-minute aggregated statistics buckets in a format compatible with
+/// the HA Companion app's statistics renderer.
+/// Source: homeassistant/components/recorder/websocket_api.py ws_get_statistics_during_period
+async fn api_statistics(
+    State(state): State<Arc<AppState>>,
+    Path(entity_id): Path<String>,
+    Query(params): Query<StatisticsQuery>,
+) -> Response {
+    let since_ts = params.start.unwrap_or(0);
+    let buckets = state.history.stats_since(&entity_id, since_ts).await;
+    let response: Vec<serde_json::Value> = buckets
+        .into_iter()
+        .filter(|b| params.end.map_or(true, |end| b.bucket_ts <= end))
+        .map(|b| json!({
+            "start": b.bucket_ts,
+            "min":   b.min,
+            "max":   b.max,
+            "mean":  b.mean,
+            "sum":   b.sum,
+        }))
+        .collect();
+    Json(response).into_response()
 }
 
 // ---------------------------------------------------------------------------

@@ -18,9 +18,25 @@ use anyhow::Result;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
+/// 5-minute statistics bucket.
+/// Source: homeassistant/components/recorder/statistics.py StatisticData
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StatsBucket {
+    pub entity_id: String,
+    /// Unix timestamp of bucket start (floor to 5-min boundary).
+    pub bucket_ts: u64,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub count: u32,
+    /// Running sum for total_increasing sensors (energy kWh etc.).
+    pub sum: Option<f64>,
+}
+
 /// A single timestamped sensor reading.
 #[derive(Debug, Clone, Serialize)]
 pub struct HistoryEntry {
+
     /// Unix timestamp in seconds.
     pub ts: u64,
     /// Sensor value as f64.
@@ -111,6 +127,16 @@ impl HistoryStore {
                 value     REAL    NOT NULL
             );
             CREATE INDEX IF NOT EXISTS history_entity_ts ON history (entity_id, ts);
+            CREATE TABLE IF NOT EXISTS stats (
+                entity_id TEXT    NOT NULL,
+                bucket_ts INTEGER NOT NULL,
+                min       REAL    NOT NULL,
+                max       REAL    NOT NULL,
+                mean      REAL    NOT NULL,
+                count     INTEGER NOT NULL,
+                sum       REAL,
+                PRIMARY KEY (entity_id, bucket_ts)
+            );
         ")?;
 
         // Warm the in-memory ring buffers.
@@ -176,6 +202,39 @@ impl HistoryStore {
         }
     }
 
+    /// Record a numeric reading and update the 5-minute statistics bucket.
+    ///
+    /// Calls the raw `record()` path, then upserts into the `stats` table.
+    /// Source: homeassistant/components/recorder/statistics.py compile_statistics
+    pub async fn record_and_aggregate(&self, entity_id: &str, value: f64, ts: u64) {
+        // Write to raw history (ring buffer + SQLite).
+        self.record(entity_id, value).await;
+
+        // Upsert into the 5-minute stats bucket.
+        let bucket_ts = ts - (ts % 300);
+        if let Some(db) = self.db.clone() {
+            let eid = entity_id.to_string();
+            tokio::task::spawn_blocking(move || {
+                if let Ok(conn) = db.lock() {
+                    // Incremental mean: new_mean = (old_mean * old_count + value) / (old_count + 1)
+                    // SQLite UPSERT: excluded.* refers to the proposed INSERT row.
+                    if let Err(e) = conn.execute(
+                        "INSERT INTO stats (entity_id, bucket_ts, min, max, mean, count, sum) \
+                         VALUES (?1, ?2, ?3, ?3, ?3, 1, NULL) \
+                         ON CONFLICT(entity_id, bucket_ts) DO UPDATE SET \
+                           min   = MIN(min, excluded.min), \
+                           max   = MAX(max, excluded.max), \
+                           mean  = (mean * count + excluded.mean) / (count + 1), \
+                           count = count + 1",
+                        rusqlite::params![eid, bucket_ts as i64, value],
+                    ) {
+                        tracing::warn!("stats: db write failed: {e}");
+                    }
+                }
+            });
+        }
+    }
+
     /// Return the most recent `n` entries for the given entity, oldest first.
     /// Reads from the in-memory ring buffer — use this for sparklines.
     pub async fn last_n(&self, entity_id: &str, n: usize) -> Vec<HistoryEntry> {
@@ -228,6 +287,45 @@ impl HistoryStore {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Return 5-minute statistics buckets for `entity_id` at or after `since_ts`.
+    ///
+    /// Queries the `stats` table; returns an empty vec when running without a
+    /// database or when no data has been aggregated yet.
+    /// Source: homeassistant/components/recorder/websocket_api.py ws_get_statistics_during_period
+    pub async fn stats_since(&self, entity_id: &str, since_ts: u64) -> Vec<StatsBucket> {
+        if let Some(db) = self.db.clone() {
+            let eid = entity_id.to_string();
+            let result = tokio::task::spawn_blocking(move || -> Result<Vec<StatsBucket>> {
+                let conn = db.lock().map_err(|_| anyhow::anyhow!("mutex poisoned"))?;
+                let mut stmt = conn.prepare(
+                    "SELECT entity_id, bucket_ts, min, max, mean, count, sum \
+                       FROM stats \
+                      WHERE entity_id = ?1 AND bucket_ts >= ?2 \
+                      ORDER BY bucket_ts",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![eid, since_ts as i64], |row| {
+                    Ok(StatsBucket {
+                        entity_id: row.get(0)?,
+                        bucket_ts: row.get::<_, i64>(1)? as u64,
+                        min:       row.get(2)?,
+                        max:       row.get(3)?,
+                        mean:      row.get(4)?,
+                        count:     row.get::<_, i64>(5)? as u32,
+                        sum:       row.get(6)?,
+                    })
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+            })
+            .await;
+            match result {
+                Ok(Ok(buckets)) => return buckets,
+                Ok(Err(e)) => tracing::warn!("stats: db query failed: {e}"),
+                Err(e) => tracing::warn!("stats: spawn_blocking failed: {e}"),
+            }
+        }
+        vec![]
     }
 
     /// Return all entity IDs that have at least one history reading recorded

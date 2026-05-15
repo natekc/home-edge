@@ -36,9 +36,13 @@
     </div>
   </div>
 
-  <!-- Chart + table (loaded client-side via fetch) -->
+  <!-- Chart + table (loaded client-side via fetch for ≤24 h; server-side SVG for longer ranges) -->
   <div id="history-content" class="ha-card">
-    {% if selected_entity %}
+    {% if chart_svg %}
+    <div class="ha-card-body" style="padding:16px">
+      {{ chart_svg | safe }}
+    </div>
+    {% elif selected_entity %}
     <div class="ha-card-body text-muted" style="text-align:center;padding:40px 20px">
       Loading…
     </div>
@@ -73,6 +77,9 @@
   // Server-injected values: since_ts (unix seconds) and range_hours.
   var SINCE_TS   = {{ since_ts }};
   var RANGE_HOURS = {{ range_hours }};
+  // For ranges > 24h, chart is rendered server-side from stats buckets; skip client fetch.
+  // Source: homeassistant/components/recorder/statistics.py compile_statistics
+  var USE_STATS = {{ use_stats }};
 
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -197,7 +204,7 @@
       }
     });
     // Auto-load chart if entity was pre-selected from URL params.
-    if(sel.value){ loadHistory(); }
+    if(sel.value && !USE_STATS){ loadHistory(); }
   }
 })();
 </script>
