@@ -2,7 +2,14 @@
   <svg class="mi-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
   <div>
     <div class="mi-name">{{ entity.display_name }}</div>
+    {# Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN #}
+    {% if entity.value == "unavailable" %}
+    <div class="mi-state entity-state--unavailable" style="color:var(--secondary-text)">⚠ Unavailable</div>
+    {% elif entity.value == "unknown" %}
+    <div class="mi-state entity-state--unknown" style="color:var(--secondary-text)">? Unknown</div>
+    {% else %}
     <div class="mi-state">{{ entity.value }}{% if entity.unit %}&nbsp;<span class="mi-unit">{{ entity.unit }}</span>{% endif %}</div>
+    {% endif %}
   </div>
 </div>
 {% if entity.device_class %}

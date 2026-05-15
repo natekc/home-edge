@@ -1652,6 +1652,8 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         .get("percentage")
         .and_then(|v| v.as_u64())
         .map(|v| v.min(100) as u8);
+    // Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
+    let is_unavailable = value == "unavailable" || value == "unknown";
     EntityView {
         entity_id: entity.entity_id.clone(),
         webhook_id: Some(entity.webhook_id.clone()),
@@ -1676,6 +1678,8 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         current_position,
         fan_percentage,
         device_name: None, // mobile-app entities are not under a Zigbee device
+        // Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
+        is_unavailable,
     }
 }
 

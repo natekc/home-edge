@@ -613,6 +613,20 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 /* Active / on states get the primary colour */
 .entity-list-row.state-on  .entity-list-icon { fill: var(--primary-color); }
 .entity-list-row.state-on  .entity-list-state { color: var(--primary-color); }
+
+/* Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN */
+/* Unavailable / unknown entities are grayed out to match HA frontend treatment. */
+.entity-unavailable {
+  opacity: 0.45;
+}
+.entity-unavailable .entity-list-state {
+  text-decoration: line-through;
+}
+.entity-state--unavailable,
+.entity-state--unknown {
+  font-style: italic;
+  color: var(--secondary-text);
+}
 .entity-list-name {
   flex: 1;
   font-size: .9rem;

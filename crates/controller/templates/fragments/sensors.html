@@ -16,7 +16,9 @@
   {% for entity in card.entities %}
   {# --- Determine extra row class for colouring active states --- #}
   {% set row_class = "" %}
-  {% if entity.value == "on" or entity.value == "open" or entity.value == "unlocked" %}
+  {% if entity.is_unavailable %}
+    {% set row_class = "entity-unavailable" %}
+  {% elif entity.value == "on" or entity.value == "open" or entity.value == "unlocked" %}
     {% set row_class = "state-on" %}
   {% endif %}
 
@@ -37,8 +39,12 @@
       {% endif %}
     </div>
 
-    {# Right side: toggle for controllable binary entities, button for activatables, state text for the rest #}
-    {% if entity.entity_type == "light" or entity.entity_type == "switch" or entity.entity_type == "fan" %}
+    {# Right side: when unavailable/unknown show dash; otherwise show controls #}
+    {# Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN #}
+    {% if entity.is_unavailable %}
+    <span class="entity-list-state entity-state--unavailable">—</span>
+
+    {% elif entity.entity_type == "light" or entity.entity_type == "switch" or entity.entity_type == "fan" %}
     <button class="entity-list-toggle{% if entity.value == 'on' %} is-on{% endif %}"
             hx-post="/ui/services/{{ entity.entity_type }}/toggle"
             hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
