@@ -26,7 +26,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use zigbee2mqtt_rs::bridge::Bridge;
-use zigbee2mqtt_rs::config::{AdapterType, AdvancedConfig, Config, SerialConfig};
+use zigbee2mqtt_rs::config::{AdapterType, AdvancedConfig, Config, MqttConfig, SerialConfig};
 use zigbee2mqtt_rs::events::{BridgeCommand, ZigbeeEvent};
 
 use crate::config::ZigbeeConfig;
@@ -117,7 +117,7 @@ impl ZigbeeHandle {
 /// Mirrors the discovery logic in `zigbee2mqtt-rs/src/homeassistant.rs` so
 /// that entity domains/classes are consistent with what zigbee2mqtt would
 /// expose via MQTT, but without requiring a broker.
-pub fn entities_for_device(device: &zigbee2mqtt_rs::Device) -> Vec<ZigbeeEntityRecord> {
+pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEntityRecord> {
     let clusters = device.all_input_clusters();
     let mut records: Vec<ZigbeeEntityRecord> = Vec::new();
 
@@ -443,18 +443,18 @@ pub async fn run_event_loop(
                 }
             }
 
-            ZigbeeEvent::DeviceInterviewComplete { ieee_addr, device } => {
-                let ieee = ieee_addr.as_hex();
-                info!("Zigbee interview complete: {ieee} model={:?}", device.model);
+            ZigbeeEvent::DeviceInterviewComplete { info } => {
+                let ieee = info.ieee_addr.as_hex();
+                info!("Zigbee interview complete: {ieee} model={:?}", info.model);
 
                 // Upsert full device record.
                 let record = ZigbeeDeviceRecord {
                     ieee_addr: ieee.clone(),
-                    friendly_name: device.friendly_name.clone(),
-                    manufacturer: device.manufacturer.clone(),
-                    model: device.model.clone(),
-                    power_source: device.power_source.clone(),
-                    sw_build_id: device.sw_build_id.clone(),
+                    friendly_name: info.friendly_name.clone(),
+                    manufacturer: info.manufacturer.clone(),
+                    model: info.model.clone(),
+                    power_source: info.power_source.clone(),
+                    sw_build_id: info.sw_build_id.clone(),
                     interview_complete: true,
                     last_seen: None,
                     name_by_user: None,
@@ -465,24 +465,28 @@ pub async fn run_event_loop(
                 }
 
                 // Derive and register entities.
-                let entity_records = entities_for_device(&device);
+                let entity_records = entities_for_device(&info);
                 if let Err(e) = entity_store.register_bulk(entity_records.clone()).await {
                     warn!("zigbee entity store register failed: {e:#}");
                 }
 
                 // Push initial state from the device's cached values.
-                push_state(&device.state, &entity_records, &state_store);
+                push_state(&info.initial_state, &entity_records, &state_store);
             }
 
-            ZigbeeEvent::StateChanged { ieee_addr, state } => {
+            ZigbeeEvent::StateChanged { ieee_addr, delta } => {
                 let ieee = ieee_addr.as_hex();
                 if let Ok(entities) = entity_store.list_for_device(&ieee).await {
-                    push_state(&state, &entities, &state_store);
+                    push_state(&delta, &entities, &state_store);
                 }
                 // Record freshness — mirrors HA's last_seen tracking on state updates.
                 let ts = now_iso8601();
                 let _ = device_store.touch_last_seen(&ieee, ts).await;
             }
+
+            // Forward-compatibility: ignore any event variants added in future
+            // zigbee2mqtt-rs releases (ZigbeeEvent is #[non_exhaustive]).
+            _ => {}
         }
     }
     info!("Zigbee event loop ended");
@@ -511,7 +515,7 @@ pub async fn start(
             },
             rtscts: cfg.rtscts,
         },
-        mqtt: None, // no broker — events come via the notify channel
+        mqtt: MqttConfig { enabled: false, ..Default::default() }, // no broker — events come via the notify channel
         permit_join: cfg.permit_join_on_startup,
         homeassistant: false, // home-edge handles HA entity exposure
         devices: Default::default(),
@@ -524,7 +528,7 @@ pub async fn start(
 
     // Create bridge with event + command channels.
     let config_path = std::path::PathBuf::from("/dev/null"); // not used without MQTT/DB
-    let (bridge, event_rx, cmd_tx) = Bridge::start(z2m_cfg, config_path);
+    let (bridge, event_rx, cmd_tx) = Bridge::new_with_channels(z2m_cfg, config_path);
 
     // Shared slot for bridge task errors (e.g. serial port not found).
     let bridge_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
