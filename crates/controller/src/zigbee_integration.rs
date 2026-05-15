@@ -370,6 +370,10 @@ pub fn push_state(
             _ => {}
         }
 
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.name
+        // The HA Companion app reads display name from attributes["friendly_name"].
+        attrs.insert("friendly_name".into(), Value::String(ent.display_name()));
+
         let ts = now_iso8601();
         let state = State {
             entity_id: ent.entity_id.clone(),
@@ -399,15 +403,45 @@ async fn record_sensor_history(
     history: &crate::history_store::HistoryStore,
 ) {
     for ent in entities {
-        if ent.domain != "sensor" {
-            continue;
+        match ent.domain.as_str() {
+            "sensor" => {
+                let Some(key) = ent.attribute_key.as_deref() else { continue };
+                let Some(raw) = raw_state.get(key) else { continue };
+                let Some(v) = raw.as_f64().or_else(|| raw.as_str().and_then(|s| s.parse().ok())) else {
+                    continue
+                };
+                history.record(&ent.entity_id, v).await;
+            }
+            // Source: homeassistant/components/history/__init__.py binary sensor tracking
+            "binary_sensor" => {
+                let Some(key) = ent.attribute_key.as_deref() else { continue };
+                let Some(raw) = raw_state.get(key) else { continue };
+                let v = match raw {
+                    Value::String(s) => match s.to_lowercase().as_str() {
+                        "on" | "true"  => 1.0,
+                        "off" | "false" => 0.0,
+                        _ => continue,
+                    },
+                    Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+                    _ => continue,
+                };
+                history.record(&ent.entity_id, v).await;
+            }
+            // Source: homeassistant/components/history/__init__.py binary sensor tracking
+            "light" | "switch" => {
+                let Some(raw) = raw_state.get("state") else { continue };
+                let v = match raw {
+                    Value::String(s) => match s.to_lowercase().as_str() {
+                        "on"  => 1.0,
+                        "off" => 0.0,
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                history.record(&ent.entity_id, v).await;
+            }
+            _ => {}
         }
-        let Some(key) = ent.attribute_key.as_deref() else { continue };
-        let Some(raw) = raw_state.get(key) else { continue };
-        let Some(v) = raw.as_f64().or_else(|| raw.as_str().and_then(|s| s.parse().ok())) else {
-            continue
-        };
-        history.record(&ent.entity_id, v).await;
     }
 }
 
@@ -420,9 +454,6 @@ async fn record_sensor_history(
 ///
 /// Mirrors Home Assistant's `RestoreEntity` / `restore_state` mechanism
 /// (homeassistant/helpers/restore_state.py).
-///
-/// Only sensor-domain entities are restored (light/switch state cannot be
-/// reliably inferred from a numeric history reading).
 pub async fn restore_states_from_history(
     entity_store: &ZigbeeEntityStore,
     history: &crate::history_store::HistoryStore,
@@ -441,45 +472,78 @@ pub async fn restore_states_from_history(
         latest.iter().map(|(id, v)| (id.as_str(), *v)).collect();
 
     let ts = now_iso8601();
+    let mut restored = 0usize;
     for ent in &entities {
-        if ent.domain != "sensor" {
-            continue;
-        }
-        let Some(&v) = value_map.get(ent.entity_id.as_str()) else { continue };
+        match ent.domain.as_str() {
+            "sensor" => {
+                let Some(&v) = value_map.get(ent.entity_id.as_str()) else { continue };
 
-        let sv = if v == v.trunc() && (v.abs() < 1e9) {
-            format!("{v:.0}")
-        } else {
-            format!("{v:.2}").trim_end_matches('0').trim_end_matches('.').to_string()
-        };
+                let sv = if v == v.trunc() && (v.abs() < 1e9) {
+                    format!("{v:.0}")
+                } else {
+                    format!("{v:.2}").trim_end_matches('0').trim_end_matches('.').to_string()
+                };
 
-        let mut attrs: std::collections::HashMap<String, serde_json::Value> =
-            std::collections::HashMap::new();
-        if let Some(ref unit) = ent.unit_of_measurement {
-            attrs.insert("unit_of_measurement".into(), serde_json::Value::String(unit.clone()));
-        }
-        if let Some(ref dc) = ent.device_class {
-            attrs.insert("device_class".into(), serde_json::Value::String(dc.clone()));
-        }
-        attrs.insert("state_class".into(), serde_json::Value::String("measurement".into()));
-        attrs.insert("restored".into(), serde_json::Value::Bool(true));
+                let mut attrs: std::collections::HashMap<String, serde_json::Value> =
+                    std::collections::HashMap::new();
+                if let Some(ref unit) = ent.unit_of_measurement {
+                    attrs.insert("unit_of_measurement".into(), serde_json::Value::String(unit.clone()));
+                }
+                if let Some(ref dc) = ent.device_class {
+                    attrs.insert("device_class".into(), serde_json::Value::String(dc.clone()));
+                }
+                attrs.insert("state_class".into(), serde_json::Value::String("measurement".into()));
+                attrs.insert("restored".into(), serde_json::Value::Bool(true));
+                // Source: homeassistant/helpers/entity_registry.py RegistryEntry.name
+                attrs.insert("friendly_name".into(), serde_json::Value::String(ent.display_name()));
 
-        let state = ha_types::entity::State {
-            entity_id: ent.entity_id.clone(),
-            state: sv,
-            attributes: attrs,
-            last_changed: ts.clone(),
-            last_updated: ts.clone(),
-            last_reported: ts.clone(),
-            context: new_ctx(),
-        };
-        if let Err(e) = state_store.set(state) {
-            warn!("restore_states: failed to set {}: {e}", ent.entity_id);
+                let state = ha_types::entity::State {
+                    entity_id: ent.entity_id.clone(),
+                    state: sv,
+                    attributes: attrs,
+                    last_changed: ts.clone(),
+                    last_updated: ts.clone(),
+                    last_reported: ts.clone(),
+                    context: new_ctx(),
+                };
+                if let Err(e) = state_store.set(state) {
+                    warn!("restore_states: failed to set {}: {e}", ent.entity_id);
+                } else {
+                    restored += 1;
+                }
+            }
+            // Source: homeassistant/helpers/restore_state.py RestoreEntity.async_get_last_state
+            // light/switch states are stored as 1.0/0.0 in history; restore as "on"/"off".
+            "light" | "switch" => {
+                let Some(&v) = value_map.get(ent.entity_id.as_str()) else { continue };
+                let sv = if v >= 0.5 { "on" } else { "off" };
+
+                let mut attrs: std::collections::HashMap<String, serde_json::Value> =
+                    std::collections::HashMap::new();
+                attrs.insert("restored".into(), serde_json::Value::Bool(true));
+                // Source: homeassistant/helpers/entity_registry.py RegistryEntry.name
+                attrs.insert("friendly_name".into(), serde_json::Value::String(ent.display_name()));
+
+                let state = ha_types::entity::State {
+                    entity_id: ent.entity_id.clone(),
+                    state: sv.to_string(),
+                    attributes: attrs,
+                    last_changed: ts.clone(),
+                    last_updated: ts.clone(),
+                    last_reported: ts.clone(),
+                    context: new_ctx(),
+                };
+                if let Err(e) = state_store.set(state) {
+                    warn!("restore_states: failed to set {}: {e}", ent.entity_id);
+                } else {
+                    restored += 1;
+                }
+            }
+            _ => {}
         }
     }
-    let count = entities.iter().filter(|e| e.domain == "sensor").count();
-    let restored = value_map.len().min(count);
-    info!("restore_states: restored {restored}/{count} sensor states from history");
+    let total = entities.iter().filter(|e| matches!(e.domain.as_str(), "sensor" | "light" | "switch")).count();
+    info!("restore_states: restored {restored}/{total} states from history");
 }
 
 /// Consume events from `event_rx` and fan them out to the stores.
@@ -492,6 +556,7 @@ pub async fn run_event_loop(
     entity_store: Arc<ZigbeeEntityStore>,
     state_store: Arc<StateStore>,
     history_store: Arc<crate::history_store::HistoryStore>,
+    logbook_store: Arc<crate::logbook_store::LogbookStore>,
 ) {
     while let Some(event) = event_rx.recv().await {
         match event {
@@ -570,8 +635,45 @@ pub async fn run_event_loop(
             ZigbeeEvent::StateChanged { ieee_addr, delta } => {
                 let ieee = ieee_addr.as_hex();
                 if let Ok(entities) = entity_store.list_for_device(&ieee).await {
+                    // Source: homeassistant/components/logbook/__init__.py Event.LOGBOOK_ENTRY
+                    // Capture old state values before push so we can record logbook entries
+                    // only for entities whose state value actually changed.
+                    let old_values: Vec<(String, String)> = entities
+                        .iter()
+                        .filter_map(|ent| {
+                            state_store
+                                .get(&ent.entity_id)
+                                .map(|s| (ent.entity_id.clone(), s.state.clone()))
+                        })
+                        .collect();
+
                     push_state(&delta, &entities, &state_store);
                     record_sensor_history(&delta, &entities, &history_store).await;
+
+                    // Write logbook entries for entities whose state value changed.
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    for (entity_id, old_sv) in &old_values {
+                        if let Some(new_state) = state_store.get(entity_id) {
+                            if new_state.state != *old_sv {
+                                let display_name = new_state
+                                    .attributes
+                                    .get("friendly_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(entity_id)
+                                    .to_string();
+                                logbook_store.record(crate::logbook_store::LogbookEntry {
+                                    ts,
+                                    entity_id: entity_id.clone(),
+                                    display_name,
+                                    old_state: old_sv.clone(),
+                                    new_state: new_state.state.clone(),
+                                }).await;
+                            }
+                        }
+                    }
                 }
                 // Record freshness — mirrors HA's last_seen tracking on state updates.
                 let ts = now_iso8601();
@@ -597,6 +699,7 @@ pub async fn start(
     entity_store: Arc<ZigbeeEntityStore>,
     state_store: Arc<StateStore>,
     history_store: Arc<crate::history_store::HistoryStore>,
+    logbook_store: Arc<crate::logbook_store::LogbookStore>,
 ) -> ZigbeeHandle {
     // Build the zigbee2mqtt-rs Config from our ZigbeeConfig.
     let z2m_cfg = Config {
@@ -642,7 +745,7 @@ pub async fn start(
     });
 
     // Spawn the event fan-out task.
-    tokio::spawn(run_event_loop(event_rx, device_store, entity_store, state_store, history_store));
+    tokio::spawn(run_event_loop(event_rx, device_store, entity_store, state_store, history_store, logbook_store));
 
     ZigbeeHandle {
         cmd_tx,
