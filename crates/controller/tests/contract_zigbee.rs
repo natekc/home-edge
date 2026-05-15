@@ -256,10 +256,11 @@ async fn delete_device_removes_records_and_state() {
     assert!(state.states.get("switch.hall_switch").is_some(), "initial state present");
 
     // DELETE via HTTP (open endpoint, no auth token needed).
+    // DELETE handler returns 303 See Other → /zigbee (same as the HTML form Remove button).
     let resp = server
         .delete(&format!("/api/zigbee/devices/{}", ieee.as_hex()))
         .await;
-    resp.assert_status(StatusCode::NO_CONTENT);
+    resp.assert_status(StatusCode::SEE_OTHER);
 
     // Device record should be empty.
     let devices = state.zigbee_devices.list().await.expect("list devices");
