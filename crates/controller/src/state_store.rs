@@ -65,7 +65,7 @@ impl StateStore {
     ///
     /// Returns Err if the entity_id is invalid.
     /// Source: homeassistant/core.py  StateMachine.async_set / valid_entity_id
-    pub fn set(&self, state: State) -> Result<(), StateError> {
+    pub fn set(&self, mut state: State) -> Result<(), StateError> {
         if !State::is_valid_entity_id(&state.entity_id) {
             return Err(StateError::InvalidEntityId(state.entity_id.clone()));
         }
@@ -75,6 +75,14 @@ impl StateStore {
         let old_state = {
             let mut lock = self.states.write().expect("state lock poisoned");
             let old = lock.get(&state.entity_id).cloned();
+            // Source: homeassistant/core.py StateMachine.async_set
+            // last_changed only advances when the state value string changes;
+            // last_updated and last_reported always advance.
+            if let Some(ref old) = old {
+                if old.state == state.state {
+                    state.last_changed = old.last_changed.clone();
+                }
+            }
             lock.insert(state.entity_id.clone(), state.clone());
             old
         };

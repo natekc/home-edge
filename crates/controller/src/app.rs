@@ -68,7 +68,7 @@ pub struct AppState {
     pub services: ServiceRegistry,
     pub templates: minijinja::Environment<'static>,
     pub history: std::sync::Arc<crate::history_store::HistoryStore>,
-    pub logbook: crate::logbook_store::LogbookStore,
+    pub logbook: std::sync::Arc<crate::logbook_store::LogbookStore>,
     pub notifications: NotificationStore,
     /// Zigbee device registry (only populated when the `zigbee` feature is enabled
     /// and `[zigbee]` is present in config.toml).
@@ -115,7 +115,7 @@ impl AppState {
             history: std::sync::Arc::new(
                 crate::history_store::HistoryStore::open(history_capacity, &history_db_path)
             ),
-            logbook: crate::logbook_store::LogbookStore::new(history_capacity),
+            logbook: std::sync::Arc::new(crate::logbook_store::LogbookStore::new(history_capacity)),
             notifications: NotificationStore::new(),
             #[cfg(feature = "zigbee")]
             zigbee_devices,
@@ -157,6 +157,7 @@ impl AppState {
                 Arc::clone(&state.zigbee_entities),
                 Arc::clone(&state.states),
                 Arc::clone(&state.history),
+                Arc::clone(&state.logbook),
             ).await;
             state.zigbee = Some(handle);
             tracing::info!("Zigbee bridge started");
