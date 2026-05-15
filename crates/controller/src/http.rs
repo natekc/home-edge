@@ -1654,7 +1654,19 @@ async fn build_area_cards(state: &AppState, all_views: &[EntityView]) -> Vec<Are
 
     let mut cards: Vec<AreaCard> = area_map
         .into_iter()
-        .map(|(area_name, entities)| AreaCard { area_name, entities })
+        .map(|(area_name, entities)| {
+            // Source: homeassistant/helpers/area_registry.py AreaEntry.temperature_entity_id
+            let area_temp = entities
+                .iter()
+                .find(|e| e.entity_type == "sensor" && e.device_class == "temperature")
+                .map(|e| if e.unit.is_empty() { e.value.clone() } else { format!("{} {}", e.value, e.unit) });
+            // Source: homeassistant/helpers/area_registry.py AreaEntry.humidity_entity_id
+            let area_humidity = entities
+                .iter()
+                .find(|e| e.entity_type == "sensor" && e.device_class == "humidity")
+                .map(|e| if e.unit.is_empty() { e.value.clone() } else { format!("{} {}", e.value, e.unit) });
+            AreaCard { area_name, entities, area_temp, area_humidity }
+        })
         .collect();
     // Named areas sort alphabetically; "Unassigned" goes last.
     cards.sort_by(|a, b| match (a.area_name.as_str(), b.area_name.as_str()) {
