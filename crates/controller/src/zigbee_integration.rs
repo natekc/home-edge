@@ -411,6 +411,77 @@ async fn record_sensor_history(
     }
 }
 
+/// Restore last-known sensor states from the history database into the
+/// in-memory `StateStore`.
+///
+/// Called once at startup (after the bridge is launched) so that entities
+/// show their last measured value immediately — rather than "unavailable" —
+/// until the physical sensor next transmits.
+///
+/// Mirrors Home Assistant's `RestoreEntity` / `restore_state` mechanism
+/// (homeassistant/helpers/restore_state.py).
+///
+/// Only sensor-domain entities are restored (light/switch state cannot be
+/// reliably inferred from a numeric history reading).
+pub async fn restore_states_from_history(
+    entity_store: &ZigbeeEntityStore,
+    history: &crate::history_store::HistoryStore,
+    state_store: &StateStore,
+) {
+    let entities = match entity_store.list().await {
+        Ok(e) => e,
+        Err(e) => {
+            warn!("restore_states: could not load entities: {e:#}");
+            return;
+        }
+    };
+    // Build lookup: entity_id → last value from history.
+    let latest = history.latest_values().await;
+    let value_map: std::collections::HashMap<&str, f64> =
+        latest.iter().map(|(id, v)| (id.as_str(), *v)).collect();
+
+    let ts = now_iso8601();
+    for ent in &entities {
+        if ent.domain != "sensor" {
+            continue;
+        }
+        let Some(&v) = value_map.get(ent.entity_id.as_str()) else { continue };
+
+        let sv = if v == v.trunc() && (v.abs() < 1e9) {
+            format!("{v:.0}")
+        } else {
+            format!("{v:.2}").trim_end_matches('0').trim_end_matches('.').to_string()
+        };
+
+        let mut attrs: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        if let Some(ref unit) = ent.unit_of_measurement {
+            attrs.insert("unit_of_measurement".into(), serde_json::Value::String(unit.clone()));
+        }
+        if let Some(ref dc) = ent.device_class {
+            attrs.insert("device_class".into(), serde_json::Value::String(dc.clone()));
+        }
+        attrs.insert("state_class".into(), serde_json::Value::String("measurement".into()));
+        attrs.insert("restored".into(), serde_json::Value::Bool(true));
+
+        let state = ha_types::entity::State {
+            entity_id: ent.entity_id.clone(),
+            state: sv,
+            attributes: attrs,
+            last_changed: ts.clone(),
+            last_updated: ts.clone(),
+            last_reported: ts.clone(),
+            context: new_ctx(),
+        };
+        if let Err(e) = state_store.set(state) {
+            warn!("restore_states: failed to set {}: {e}", ent.entity_id);
+        }
+    }
+    let count = entities.iter().filter(|e| e.domain == "sensor").count();
+    let restored = value_map.len().min(count);
+    info!("restore_states: restored {restored}/{count} sensor states from history");
+}
+
 /// Consume events from `event_rx` and fan them out to the stores.
 ///
 /// This is the inner loop extracted so it can be driven from tests without

@@ -160,6 +160,16 @@ impl AppState {
             ).await;
             state.zigbee = Some(handle);
             tracing::info!("Zigbee bridge started");
+
+            // Re-seed the in-memory StateStore from persisted history so
+            // entities don't show "unavailable" after a redeploy until the
+            // sensor next transmits.  Mirrors HA's "restore last known state"
+            // behaviour (homeassistant/helpers/restore_state.py).
+            crate::zigbee_integration::restore_states_from_history(
+                &state.zigbee_entities,
+                &state.history,
+                &state.states,
+            ).await;
         }
         Ok(state)
     }
