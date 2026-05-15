@@ -112,6 +112,42 @@ impl ZigbeeHandle {
 // Cluster → entity mapping (mirrors zigbee2mqtt-rs/src/homeassistant.rs)
 // ---------------------------------------------------------------------------
 
+/// Map IAS Zone Type (ZCL attribute 0x0001 in cluster 0x0500) to an HA binary_sensor device_class.
+///
+/// Source: homeassistant/components/zha/sensor.py IAS_ZONE_TYPE_MAP
+/// Source: homeassistant/components/binary_sensor/__init__.py BinarySensorDeviceClass
+fn ias_device_class(zone_type: Option<u16>) -> &'static str {
+    match zone_type {
+        Some(0x000d) => "motion",          // Motion sensor
+        Some(0x0015) => "door",            // Contact switch (door/window)
+        Some(0x0028) => "smoke",           // Fire sensor
+        Some(0x002a) => "moisture",        // Water sensor
+        Some(0x002b) => "carbon_monoxide", // CO sensor
+        Some(0x002c) => "safety",          // Personal emergency
+        Some(0x002d) => "vibration",       // Vibration/movement sensor
+        _            => "opening",         // Fallback for unknown / not-yet-reported types
+    }
+}
+
+/// Map a binary_sensor device_class to a Material Design icon name.
+///
+/// Source: homeassistant/components/binary_sensor/__init__.py icon mapping
+fn binary_sensor_icon(device_class: &str) -> &'static str {
+    match device_class {
+        "motion"           => "motion-sensor",
+        "door" | "opening" | "window" => "door-closed",
+        "smoke"            => "smoke-detector",
+        "moisture"         => "water",
+        "carbon_monoxide"  => "molecule-co",
+        "vibration"        => "vibrate",
+        "occupancy"        => "motion-sensor",
+        "tamper"           => "shield-alert",
+        "battery"          => "battery-alert",
+        "safety"           => "shield-account",
+        _                  => "alert-circle-outline",
+    }
+}
+
 /// Derive HA entity records from a device's ZCL input clusters.
 ///
 /// Mirrors the discovery logic in `zigbee2mqtt-rs/src/homeassistant.rs` so
@@ -259,15 +295,22 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
     }
 
     if has_ias {
-        // IAS Zone (0x0500) emits "contact" (door/window sensors),
-        // "tamper", and "battery_low".  Device class "door" is the
-        // most common ZHA default; the user can rename if needed.
+        // IAS Zone (0x0500): zone_type attribute (0x0001) identifies the sensor kind.
+        // Read from initial_state if available; fall back to "opening".
+        // Source: homeassistant/components/zha/sensor.py IAS_ZONE_TYPE_MAP
+        let zone_type: Option<u16> = device
+            .initial_state
+            .get("zone_type")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u16);
+        let dc = ias_device_class(zone_type);
+
         records.push(ZigbeeEntityRecord {
             entity_id: format!("binary_sensor.{base}_contact"),
             ieee_addr: ieee.clone(),
             domain: "binary_sensor".to_string(),
             attribute_key: Some("contact".to_string()),
-            device_class: Some("door".to_string()),
+            device_class: Some(dc.to_string()),
             unit_of_measurement: None,
             name_by_user: None,
             user_area_id: None,
@@ -922,13 +965,7 @@ pub(crate) fn entity_view_for(
             Some("atmospheric_pressure")  => "gauge",
             _                             => "gauge",
         },
-        "binary_sensor" => match entity.device_class.as_deref() {
-            Some("occupancy") | Some("motion") => "motion-sensor",
-            Some("door") | Some("window")      => "door",
-            Some("tamper")                     => "shield-alert",
-            Some("battery")                    => "battery-alert",
-            _                                  => "radiobox-marked",
-        },
+        "binary_sensor" => binary_sensor_icon(entity.device_class.as_deref().unwrap_or("")),
         _ => "home",
     };
 
@@ -1005,21 +1042,27 @@ mod tests {
         let states = StateStore::new();
 
         let cases: &[(&str, &str, Option<&str>, &str)] = &[
-            ("light.bulb",                  "light",         None,                  "lightbulb"),
-            ("sensor.temp",                 "sensor",        Some("temperature"),   "thermometer"),
-            ("sensor.hum",                  "sensor",        Some("humidity"),      "water-percent"),
-            ("sensor.lux",                  "sensor",        Some("illuminance"),   "weather-sunny"),
-            ("sensor.bat",                  "sensor",        Some("battery"),       "battery"),
-            ("sensor.volt",                 "sensor",        Some("voltage"),       "lightning-bolt"),
-            ("sensor.press",                "sensor",        Some("atmospheric_pressure"), "gauge"),
-            ("sensor.other",                "sensor",        None,                  "gauge"),
-            ("binary_sensor.occupancy",     "binary_sensor", Some("occupancy"),     "motion-sensor"),
-            ("binary_sensor.motion",        "binary_sensor", Some("motion"),        "motion-sensor"),
-            ("binary_sensor.door",          "binary_sensor", Some("door"),          "door"),
-            ("binary_sensor.window",        "binary_sensor", Some("window"),        "door"),
-            ("binary_sensor.tamper",        "binary_sensor", Some("tamper"),        "shield-alert"),
-            ("binary_sensor.bat_low",       "binary_sensor", Some("battery"),       "battery-alert"),
-            ("binary_sensor.generic",       "binary_sensor", None,                  "radiobox-marked"),
+            ("light.bulb",                    "light",         None,                    "lightbulb"),
+            ("sensor.temp",                   "sensor",        Some("temperature"),     "thermometer"),
+            ("sensor.hum",                    "sensor",        Some("humidity"),        "water-percent"),
+            ("sensor.lux",                    "sensor",        Some("illuminance"),     "weather-sunny"),
+            ("sensor.bat",                    "sensor",        Some("battery"),         "battery"),
+            ("sensor.volt",                   "sensor",        Some("voltage"),         "lightning-bolt"),
+            ("sensor.press",                  "sensor",        Some("atmospheric_pressure"), "gauge"),
+            ("sensor.other",                  "sensor",        None,                    "gauge"),
+            // IAS zone type device classes — Source: homeassistant/components/binary_sensor/__init__.py
+            ("binary_sensor.occupancy",       "binary_sensor", Some("occupancy"),       "motion-sensor"),
+            ("binary_sensor.motion",          "binary_sensor", Some("motion"),          "motion-sensor"),
+            ("binary_sensor.door",            "binary_sensor", Some("door"),            "door-closed"),
+            ("binary_sensor.window",          "binary_sensor", Some("window"),          "door-closed"),
+            ("binary_sensor.opening",         "binary_sensor", Some("opening"),         "door-closed"),
+            ("binary_sensor.smoke",           "binary_sensor", Some("smoke"),           "smoke-detector"),
+            ("binary_sensor.moisture",        "binary_sensor", Some("moisture"),        "water"),
+            ("binary_sensor.co",              "binary_sensor", Some("carbon_monoxide"), "molecule-co"),
+            ("binary_sensor.vibration",       "binary_sensor", Some("vibration"),       "vibrate"),
+            ("binary_sensor.tamper",          "binary_sensor", Some("tamper"),          "shield-alert"),
+            ("binary_sensor.bat_low",         "binary_sensor", Some("battery"),         "battery-alert"),
+            ("binary_sensor.generic",         "binary_sensor", None,                    "alert-circle-outline"),
         ];
 
         for (entity_id, domain, device_class, expected_icon) in cases {
@@ -1081,5 +1124,74 @@ mod tests {
         let rec = record("sensor.test_temperature", "sensor", Some("temperature"), Some("°C"));
         let view = entity_view_for(&rec, &states, None);
         assert!(view.webhook_id.is_none(), "Zigbee entities must not have a webhook_id");
+    }
+
+    /// ias_device_class maps ZCL zone type values to HA device classes.
+    ///
+    /// Source: homeassistant/components/zha/sensor.py IAS_ZONE_TYPE_MAP
+    /// Source: homeassistant/components/binary_sensor/__init__.py BinarySensorDeviceClass
+    #[test]
+    fn ias_device_class_mapping() {
+        assert_eq!(ias_device_class(Some(0x000d)), "motion");
+        assert_eq!(ias_device_class(Some(0x0015)), "door");
+        assert_eq!(ias_device_class(Some(0x0028)), "smoke");
+        assert_eq!(ias_device_class(Some(0x002a)), "moisture");
+        assert_eq!(ias_device_class(Some(0x002b)), "carbon_monoxide");
+        assert_eq!(ias_device_class(Some(0x002c)), "safety");
+        assert_eq!(ias_device_class(Some(0x002d)), "vibration");
+        // Unknown / not-yet-reported type falls back to "opening"
+        assert_eq!(ias_device_class(Some(0x010f)), "opening");
+        assert_eq!(ias_device_class(None),          "opening");
+    }
+
+    // Build a minimal DeviceInfo for unit tests.
+    fn make_device_info(ieee_hex: &str, name: &str, clusters: &[u16]) -> zigbee2mqtt_rs::DeviceInfo {
+        zigbee2mqtt_rs::DeviceInfo {
+            ieee_addr:     zigbee2mqtt_rs::IeeeAddr::from_hex(ieee_hex).unwrap(),
+            nwk_addr:      0x1234,
+            friendly_name: name.to_string(),
+            manufacturer:  None,
+            model:         None,
+            power_source:  None,
+            sw_build_id:   None,
+            endpoints:     vec![zigbee2mqtt_rs::EndpointDesc {
+                endpoint:        1,
+                profile_id:      0x0104,
+                device_id:       0x0402,
+                input_clusters:  clusters.to_vec(),
+                output_clusters: vec![],
+            }],
+            initial_state: serde_json::Map::new(),
+        }
+    }
+
+    /// entities_for_device uses zone_type from initial_state to set device_class.
+    #[test]
+    fn entities_for_device_ias_zone_type_motion() {
+        let mut info = make_device_info("0xAABBCCDDEEFF0011", "pir_sensor", &[0x0500]);
+        info.initial_state.insert("zone_type".to_string(), serde_json::json!(0x000du16));
+
+        let records = entities_for_device(&info);
+        let contact = records.iter().find(|r| r.attribute_key.as_deref() == Some("contact"));
+        assert!(contact.is_some(), "contact entity must exist for IAS device");
+        assert_eq!(
+            contact.unwrap().device_class.as_deref(),
+            Some("motion"),
+            "zone_type 0x000d must map to device_class 'motion'"
+        );
+    }
+
+    #[test]
+    fn entities_for_device_ias_zone_type_fallback() {
+        // No zone_type in initial_state → fallback to "opening"
+        let info = make_device_info("0xAABBCCDDEEFF0022", "unknown_sensor", &[0x0500]);
+
+        let records = entities_for_device(&info);
+        let contact = records.iter().find(|r| r.attribute_key.as_deref() == Some("contact"));
+        assert_eq!(
+            contact.unwrap().device_class.as_deref(),
+            Some("opening"),
+            "missing zone_type must fall back to 'opening'"
+        );
     }
 }

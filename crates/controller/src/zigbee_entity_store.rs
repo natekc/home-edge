@@ -71,6 +71,12 @@ impl ZigbeeEntityRecord {
             Some("window")                                 => Some("Window"),
             Some("tamper")                                 => Some("Tamper"),
             Some("motion")                                 => Some("Motion"),
+            Some("smoke")                                  => Some("Smoke"),
+            Some("moisture")                               => Some("Moisture"),
+            Some("carbon_monoxide")                        => Some("Carbon Monoxide"),
+            Some("vibration")                              => Some("Vibration"),
+            Some("opening")                                => Some("Opening"),
+            Some("safety")                                 => Some("Safety"),
             _                                              => None,
         };
         if let Some(label) = auto {
