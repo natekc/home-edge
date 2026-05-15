@@ -541,3 +541,91 @@ pub fn render_sparkline(entries: &[HistoryEntry], width: u32, height: u32) -> St
          </svg>"
     )
 }
+
+/// Compute min, mean, and max for a slice of history entries.
+///
+/// Returns `None` if the slice is empty.
+///
+/// Source: homeassistant/components/recorder/statistics.py StatisticsRow
+pub fn stats_for_slice(entries: &[HistoryEntry]) -> Option<(f64, f64, f64)> {
+    if entries.is_empty() {
+        return None;
+    }
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut sum = 0.0_f64;
+    for e in entries {
+        if e.value < min {
+            min = e.value;
+        }
+        if e.value > max {
+            max = e.value;
+        }
+        sum += e.value;
+    }
+    let mean = sum / entries.len() as f64;
+    Some((min, mean, max))
+}
+
+/// Render a binary sensor timeline — horizontal colored stripes for on/off periods.
+///
+/// Entries should have values 1.0 (on) or 0.0 (off), ordered by ts.
+/// The timeline spans from `since_ts` to now, with each segment colored by
+/// whether the sensor was on (amber) or off (light grey) during that period.
+///
+/// Source: homeassistant/components/history/ binary sensor visualization
+pub fn render_binary_timeline(
+    entries: &[HistoryEntry],
+    width: u32,
+    height: u32,
+    since_ts: u64,
+) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let span = if now > since_ts { (now - since_ts) as f64 } else { 1.0 };
+    let w = width as f64;
+    let h = height as f64;
+
+    if entries.is_empty() {
+        return format!(
+            "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" \
+             xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block\">\
+             <rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#e5e7eb\" rx=\"4\"/>\
+             <text x=\"50%\" y=\"50%\" text-anchor=\"middle\" dominant-baseline=\"middle\" \
+             fill=\"#aaa\" font-size=\"11\">No data</text></svg>"
+        );
+    }
+
+    let mut rects = String::new();
+    // Build segments: entry[i] holds the value active from entries[i].ts
+    // until entries[i+1].ts (or `now` for the last entry).
+    for i in 0..entries.len() {
+        let seg_start = entries[i].ts.max(since_ts);
+        let seg_end = if i + 1 < entries.len() {
+            entries[i + 1].ts.min(now)
+        } else {
+            now
+        };
+        if seg_end <= seg_start {
+            continue;
+        }
+        let x = ((seg_start - since_ts) as f64 / span * w).max(0.0);
+        let x2 = ((seg_end - since_ts) as f64 / span * w).min(w);
+        let seg_w = (x2 - x).max(0.5);
+        // on = warm amber; off = light grey
+        let color = if entries[i].value >= 0.5 { "#f59e0b" } else { "#e5e7eb" };
+        rects.push_str(&format!(
+            "<rect x=\"{x:.1}\" y=\"0\" width=\"{seg_w:.1}\" height=\"{h:.1}\" fill=\"{color}\"/>"
+        ));
+    }
+
+    format!(
+        "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" \
+         xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block;border-radius:4px\">\
+         <rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#e5e7eb\"/>\
+         {rects}\
+         </svg>"
+    )
+}

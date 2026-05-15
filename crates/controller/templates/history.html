@@ -12,39 +12,57 @@
   {% else %}
 
   <!-- Entity + range selector -->
+  <!-- Source: homeassistant/components/history/__init__.py start_time/end_time ranges -->
   <div class="ha-card" style="margin-bottom:16px">
     <div class="ha-card-body" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
       <div style="flex:1;min-width:200px">
         <label for="history-entity-select" style="display:block;font-size:.85rem;margin-bottom:6px;color:var(--text-secondary)">Entity</label>
-        <select id="history-entity-select" class="form-control" onchange="loadHistory()">
+        <select id="history-entity-select" class="form-control">
           <option value="">— choose an entity —</option>
           {% for e in entities %}
-          <option value="{{ e.entity_id }}">{{ e.display_name }}{% if e.source == "zigbee" %} (Zigbee){% endif %}</option>
+          <option value="{{ e.entity_id }}"{% if e.entity_id == selected_entity %} selected{% endif %}>{{ e.display_name }}{% if e.source == "zigbee" %} (Zigbee){% endif %}</option>
           {% endfor %}
         </select>
       </div>
       <div>
         <label style="display:block;font-size:.85rem;margin-bottom:6px;color:var(--text-secondary)">Range</label>
-        <div style="display:flex;gap:4px">
-          <button class="btn btn-sm range-btn active" data-hours="24" onclick="setRange(this)">24 h</button>
-          <button class="btn btn-sm range-btn" data-hours="168" onclick="setRange(this)">7 d</button>
-          <button class="btn btn-sm range-btn" data-hours="720" onclick="setRange(this)">30 d</button>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          {% for r in [["1h","1 hour"],["6h","6 hours"],["24h","24 hours"],["3d","3 days"],["7d","7 days"]] %}
+          <a href="/history?entity={{ selected_entity }}&amp;range={{ r.0 }}"
+             class="range-btn{% if range == r.0 %} active{% endif %}">{{ r.1 }}</a>
+          {% endfor %}
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Chart + table -->
+  <!-- Chart + table (loaded client-side via fetch) -->
   <div id="history-content" class="ha-card">
+    {% if selected_entity %}
+    <div class="ha-card-body text-muted" style="text-align:center;padding:40px 20px">
+      Loading…
+    </div>
+    {% else %}
     <div class="ha-card-body text-muted" style="text-align:center;padding:40px 20px">
       Select an entity above to view its history.
     </div>
+    {% endif %}
   </div>
+
+  <!-- Statistics summary row (server-side computed; non-binary sensors only) -->
+  <!-- Source: homeassistant/components/recorder/statistics.py StatisticsRow -->
+  {% if stat_min %}
+  <div style="display:flex;gap:24px;font-size:.82rem;color:var(--secondary-text,#6b7280);margin-top:8px;justify-content:center">
+    <span>Min <strong>{{ stat_min }}</strong></span>
+    <span>Mean <strong>{{ stat_mean }}</strong></span>
+    <span>Max <strong>{{ stat_max }}</strong></span>
+  </div>
+  {% endif %}
 
   {% endif %}
 </div>
 <style>
-.range-btn { background:var(--ha-card-background,#1c1c1e); color:var(--text-secondary); border:1px solid rgba(255,255,255,.15); border-radius:6px; padding:4px 12px; cursor:pointer; font-size:.8rem; }
+.range-btn { display:inline-block; background:var(--ha-card-background,#1c1c1e); color:var(--text-secondary); border:1px solid rgba(255,255,255,.15); border-radius:6px; padding:4px 12px; cursor:pointer; font-size:.8rem; text-decoration:none; }
 .range-btn.active { background:var(--primary-color,#18bcf2); color:#fff; border-color:transparent; }
 .history-table { width:100%; border-collapse:collapse; font-size:.85rem; }
 .history-table th { text-align:left; padding:6px 12px; color:var(--text-secondary); font-weight:500; border-bottom:1px solid rgba(255,255,255,.08); }
@@ -52,7 +70,9 @@
 </style>
 <script>
 (function(){
-  var _activeHours = 24;
+  // Server-injected values: since_ts (unix seconds) and range_hours.
+  var SINCE_TS   = {{ since_ts }};
+  var RANGE_HOURS = {{ range_hours }};
 
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -62,8 +82,31 @@
     return d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
   }
 
-  function buildSvg(entries, width, height){
+  // Binary sensor timeline: colored stripes proportional to duration.
+  // Source: homeassistant/components/history/ binary sensor visualization
+  function buildBinaryTimeline(entries, width, height){
+    var now = Math.floor(Date.now() / 1000);
+    var span = now - SINCE_TS || 1;
+    var rects = '';
+    for(var i = 0; i < entries.length; i++){
+      var segStart = Math.max(entries[i].ts, SINCE_TS);
+      var segEnd = i + 1 < entries.length ? Math.min(entries[i+1].ts, now) : now;
+      if(segEnd <= segStart) continue;
+      var x  = ((segStart - SINCE_TS) / span * width).toFixed(1);
+      var x2 = ((segEnd   - SINCE_TS) / span * width).toFixed(1);
+      var w  = Math.max(parseFloat(x2) - parseFloat(x), 0.5).toFixed(1);
+      var color = entries[i].value >= 0.5 ? '#f59e0b' : '#e5e7eb';
+      rects += '<rect x="'+x+'" y="0" width="'+w+'" height="'+height+'" fill="'+color+'"/>';
+    }
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 '+width+' '+height+'" preserveAspectRatio="none" style="display:block;border-radius:4px">'
+      + '<rect x="0" y="0" width="'+width+'" height="'+height+'" fill="#e5e7eb"/>'
+      + rects + '</svg>';
+  }
+
+  function buildSvg(entries, width, height, isBinary){
     if(entries.length < 2) return '';
+    if(isBinary) return buildBinaryTimeline(entries, width, height);
+
     var PAD = {top:16, right:12, bottom:28, left:48};
     var W = width - PAD.left - PAD.right;
     var H = height - PAD.top - PAD.bottom;
@@ -76,7 +119,6 @@
     function px(ts){ return PAD.left + ((ts - minTs) / tsRange) * W; }
     function py(v){ return PAD.top + H - ((v - minV) / vRange) * H; }
 
-    // Line + area path
     var pts = entries.map(function(e){ return px(e.ts).toFixed(1)+','+py(e.value).toFixed(1); });
     var linePath = 'M' + pts.join('L');
     var areaPath = linePath
@@ -84,24 +126,21 @@
       + 'L' + px(minTs).toFixed(1) + ',' + (PAD.top + H).toFixed(1)
       + 'Z';
 
-    // Y-axis labels (3 ticks: min, mid, max)
     var yTicks = [minV, (minV+maxV)/2, maxV];
     var yLabels = yTicks.map(function(v){
       return '<text x="'+(PAD.left-6)+'" y="'+(py(v)+4).toFixed(1)+'" text-anchor="end" font-size="10" fill="#8a8a8e">'+v.toFixed(1)+'</text>'
            + '<line x1="'+PAD.left+'" y1="'+py(v).toFixed(1)+'" x2="'+(PAD.left+W)+'" y2="'+py(v).toFixed(1)+'" stroke="rgba(255,255,255,.06)" stroke-width="1"/>';
     }).join('');
 
-    // X-axis labels (up to 5 ticks)
     var numXTicks = Math.min(5, entries.length);
     var xStep = Math.floor(entries.length / (numXTicks - 1 || 1));
     var xLabels = '';
     for(var i=0; i<entries.length; i += xStep){
       var e = entries[Math.min(i, entries.length-1)];
-      xLabels += '<text x="'+px(e.ts).toFixed(1)+'" y="'+(PAD.top+H+18)+'" text-anchor="middle" font-size="10" fill="#8a8a8e">'+fmtTime(e.ts, _activeHours)+'</text>';
+      xLabels += '<text x="'+px(e.ts).toFixed(1)+'" y="'+(PAD.top+H+18)+'" text-anchor="middle" font-size="10" fill="#8a8a8e">'+fmtTime(e.ts, RANGE_HOURS)+'</text>';
     }
-    // Always include the last entry label
     var last = entries[entries.length-1];
-    xLabels += '<text x="'+px(last.ts).toFixed(1)+'" y="'+(PAD.top+H+18)+'" text-anchor="middle" font-size="10" fill="#8a8a8e">'+fmtTime(last.ts, _activeHours)+'</text>';
+    xLabels += '<text x="'+px(last.ts).toFixed(1)+'" y="'+(PAD.top+H+18)+'" text-anchor="middle" font-size="10" fill="#8a8a8e">'+fmtTime(last.ts, RANGE_HOURS)+'</text>';
 
     return '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 '+width+' '+height+'" preserveAspectRatio="none">'
       + '<defs><linearGradient id="hg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#18bcf2" stop-opacity=".35"/><stop offset="100%" stop-color="#18bcf2" stop-opacity="0"/></linearGradient></defs>'
@@ -111,20 +150,15 @@
       + '</svg>';
   }
 
-  window.setRange = function(btn){
-    document.querySelectorAll('.range-btn').forEach(function(b){ b.classList.remove('active'); });
-    btn.classList.add('active');
-    _activeHours = parseInt(btn.dataset.hours, 10);
-    loadHistory();
-  };
-
-  window.loadHistory = function(){
-    var entityId = document.getElementById('history-entity-select').value;
+  function loadHistory(){
+    var sel   = document.getElementById('history-entity-select');
+    var entityId = sel ? sel.value : '';
     if(!entityId) return;
     var target = document.getElementById('history-content');
     target.innerHTML = '<div class="ha-card-body text-muted" style="text-align:center;padding:40px">Loading…</div>';
-    var since = Math.floor(Date.now() / 1000) - _activeHours * 3600;
-    var url = '/api/edge/history/' + encodeURIComponent(entityId) + '?since=' + since;
+    // Use server-computed SINCE_TS so the chart matches the active range selector link.
+    var url = '/api/edge/history/' + encodeURIComponent(entityId) + '?since=' + SINCE_TS;
+    var isBinary = entityId.indexOf('binary_sensor.') === 0;
     fetch(url)
       .then(function(r){ return r.json(); })
       .then(function(entries){
@@ -134,10 +168,8 @@
         }
         entries.sort(function(a,b){ return a.ts - b.ts; });
 
-        // Chart
-        var svgHtml = buildSvg(entries, 700, 220);
+        var svgHtml = buildSvg(entries, 700, 220, isBinary);
 
-        // Table (latest first)
         var tableRows = entries.slice().reverse().map(function(e){
           var d = new Date(e.ts * 1000);
           return '<tr><td>'+esc(d.toLocaleString())+'</td><td>'+esc(String(e.value))+'</td></tr>';
@@ -152,7 +184,21 @@
       .catch(function(){
         target.innerHTML = '<div class="ha-card-body" style="color:var(--error,#f44336);padding:20px">Failed to load history.</div>';
       });
-  };
+  }
+
+  // Navigate preserving range in URL when entity changes from dropdown.
+  var sel = document.getElementById('history-entity-select');
+  if(sel){
+    sel.addEventListener('change', function(){
+      var range = new URLSearchParams(location.search).get('range') || '24h';
+      var val = this.value;
+      if(val){
+        location.href = '/history?entity=' + encodeURIComponent(val) + '&range=' + range;
+      }
+    });
+    // Auto-load chart if entity was pre-selected from URL params.
+    if(sel.value){ loadHistory(); }
+  }
 })();
 </script>
 {% endblock %}
