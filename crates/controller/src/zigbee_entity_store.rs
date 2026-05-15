@@ -48,9 +48,35 @@ pub struct ZigbeeEntityRecord {
 }
 
 impl ZigbeeEntityRecord {
-    /// Display name: user override → entity_id.
-    pub fn display_name(&self) -> &str {
-        self.name_by_user.as_deref().unwrap_or(&self.entity_id)
+    /// Display name: user override → human-readable attribute label → entity_id.
+    ///
+    /// The human-readable label is derived from `device_class` (preferred) or
+    /// `attribute_key`, mapping known ZCL attributes to titles like "Temperature"
+    /// or "Humidity".  Falls back to the raw `entity_id` only for unknown types.
+    pub fn display_name(&self) -> String {
+        if let Some(name) = &self.name_by_user {
+            return name.clone();
+        }
+        let key = self.device_class.as_deref().or(self.attribute_key.as_deref());
+        let auto: Option<&'static str> = match key {
+            Some("temperature")                            => Some("Temperature"),
+            Some("humidity")                               => Some("Humidity"),
+            Some("battery") if self.domain == "binary_sensor" => Some("Battery Low"),
+            Some("battery") | Some("battery_low")         => Some("Battery"),
+            Some("battery_voltage") | Some("voltage")     => Some("Voltage"),
+            Some("illuminance") | Some("illuminance_lux") => Some("Illuminance"),
+            Some("atmospheric_pressure") | Some("pressure") => Some("Pressure"),
+            Some("occupancy")                              => Some("Occupancy"),
+            Some("door") | Some("contact")                => Some("Door"),
+            Some("window")                                 => Some("Window"),
+            Some("tamper")                                 => Some("Tamper"),
+            Some("motion")                                 => Some("Motion"),
+            _                                              => None,
+        };
+        if let Some(label) = auto {
+            return label.to_string();
+        }
+        self.entity_id.clone()
     }
 }
 

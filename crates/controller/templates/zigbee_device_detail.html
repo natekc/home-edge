@@ -16,11 +16,11 @@
     <span class="breadcrumb-sep">›</span>
     <a href="/zigbee">Zigbee</a>
     <span class="breadcrumb-sep">›</span>
-    <span>{{ device.name_by_user if device.name_by_user else device.friendly_name }}</span>
+    <span>{{ device.display_name }}</span>
   </div>
   <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
     <div>
-      <h1>{{ device.name_by_user if device.name_by_user else device.friendly_name }}</h1>
+      <h1>{{ device.display_name }}</h1>
       <p style="font-size:.82rem;color:var(--text-secondary)">{{ device.ieee_addr }}</p>
     </div>
     <form method="post" action="/api/zigbee/devices/{{ device.ieee_addr }}/delete"

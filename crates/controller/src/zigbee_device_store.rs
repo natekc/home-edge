@@ -48,9 +48,38 @@ pub struct ZigbeeDeviceRecord {
 }
 
 impl ZigbeeDeviceRecord {
-    /// The display name shown in the UI: user override → friendly_name.
-    pub fn display_name(&self) -> &str {
-        self.name_by_user.as_deref().unwrap_or(&self.friendly_name)
+    /// The display name shown in the UI.
+    ///
+    /// Priority: user override → model name (when friendly_name is still the
+    /// raw IEEE address) → friendly_name.
+    ///
+    /// Zigbee2mqtt defaults `friendly_name` to the IEEE address until the user
+    /// renames the device.  When that is the case we prefer the `model` field
+    /// (e.g. `"SNZB-02"`) so the UI never shows a raw hex address.
+    pub fn display_name(&self) -> std::borrow::Cow<'_, str> {
+        // Skip name_by_user if it was accidentally saved as the raw IEEE address.
+        let user_name = self
+            .name_by_user
+            .as_deref()
+            .filter(|n| !n.starts_with("0x"));
+        if let Some(name) = user_name {
+            return std::borrow::Cow::Borrowed(name);
+        }
+        // friendly_name defaults to the IEEE address; prefer model → manufacturer.
+        if self.friendly_name.starts_with("0x") {
+            if let Some(model) = self.model.as_deref() {
+                return std::borrow::Cow::Borrowed(model);
+            }
+            if let Some(mfr) = self.manufacturer.as_deref() {
+                return std::borrow::Cow::Borrowed(mfr);
+            }
+            // Last resort: show a shortened address so the UI never displays a
+            // 18-character hex string as the device label.
+            let addr = &self.friendly_name;
+            let short = addr.get(addr.len().saturating_sub(4)..).unwrap_or(addr);
+            return std::borrow::Cow::Owned(format!("Zigbee {short}"));
+        }
+        std::borrow::Cow::Borrowed(&self.friendly_name)
     }
 }
 
@@ -150,7 +179,7 @@ impl ZigbeeDeviceStore {
             .expect("cache populated above")
             .devices
             .clone();
-        devices.sort_by(|a, b| a.display_name().cmp(b.display_name()));
+        devices.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
         Ok(devices)
     }
 
