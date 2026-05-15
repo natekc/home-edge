@@ -330,6 +330,31 @@ async fn dashboard_response(state: &AppState) -> Response {
             })
         })
         .collect();
+
+    // Collect Zigbee device summaries (only when feature is compiled in).
+    #[cfg(feature = "zigbee")]
+    let zigbee_device_summaries: Vec<serde_json::Value> = {
+        let zdevices = state.zigbee_devices.list().await.unwrap_or_default();
+        let zentities = state.zigbee_entities.list().await.unwrap_or_default();
+        zdevices
+            .iter()
+            .filter(|d| d.interview_complete)
+            .map(|d| {
+                let entity_count = zentities.iter().filter(|e| e.ieee_addr == d.ieee_addr).count();
+                json!({
+                    "ieee_addr":    d.ieee_addr,
+                    "device_name":  d.display_name().as_ref(),
+                    "manufacturer": d.manufacturer,
+                    "model":        d.model,
+                    "power_source": d.power_source,
+                    "entity_count": entity_count,
+                })
+            })
+            .collect()
+    };
+    #[cfg(not(feature = "zigbee"))]
+    let zigbee_device_summaries: Vec<serde_json::Value> = vec![];
+
     let all_views = match collect_all_entity_views(state).await {
         Ok(v) => v,
         Err(resp) => return resp,
@@ -337,9 +362,12 @@ async fn dashboard_response(state: &AppState) -> Response {
     let area_cards = build_area_cards(state, &all_views).await;
     let location_name = load_location_name(state).await;
     let areas = load_areas(state).await;
+    let has_any_device = !device_summaries.is_empty() || !zigbee_device_summaries.is_empty();
     let ctx = app_ctx!(state, "dashboard", location_name.as_str(), &areas,
-        devices    => Value::from_serialize(&device_summaries),
-        area_cards => Value::from_serialize(&area_cards),
+        devices               => Value::from_serialize(&device_summaries),
+        zigbee_devices        => Value::from_serialize(&zigbee_device_summaries),
+        has_any_device        => has_any_device,
+        area_cards            => Value::from_serialize(&area_cards),
     );
     render_template(state, "dashboard.html", ctx)
 }
@@ -909,7 +937,7 @@ async fn fetch_entity_view(
         .map_err(|e| internal_error(&e))?
     {
         return Ok(Some((
-            crate::zigbee_integration::entity_view_for(&ze, &state.states),
+            crate::zigbee_integration::entity_view_for(&ze, &state.states, None),
             ze.domain,
         )));
     }
@@ -1513,6 +1541,7 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         options,
         current_position,
         fan_percentage,
+        device_name: None, // mobile-app entities are not under a Zigbee device
     }
 }
 
@@ -1565,8 +1594,29 @@ async fn collect_all_entity_views(state: &AppState) -> Result<Vec<EntityView>, R
             .list()
             .await
             .unwrap_or_default();
+        // Build a lookup: ieee_addr → device display name, so we can group
+        // unassigned entities by their parent device on the overview.
+        let zigbee_devices = state.zigbee_devices.list().await.unwrap_or_default();
+        // Build a lookup: ieee_addr → (display_name, user_area_id)
+        // Entities with no area inherit their device's area (HA parity).
+        let device_meta_map: std::collections::HashMap<String, (String, String)> = zigbee_devices
+            .iter()
+            .map(|d| (
+                d.ieee_addr.clone(),
+                (d.display_name().into_owned(), d.user_area_id.clone().unwrap_or_default()),
+            ))
+            .collect();
         for ze in &zigbee {
-            views.push(crate::zigbee_integration::entity_view_for(ze, &state.states));
+            let (device_name, inherited_area) = device_meta_map
+                .get(&ze.ieee_addr)
+                .map(|(n, a)| (Some(n.clone()), a.clone()))
+                .unwrap_or((None, String::new()));
+            let mut view = crate::zigbee_integration::entity_view_for(ze, &state.states, device_name);
+            // Inherit device area when the entity has no area assigned.
+            if view.user_area_id.is_empty() && !inherited_area.is_empty() {
+                view.user_area_id = inherited_area;
+            }
+            views.push(view);
         }
     }
 
@@ -1587,7 +1637,9 @@ async fn build_area_cards(state: &AppState, all_views: &[EntityView]) -> Vec<Are
             continue;
         }
         let area_name = if entity.user_area_id.is_empty() {
-            "Unassigned".to_string()
+            // Group unassigned Zigbee entities under their device display name
+            // (e.g. "SNZB-02") instead of lumping everything into "Unassigned".
+            entity.device_name.clone().unwrap_or_else(|| "Unassigned".to_string())
         } else {
             area_name_map
                 .get(entity.user_area_id.as_str())
@@ -1666,6 +1718,49 @@ impl ErrorResponse {
 
 #[cfg(feature = "zigbee")]
 use crate::zigbee_device_store::ZigbeeDeviceMetaUpdate;
+
+/// View model for Zigbee device records passed to HTML templates.
+///
+/// Includes all raw `ZigbeeDeviceRecord` fields plus a `display_name` computed
+/// via [`ZigbeeDeviceRecord::display_name`] so templates can use
+/// `{{ device.display_name }}` instead of the verbose conditional
+/// `{{ device.name_by_user if device.name_by_user else device.friendly_name }}`.
+#[cfg(feature = "zigbee")]
+#[derive(Debug, Serialize)]
+struct ZigbeeDevicePageView {
+    ieee_addr: String,
+    /// Computed display name: user override → model name → friendly_name.
+    display_name: String,
+    friendly_name: String,
+    manufacturer: Option<String>,
+    model: Option<String>,
+    power_source: Option<String>,
+    sw_build_id: Option<String>,
+    interview_complete: bool,
+    last_seen: Option<String>,
+    name_by_user: Option<String>,
+    user_area_id: Option<String>,
+}
+
+#[cfg(feature = "zigbee")]
+impl From<crate::zigbee_device_store::ZigbeeDeviceRecord> for ZigbeeDevicePageView {
+    fn from(d: crate::zigbee_device_store::ZigbeeDeviceRecord) -> Self {
+        let display_name = d.display_name().into_owned();
+        ZigbeeDevicePageView {
+            display_name,
+            ieee_addr: d.ieee_addr,
+            friendly_name: d.friendly_name,
+            manufacturer: d.manufacturer,
+            model: d.model,
+            power_source: d.power_source,
+            sw_build_id: d.sw_build_id,
+            interview_complete: d.interview_complete,
+            last_seen: d.last_seen,
+            name_by_user: d.name_by_user,
+            user_area_id: d.user_area_id,
+        }
+    }
+}
 
 #[cfg(feature = "zigbee")]
 #[derive(Debug, Serialize)]
@@ -1863,8 +1958,8 @@ async fn api_zigbee_permit_join_status(State(state): State<Arc<AppState>>) -> Re
 async fn zigbee_devices_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let devices = match state.zigbee_devices.list().await {
-        Ok(d) => d,
+    let devices: Vec<ZigbeeDevicePageView> = match state.zigbee_devices.list().await {
+        Ok(d) => d.into_iter().map(ZigbeeDevicePageView::from).collect(),
         Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
     };
     let bridge_running = state.zigbee.is_some();
@@ -1889,8 +1984,8 @@ async fn zigbee_devices_page(State(state): State<Arc<AppState>>) -> Response {
 /// HTMX fragment that returns just the device list rows for live polling.
 #[cfg(feature = "zigbee")]
 async fn fragment_zigbee_devices(State(state): State<Arc<AppState>>) -> Response {
-    let devices = match state.zigbee_devices.list().await {
-        Ok(d) => d,
+    let devices: Vec<ZigbeeDevicePageView> = match state.zigbee_devices.list().await {
+        Ok(d) => d.into_iter().map(ZigbeeDevicePageView::from).collect(),
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Html(format!("{e:#}"))).into_response(),
     };
     let pairing_remaining_secs: u8 = state.zigbee
@@ -1916,9 +2011,11 @@ async fn fragment_zigbee_entities(
         Ok(e) => e,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Html(format!("{e:#}"))).into_response(),
     };
+    let device = state.zigbee_devices.get_by_ieee(&ieee).await.ok().flatten();
+    let device_name = device.as_ref().map(|d| d.display_name().into_owned());
     let entities: Vec<EntityView> = entity_records
         .iter()
-        .map(|e| crate::zigbee_integration::entity_view_for(e, &state.states))
+        .map(|e| crate::zigbee_integration::entity_view_for(e, &state.states, device_name.clone()))
         .collect();
     let ctx = context! {
         entities => Value::from_serialize(&entities),
@@ -1944,12 +2041,14 @@ async fn zigbee_device_detail_page(
         Ok(e) => e,
         Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
     };
+    let device_view = ZigbeeDevicePageView::from(device);
+    let device_name = Some(device_view.display_name.clone());
     let entities: Vec<EntityView> = entity_records
         .iter()
-        .map(|e| crate::zigbee_integration::entity_view_for(e, &state.states))
+        .map(|e| crate::zigbee_integration::entity_view_for(e, &state.states, device_name.clone()))
         .collect();
     let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
-        device   => Value::from_serialize(&device),
+        device   => Value::from_serialize(&device_view),
         entities => Value::from_serialize(&entities),
     );
     render_template(&state, "zigbee_device_detail.html", ctx)

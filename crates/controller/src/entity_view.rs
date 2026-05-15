@@ -69,6 +69,10 @@ pub(crate) struct EntityView {
     /// Fan speed percentage 0–100, `None` if unavailable.
     /// Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
     pub(crate) fan_percentage: Option<u8>,
+    /// For Zigbee entities: the display name of the parent device (e.g. `"SNZB-02"`).
+    /// Used to group unassigned entities by device on the dashboard overview.
+    /// `None` for mobile-app entities.
+    pub(crate) device_name: Option<String>,
 }
 
 /// Area-grouped card passed to the dashboard template.

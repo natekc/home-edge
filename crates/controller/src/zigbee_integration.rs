@@ -616,6 +616,7 @@ pub async fn start(
 pub(crate) fn entity_view_for(
     entity: &ZigbeeEntityRecord,
     states: &StateStore,
+    device_name: Option<String>,
 ) -> crate::entity_view::EntityView {
     let value = states
         .get(&entity.entity_id)
@@ -675,7 +676,7 @@ pub(crate) fn entity_view_for(
     crate::entity_view::EntityView {
         entity_id:             entity.entity_id.clone(),
         webhook_id:            None, // Zigbee entities have no webhook registration
-        display_name:          entity.display_name().to_string(),
+        display_name:          entity.display_name(),
         entity_type:           entity.domain.clone(),
         icon_name:             icon_name.to_string(),
         value,
@@ -695,6 +696,7 @@ pub(crate) fn entity_view_for(
         options:               vec![],
         current_position:      None,
         fan_percentage:        None,
+        device_name,
     }
 }
 
@@ -748,7 +750,7 @@ mod tests {
 
         for (entity_id, domain, device_class, expected_icon) in cases {
             let rec = record(entity_id, domain, *device_class, None);
-            let view = entity_view_for(&rec, &states);
+            let view = entity_view_for(&rec, &states, None);
             assert_eq!(
                 view.icon_name, *expected_icon,
                 "entity={entity_id} domain={domain} class={device_class:?}"
@@ -803,7 +805,7 @@ mod tests {
     fn entity_view_for_webhook_id_is_none_for_zigbee() {
         let states = StateStore::new();
         let rec = record("sensor.test_temperature", "sensor", Some("temperature"), Some("°C"));
-        let view = entity_view_for(&rec, &states);
+        let view = entity_view_for(&rec, &states, None);
         assert!(view.webhook_id.is_none(), "Zigbee entities must not have a webhook_id");
     }
 }

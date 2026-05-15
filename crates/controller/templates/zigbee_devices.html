@@ -95,7 +95,7 @@ adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
           <tr>
             <td>
               <a href="/zigbee/{{ device.ieee_addr }}" style="font-weight:500">
-                {{ device.name_by_user if device.name_by_user else device.friendly_name }}
+                {{ device.display_name }}
               </a>
               <div style="font-size:.75rem;color:var(--text-secondary)">
                 {% if device.manufacturer %}{{ device.manufacturer }}{% endif %}

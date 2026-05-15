@@ -12,7 +12,7 @@
   <table class="data-table" style="width:100%">
     <thead>
       <tr>
-        <th>Entity ID</th>
+        <th>Name</th>
         <th>Domain</th>
         <th>Device class</th>
         <th>State</th>
@@ -23,14 +23,16 @@
     <tbody>
       {% for ent in entities %}
       <tr>
-        <td style="font-family:monospace;font-size:.82rem">
+        <td>
           <a
             href="#"
             hx-get="/fragments/more-info/{{ ent.entity_id }}"
             hx-target="#more-info-body"
             hx-swap="innerHTML"
             hx-on::after-request="document.getElementById('more-info-dialog').showModal()"
-          >{{ ent.entity_id }}</a>
+            style="font-weight:500"
+          >{{ ent.display_name }}</a>
+          <div style="font-size:.75rem;color:var(--text-secondary);font-family:monospace">{{ ent.entity_id }}</div>
         </td>
         <td>{{ ent.entity_type }}</td>
         <td>{{ ent.device_class if ent.device_class else "—" }}</td>
