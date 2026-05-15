@@ -1613,36 +1613,6 @@ async fn build_area_cards(state: &AppState, all_views: &[EntityView]) -> Vec<Are
     cards
 }
 
-#[derive(Serialize)]
-struct DeviceEntityGroup {
-    webhook_id: String,
-    device_name: String,
-    entities: Vec<EntityView>,
-}
-
-fn build_entity_groups(
-    devices: &[crate::mobile_device_store::MobileDeviceRecord],
-    all_entities: &[MobileEntityRecord],
-    state: &AppState,
-) -> Vec<DeviceEntityGroup> {
-    devices
-        .iter()
-        .map(|d| {
-            let entities: Vec<EntityView> = all_entities
-                .iter()
-                .filter(|e| e.webhook_id == d.webhook_id)
-                .map(|e| entity_to_view(e, state))
-                .collect();
-            DeviceEntityGroup {
-                webhook_id: d.webhook_id.clone(),
-                device_name: d.display_name().to_string(),
-                entities,
-            }
-        })
-        .filter(|g| !g.entities.is_empty())
-        .collect()
-}
-
 fn entity_icon_name(entity: &MobileEntityRecord) -> &'static str {
     if let Some(mdi) = entity.icon.as_deref() {
         let key = mdi.strip_prefix("mdi:").unwrap_or(mdi);
