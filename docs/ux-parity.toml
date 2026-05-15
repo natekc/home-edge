@@ -1,0 +1,304 @@
+# UX Parity Manifest
+#
+# This file is the single source of truth for what "UX parity" means between
+# home-edge and Home Assistant core frontend.  It is consumed by:
+#
+#   cargo test ux_parity                 (crates/controller/tests/ux_parity.rs)
+#   scripts/check-ux-parity.sh           (token-drift check against HA upstream)
+#
+# Rules
+# -----
+# * Every entry here is enforced deterministically by automated tests.
+# * To add a deliberate divergence, add it to [[divergences]] with a reason.
+# * When bumping ha_version, update last_verified and re-run tests.
+
+[meta]
+# HA frontend release this was last audited against.
+ha_version    = "2026.4"
+last_verified = "2026-05-15"
+
+# ---------------------------------------------------------------------------
+# CSS design tokens
+#
+# Every name in `required` MUST appear as a CSS custom property declaration
+# (i.e. as the exact string "--token-name:") in _css.html.
+#
+# Source of truth: https://github.com/home-assistant/frontend/blob/dev/src/resources/ha-style.ts
+# and the default theme in data/default_config/themes/default.yaml
+# ---------------------------------------------------------------------------
+[css_tokens]
+required = [
+  # Core brand
+  "--primary-color",
+  "--primary-dark",
+  "--accent-color",
+
+  # Sidebar geometry / colours
+  "--sidebar-background-color",
+  "--sidebar-width",
+  "--header-height",
+  "--sidebar-icon-color",
+  "--sidebar-text-color",
+  "--sidebar-selected-icon-color",
+  "--sidebar-selected-bg",
+  "--sidebar-hover-bg",
+  "--divider-color",
+
+  # Page / card
+  "--page-bg",
+  "--card-bg",
+  "--card-radius",
+  "--card-shadow",
+
+  # Typography
+  "--primary-text",
+  "--secondary-text",
+
+  # Semantic colours
+  "--success",
+  "--warning",
+  "--error",
+
+  # Form inputs
+  "--input-border",
+  "--input-focus",
+]
+
+# ---------------------------------------------------------------------------
+# Sidebar navigation
+#
+# Items are listed in render order (top → bottom, before-spacer then
+# after-spacer). The test verifies that every non-extension item appears in
+# the rendered HTML of _base_app.html and that their relative order matches.
+#
+# Fields
+#   id        – stable identifier used in test error messages
+#   label     – the visible <span class="item-text"> text
+#   href      – the <a href=""> value
+#   icon      – the SVG symbol ID suffix (e.g. "view-dashboard" → #icon-view-dashboard)
+#   ha_panel  – corresponding HA panel key (null = no direct HA equivalent)
+#   section   – "top" | "bottom"
+#   extension – if true, allowed to be absent when zigbee_enabled=false
+# ---------------------------------------------------------------------------
+[[nav]]
+id        = "overview"
+label     = "Overview"
+href      = "/"
+icon      = "view-dashboard"
+ha_panel  = "lovelace"
+section   = "top"
+
+[[nav]]
+id        = "logbook"
+label     = "Logbook"
+href      = "/logbook"
+icon      = "format-list"
+ha_panel  = "logbook"
+section   = "top"
+
+[[nav]]
+id        = "history"
+label     = "History"
+href      = "/history"
+icon      = "history"
+ha_panel  = "history"
+section   = "top"
+
+[[nav]]
+# home-edge extension: Zigbee baked into sidebar.
+# In HA, Zigbee is an integration (ZHA) accessed through Settings → Integrations.
+# home-edge builds Zigbee support into the core binary so it gets a first-class nav entry.
+id        = "zigbee"
+label     = "Zigbee"
+href      = "/zigbee"
+icon      = "zigbee"
+ha_panel  = ""
+section   = "top"
+extension = true
+
+[[nav]]
+id        = "developer-tools"
+label     = "Developer tools"
+href      = "/developer-tools"
+icon      = "hammer-screwdriver"
+ha_panel  = "developer-tools"
+section   = "bottom"
+
+[[nav]]
+id        = "settings"
+label     = "Settings"
+href      = "/settings"
+icon      = "cog"
+ha_panel  = "config"
+section   = "bottom"
+
+[[nav]]
+# In HA, notifications appear in ha-notification-drawer (a side-sheet overlay,
+# not a routed panel). home-edge exposes them as a regular page at /notifications.
+id        = "notifications"
+label     = "Notifications"
+href      = "/notifications"
+icon      = "bell"
+ha_panel  = ""
+section   = "bottom"
+
+[[nav]]
+id        = "profile"
+label     = "Profile"
+href      = "/profile"
+icon      = "account"
+ha_panel  = "profile"
+section   = "bottom"
+
+# ---------------------------------------------------------------------------
+# Pages
+#
+# Fields
+#   template         – minijinja template filename (relative to templates/)
+#   ha_equivalent    – HA panel / view path this approximates (null = extension)
+#   required_classes – CSS class names that MUST appear in the rendered HTML
+#   nav_page         – if true, the page must include the full sidebar nav
+#   zigbee_only      – if true, test is skipped unless zigbee feature is active
+# ---------------------------------------------------------------------------
+[[pages]]
+template         = "dashboard.html"
+ha_equivalent    = "lovelace"
+required_classes = ["ha-card", "page-header", "page-body", "transport-badge"]
+nav_page         = true
+
+[[pages]]
+template         = "history.html"
+ha_equivalent    = "history"
+required_classes = ["ha-card", "page-header", "page-body"]
+nav_page         = true
+
+[[pages]]
+template         = "logbook.html"
+ha_equivalent    = "logbook"
+required_classes = ["ha-card", "page-header", "page-body"]
+nav_page         = true
+
+[[pages]]
+template         = "developer_tools.html"
+ha_equivalent    = "developer-tools"
+required_classes = ["ha-card", "page-header", "page-body"]
+nav_page         = true
+
+[[pages]]
+template         = "settings.html"
+ha_equivalent    = "config"
+required_classes = ["ha-card", "settings-row", "settings-row-icon", "settings-row-title"]
+nav_page         = true
+
+[[pages]]
+template         = "areas.html"
+ha_equivalent    = "config/areas"
+required_classes = ["ha-card", "ha-card-header", "page-header"]
+nav_page         = true
+
+[[pages]]
+template         = "devices.html"
+ha_equivalent    = "config/integrations"
+required_classes = ["ha-card", "page-header", "page-body"]
+nav_page         = true
+
+[[pages]]
+template         = "notifications.html"
+ha_equivalent    = ""
+required_classes = ["ha-card", "page-header", "page-body"]
+nav_page         = true
+
+[[pages]]
+template         = "profile.html"
+ha_equivalent    = "profile"
+required_classes = ["ha-card", "page-header", "page-body"]
+nav_page         = true
+
+[[pages]]
+template         = "system.html"
+ha_equivalent    = "config/system"
+required_classes = ["ha-card", "page-header", "page-body"]
+nav_page         = true
+
+[[pages]]
+template         = "zigbee_devices.html"
+ha_equivalent    = ""
+required_classes = ["ha-card", "page-header", "page-body"]
+nav_page         = true
+zigbee_only      = true
+
+# ---------------------------------------------------------------------------
+# Intentional divergences from HA core frontend
+#
+# Each entry documents a conscious design decision that deviates from HA.
+# Tests will NOT fail for these; they exist purely for audit / review purposes.
+# ---------------------------------------------------------------------------
+[[divergences]]
+id     = "zigbee-sidebar-entry"
+scope  = "navigation"
+reason = """
+HA exposes Zigbee (ZHA) as an integration reachable via Settings → Integrations.
+home-edge bakes Zigbee support into the core binary and promotes it to a first-class
+sidebar entry. This makes pairing and device management one tap away instead of three.
+"""
+
+[[divergences]]
+id     = "notifications-as-page"
+scope  = "navigation"
+reason = """
+HA shows notifications in ha-notification-drawer, a slide-in overlay triggered from
+the bottom-bar notification badge. home-edge serves notifications as a regular page
+(/notifications) so that iOS WKWebView navigation and the externalBus 'connection-status'
+handshake work without JavaScript overlay logic.
+"""
+
+[[divergences]]
+id     = "transport-badge-in-header"
+scope  = "dashboard"
+reason = """
+The Overview page shows a 'WiFi' or 'BLE' badge next to the 'Overview' heading.
+HA has no equivalent; this is diagnostic information for the home-edge operator
+showing which transport build is active.
+"""
+
+[[divergences]]
+id     = "ble-build-has-no-html-ui"
+scope  = "transport_ble"
+reason = """
+When compiled with transport_ble, home-edge has no HTTP server and therefore no
+web UI at all. The native iOS companion app (SwiftUI over CoreBluetooth) is the
+only UI surface for BLE builds. All HTML parity checks are skipped for this build.
+"""
+
+[[divergences]]
+id     = "no-lovelace-editor"
+scope  = "dashboard"
+reason = """
+HA ships a full drag-and-drop Lovelace card editor. home-edge serves a read-only
+entity tile view. Dashboard layout editing is out of scope for the embedded build.
+"""
+
+[[divergences]]
+id     = "no-camera-streams"
+scope  = "media"
+reason = """
+HA supports HLS/WebRTC camera streams. home-edge omits camera support entirely;
+the bandwidth and storage requirements are incompatible with edge hardware targets.
+"""
+
+[[divergences]]
+id     = "no-addon-store"
+scope  = "settings"
+reason = """
+HA Supervisor ships an add-on store. home-edge targets bare-metal / container
+deployments with no supervisor layer, so there is no add-on store in Settings.
+"""
+
+[[divergences]]
+id     = "areas-in-sidebar"
+scope  = "navigation"
+reason = """
+Areas are shown as dynamic nav items in the sidebar (each area gets its own link).
+In HA 2024.x the sidebar also supports area grouping but via Lovelace section views,
+not sidebar links. home-edge uses sidebar links because it has no Lovelace editor.
+"""
