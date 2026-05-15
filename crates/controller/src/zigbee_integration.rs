@@ -544,6 +544,14 @@ pub fn push_state(
 // Integration runner
 // ---------------------------------------------------------------------------
 
+/// Current Unix timestamp in seconds. Used to timestamp stats buckets.
+fn now_unix_ts() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 /// Record numeric sensor readings to the history store for all sensor-domain
 /// entities whose attribute key is present and numeric in `raw_state`.
 async fn record_sensor_history(
@@ -559,7 +567,7 @@ async fn record_sensor_history(
                 let Some(v) = raw.as_f64().or_else(|| raw.as_str().and_then(|s| s.parse().ok())) else {
                     continue
                 };
-                history.record(&ent.entity_id, v).await;
+                history.record_and_aggregate(&ent.entity_id, v, now_unix_ts()).await;
             }
             // Source: homeassistant/components/history/__init__.py binary sensor tracking
             "binary_sensor" => {
@@ -574,7 +582,7 @@ async fn record_sensor_history(
                     Value::Bool(b) => if *b { 1.0 } else { 0.0 },
                     _ => continue,
                 };
-                history.record(&ent.entity_id, v).await;
+                history.record_and_aggregate(&ent.entity_id, v, now_unix_ts()).await;
             }
             // Source: homeassistant/components/history/__init__.py binary sensor tracking
             "light" | "switch" => {
@@ -587,7 +595,7 @@ async fn record_sensor_history(
                     },
                     _ => continue,
                 };
-                history.record(&ent.entity_id, v).await;
+                history.record_and_aggregate(&ent.entity_id, v, now_unix_ts()).await;
             }
             _ => {}
         }
