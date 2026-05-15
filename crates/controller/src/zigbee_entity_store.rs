@@ -77,6 +77,10 @@ impl ZigbeeEntityRecord {
             Some("vibration")                              => Some("Vibration"),
             Some("opening")                                => Some("Opening"),
             Some("safety")                                 => Some("Safety"),
+            // Source: homeassistant/components/sensor/__init__.py SensorDeviceClass
+            Some("energy")                                 => Some("Energy"),
+            Some("power")                                  => Some("Power"),
+            Some("current")                                => Some("Current"),
             _                                              => None,
         };
         if let Some(label) = auto {
