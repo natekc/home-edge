@@ -8,16 +8,22 @@
 {% if entity.device_class %}
 <div class="mi-meta">Class: {{ entity.device_class }}</div>
 {% endif %}
-{% if history | length > 0 %}
-<div class="mi-history">
-  <div class="mi-section-title">Recent state changes</div>
-  <div class="mi-history-list">
-    {% for entry in history %}
-    <div class="mi-history-row">
-      <span class="mi-history-ts">{{ entry.ts }}</span>
-      <span class="mi-history-val mi-state--{{ entry.value }}">{{ entry.value }}</span>
-    </div>
-    {% endfor %}
-  </div>
-</div>
+{% if last_changed %}
+<div class="mi-meta">Last changed: <span class="mi-ts" data-ts="{{ last_changed }}">{{ last_changed }}</span></div>
 {% endif %}
+{% if binary_timeline %}
+<div class="mi-sparkline" style="height:28px;padding:6px 0">{{ binary_timeline | safe }}</div>
+<div class="mi-meta" style="display:flex;justify-content:space-between;font-size:.75rem;margin-top:2px">
+  <span>24h ago</span><span>now</span>
+</div>
+{% else %}
+<div class="mi-meta">No history yet</div>
+{% endif %}
+<script>
+(function(){
+  var el = document.querySelector('.mi-ts[data-ts]');
+  if(el){
+    try { el.textContent = new Date(el.getAttribute('data-ts')).toLocaleString([],{dateStyle:'short',timeStyle:'short'}); } catch(e){}
+  }
+})();
+</script>

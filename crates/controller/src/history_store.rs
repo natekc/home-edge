@@ -289,6 +289,185 @@ impl HistoryStore {
     }
 }
 
+/// Format a unix timestamp as HH:MM (UTC wall-clock, no timezone deps).
+fn format_hhmm(unix_ts: u64) -> String {
+    let secs_in_day = unix_ts % 86400;
+    let h = secs_in_day / 3600;
+    let m = (secs_in_day % 3600) / 60;
+    format!("{h:02}:{m:02}")
+}
+
+/// Render a full 400×120 history line chart SVG with axis labels.
+///
+/// Padding: 20px left (Y-axis space), 8px right/top, 20px bottom (X-axis space).
+/// Returns an SVG string safe to embed via `| safe` in Minijinja templates.
+pub fn render_history_chart(entries: &[HistoryEntry], width: u32, height: u32) -> String {
+    if entries.len() < 2 {
+        return format!(
+            "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" \
+             xmlns=\"http://www.w3.org/2000/svg\">\
+             <text x=\"50%\" y=\"50%\" text-anchor=\"middle\" dominant-baseline=\"middle\" \
+             fill=\"#aaa\" font-size=\"11\">No data yet</text></svg>"
+        );
+    }
+
+    let values: Vec<f64> = entries.iter().map(|e| e.value).collect();
+    let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let range = if (max - min).abs() < 1e-9 { 1.0 } else { max - min };
+
+    let w = width as f64;
+    let h = height as f64;
+    let pad_l = 20.0_f64;
+    let pad_r = 8.0_f64;
+    let pad_t = 8.0_f64;
+    let pad_b = 20.0_f64;
+    let usable_w = w - pad_l - pad_r;
+    let usable_h = h - pad_t - pad_b;
+
+    let n = values.len();
+    let points: Vec<(f64, f64)> = values
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = pad_l + (i as f64 / (n - 1) as f64) * usable_w;
+            let y = pad_t + (1.0 - (v - min) / range) * usable_h;
+            (x, y)
+        })
+        .collect();
+
+    let path_d = {
+        let mut d = String::new();
+        for (i, (x, y)) in points.iter().enumerate() {
+            if i == 0 {
+                d.push_str(&format!("M {x:.1} {y:.1}"));
+            } else {
+                d.push_str(&format!(" L {x:.1} {y:.1}"));
+            }
+        }
+        d
+    };
+
+    let last = points.last().unwrap();
+    let first = points.first().unwrap();
+    let area_d = format!(
+        "{path_d} L {:.1} {:.1} L {:.1} {:.1} Z",
+        last.0, h - pad_b,
+        first.0, h - pad_b,
+    );
+
+    // Y-axis tick labels: min, mid, max
+    let mid = (min + max) / 2.0;
+    let y_max_px = pad_t;
+    let y_mid_px = pad_t + usable_h / 2.0;
+    let y_min_px = pad_t + usable_h;
+
+    // X-axis labels: oldest and newest timestamps as HH:MM
+    let ts_first = entries.first().unwrap().ts;
+    let ts_last  = entries.last().unwrap().ts;
+    let x_first_label = format_hhmm(ts_first);
+    let x_last_label  = format_hhmm(ts_last);
+
+    format!(
+        "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" \
+         xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block\">\n  \
+         <defs>\n    \
+         <linearGradient id=\"hcg_{width}_{height}\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n      \
+         <stop offset=\"0%\" stop-color=\"#18BCF2\" stop-opacity=\"0.35\"/>\n      \
+         <stop offset=\"100%\" stop-color=\"#18BCF2\" stop-opacity=\"0.02\"/>\n    \
+         </linearGradient>\n  \
+         </defs>\n  \
+         <path d=\"{area_d}\" fill=\"url(#hcg_{width}_{height})\"/>\n  \
+         <path d=\"{path_d}\" fill=\"none\" stroke=\"#18BCF2\" stroke-width=\"2\" \
+         stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n  \
+         <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" fill=\"#999\" font-size=\"9\">{:.1}</text>\n  \
+         <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" fill=\"#999\" font-size=\"9\">{:.1}</text>\n  \
+         <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" fill=\"#999\" font-size=\"9\">{:.1}</text>\n  \
+         <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"start\" fill=\"#999\" font-size=\"9\">{x_first_label}</text>\n  \
+         <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" fill=\"#999\" font-size=\"9\">{x_last_label}</text>\n\
+         </svg>",
+        // Y-axis labels (x, y, value)
+        pad_l - 2.0, y_max_px + 9.0, max,
+        pad_l - 2.0, y_mid_px + 4.0, mid,
+        pad_l - 2.0, y_min_px,       min,
+        // X-axis labels (x, y)
+        pad_l,       h,
+        w - pad_r,   h,
+    )
+}
+
+/// Render a horizontal binary timeline SVG (400×28 by default).
+///
+/// Each segment is colored accent (`#18BCF2`) when on (value ≥ 0.5) or
+/// neutral gray (`#9E9E9E`) when off.  The timeline spans from `since_ts`
+/// to `since_ts + 86400` (one 24 h window).
+///
+/// Returns an SVG string safe to embed via `| safe` in Minijinja templates.
+pub fn render_binary_timeline(
+    entries: &[HistoryEntry],
+    width: u32,
+    height: u32,
+    since_ts: u64,
+) -> String {
+    let end_ts = since_ts + 86400;
+    let span = (end_ts - since_ts) as f64;
+    let w = width as f64;
+    let h = height as f64;
+
+    if entries.is_empty() {
+        return format!(
+            "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" \
+             xmlns=\"http://www.w3.org/2000/svg\">\
+             <text x=\"50%\" y=\"50%\" text-anchor=\"middle\" dominant-baseline=\"middle\" \
+             fill=\"#aaa\" font-size=\"11\">No history yet</text></svg>"
+        );
+    }
+
+    let mut rects = String::new();
+    for i in 0..entries.len() {
+        let seg_start = entries[i].ts.max(since_ts);
+        let seg_end = if i + 1 < entries.len() {
+            entries[i + 1].ts.min(end_ts)
+        } else {
+            end_ts
+        };
+        if seg_end <= seg_start {
+            continue;
+        }
+        let x = ((seg_start - since_ts) as f64 / span) * w;
+        let seg_w = ((seg_end - seg_start) as f64 / span) * w;
+        let color = if entries[i].value >= 0.5 { "#18BCF2" } else { "#9E9E9E" };
+        rects.push_str(&format!(
+            "<rect x=\"{x:.1}\" y=\"0\" width=\"{seg_w:.1}\" height=\"{h}\" fill=\"{color}\"/>\n  "
+        ));
+    }
+
+    format!(
+        "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" \
+         xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block;border-radius:4px;overflow:hidden\">\n  \
+         {rects}</svg>"
+    )
+}
+
+/// Compute min / mean / max over the value field of `entries`.
+///
+/// Returns `None` if `entries` is empty.
+pub fn stats_for_period(entries: &[HistoryEntry]) -> Option<(f64, f64, f64)> {
+    if entries.is_empty() {
+        return None;
+    }
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut sum = 0.0_f64;
+    for e in entries {
+        if e.value < min { min = e.value; }
+        if e.value > max { max = e.value; }
+        sum += e.value;
+    }
+    let mean = sum / entries.len() as f64;
+    Some((min, mean, max))
+}
+
 /// Render a simple inline `<svg>` sparkline from history entries.
 ///
 /// Returns an SVG string suitable for embedding directly in HTML (`| safe` in
