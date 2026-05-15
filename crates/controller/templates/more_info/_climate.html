@@ -40,4 +40,52 @@
       <button class="mi-action-btn mi-action-btn--small" type="submit">Set</button>
     </form>
   </div>
+
+  {% if entity.preset_modes | length > 1 %}
+  <!-- Source: homeassistant/components/climate/__init__.py ATTR_PRESET_MODE -->
+  <div class="mi-row">
+    <span class="mi-label">Preset</span>
+    <select class="mi-select"
+            hx-post="/ui/services/climate/set_preset_mode"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-trigger="change"
+            hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')"
+            name="preset_mode">
+      {% for mode in entity.preset_modes %}
+      <option value="{{ mode }}"{% if mode == entity.preset_mode %} selected{% endif %}>
+        {{ mode | replace("_", " ") | title }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+
+  {% if entity.fan_modes | length > 1 %}
+  <!-- Source: homeassistant/components/climate/__init__.py ATTR_FAN_MODE -->
+  <div class="mi-row">
+    <span class="mi-label">Fan</span>
+    <select class="mi-select"
+            hx-post="/ui/services/climate/set_fan_mode"
+            hx-vals='{"entity_id": "{{ entity.entity_id }}"}'
+            hx-swap="none"
+            hx-trigger="change"
+            hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')"
+            name="fan_mode">
+      {% for mode in entity.fan_modes %}
+      <option value="{{ mode }}"{% if mode == entity.fan_mode %} selected{% endif %}>
+        {{ mode | title }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+
+  {% if entity.current_humidity %}
+  <!-- Source: homeassistant/components/climate/__init__.py ATTR_CURRENT_HUMIDITY -->
+  <div class="mi-row">
+    <span class="mi-label">Humidity</span>
+    <span class="mi-value">{{ entity.current_humidity }}%</span>
+  </div>
+  {% endif %}
 </div>

@@ -50,6 +50,24 @@ pub(crate) struct EntityView {
     pub(crate) current_temperature: Option<f64>,
     pub(crate) target_temperature: Option<f64>,
     pub(crate) hvac_modes: Vec<String>,
+    /// Active preset mode (e.g. "eco", "away", "comfort").
+    /// Source: homeassistant/components/climate/__init__.py ATTR_PRESET_MODE
+    pub(crate) preset_mode: Option<String>,
+    /// Available preset modes for the climate entity.
+    /// Source: homeassistant/components/climate/__init__.py ATTR_PRESET_MODES
+    pub(crate) preset_modes: Vec<String>,
+    /// Active fan mode (e.g. "auto", "low", "high").
+    /// Source: homeassistant/components/climate/__init__.py ATTR_FAN_MODE
+    pub(crate) fan_mode: Option<String>,
+    /// Available fan modes for the climate entity.
+    /// Source: homeassistant/components/climate/__init__.py ATTR_FAN_MODES
+    pub(crate) fan_modes: Vec<String>,
+    /// Target humidity (0–100 %).
+    /// Source: homeassistant/components/climate/__init__.py ATTR_HUMIDITY
+    pub(crate) target_humidity: Option<f32>,
+    /// Current measured humidity (0–100 %).
+    /// Source: homeassistant/components/climate/__init__.py ATTR_CURRENT_HUMIDITY
+    pub(crate) current_humidity: Option<f32>,
     /// Light brightness 0–255, `None` if unavailable.
     /// Source: homeassistant/components/light/__init__.py ATTR_BRIGHTNESS
     pub(crate) brightness: Option<u8>,
@@ -105,4 +123,10 @@ pub(crate) struct AreaCard {
     /// humidity sensor entity exists in the area.
     /// Source: homeassistant/helpers/area_registry.py AreaEntry.humidity_entity_id
     pub(crate) area_humidity: Option<String>,
+    /// Number of lights currently on in the area.
+    /// Source: homeassistant/components/frontend/ area card domain count badges
+    pub(crate) lights_on: usize,
+    /// Number of switches currently on in the area.
+    /// Source: homeassistant/components/frontend/ area card domain count badges
+    pub(crate) switches_on: usize,
 }
