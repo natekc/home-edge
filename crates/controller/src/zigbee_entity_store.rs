@@ -45,6 +45,10 @@ pub struct ZigbeeEntityRecord {
     /// Area/room assigned by the user.
     #[serde(default)]
     pub user_area_id: Option<String>,
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
+    /// When true, the entity is hidden from the dashboard and state is not published.
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 impl ZigbeeEntityRecord {
@@ -94,6 +98,8 @@ impl ZigbeeEntityRecord {
 pub struct ZigbeeEntityMetaUpdate {
     pub name_by_user: Option<Option<String>>,
     pub user_area_id: Option<Option<String>>,
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
+    pub disabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -163,6 +169,8 @@ impl ZigbeeEntityStore {
             if let Some(existing) = data.entities.get(&rec.entity_id) {
                 rec.name_by_user = existing.name_by_user.clone();
                 rec.user_area_id = existing.user_area_id.clone();
+                // Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
+                rec.disabled = existing.disabled;
             }
             data.entities.insert(rec.entity_id.clone(), rec);
         }
@@ -240,6 +248,10 @@ impl ZigbeeEntityStore {
         }
         if let Some(v) = update.user_area_id {
             ent.user_area_id = v;
+        }
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
+        if let Some(v) = update.disabled {
+            ent.disabled = v;
         }
         self.save(data).await?;
         Ok(true)

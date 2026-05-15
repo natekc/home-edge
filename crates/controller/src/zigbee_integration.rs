@@ -190,6 +190,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: None,
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -204,6 +205,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("°C".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -217,6 +219,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("%".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -231,6 +234,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("hPa".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -245,6 +249,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("%".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
         // Battery voltage — secondary sensor.
         records.push(ZigbeeEntityRecord {
@@ -256,6 +261,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("V".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
         // Low-battery warning — binary sensor.
         records.push(ZigbeeEntityRecord {
@@ -267,6 +273,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: None,
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -281,6 +288,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("lx".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -295,6 +303,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: None,
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -318,6 +327,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: None,
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
         records.push(ZigbeeEntityRecord {
             entity_id: format!("binary_sensor.{base}_tamper"),
@@ -328,6 +338,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: None,
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -444,6 +455,9 @@ pub fn push_state(
     state_store: &StateStore,
 ) {
     for ent in entities {
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
+        // Disabled entities are hidden and must not publish state.
+        if ent.disabled { continue; }
         let state_value: Option<String> = match ent.domain.as_str() {
             "light" | "switch" => raw_state
                 .get("state")
@@ -1081,7 +1095,7 @@ pub(crate) fn entity_view_for(
         device_class:          entity.device_class.clone().unwrap_or_default(),
         user_area_id:          entity.user_area_id.clone().unwrap_or_default(),
         unit_of_measurement:   entity.unit_of_measurement.clone(),
-        disabled:              false,
+        disabled:              entity.disabled,
         service_action:        service_action.to_string(),
         current_temperature:   None,
         target_temperature:    None,
@@ -1131,6 +1145,7 @@ mod tests {
             unit_of_measurement: unit.map(|s| s.to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         }
     }
 
@@ -1192,6 +1207,7 @@ mod tests {
             unit_of_measurement: None,
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         }];
 
         let mut raw = serde_json::Map::new();

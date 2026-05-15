@@ -2572,6 +2572,9 @@ struct ZigbeeEntityUpdateForm {
     name_by_user: Option<String>,
     #[serde(default)]
     user_area_id: Option<String>,
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
+    #[serde(default)]
+    disabled: Option<String>,
 }
 
 #[cfg(feature = "zigbee")]
@@ -2584,6 +2587,8 @@ async fn api_zigbee_entity_update(
     let update = ZigbeeEntityMetaUpdate {
         name_by_user: form.name_by_user.map(|s| if s.trim().is_empty() { None } else { Some(s.trim().to_string()) }),
         user_area_id: form.user_area_id.map(|s| if s.is_empty() { None } else { Some(s) }),
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
+        disabled: form.disabled.as_deref().map(|s| s == "true"),
     };
     match state.zigbee_entities.update_meta(&entity_id, update).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
