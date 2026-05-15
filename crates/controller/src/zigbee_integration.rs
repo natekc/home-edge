@@ -173,6 +173,10 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
     let has_illuminance  = clusters.contains(&0x0400);
     let has_pressure     = clusters.contains(&0x0403);
     let has_ias          = clusters.contains(&0x0500);
+    // Source: homeassistant/components/zha/sensor.py SmartEnergySummation
+    let has_metering     = clusters.contains(&0x0702);
+    // Source: homeassistant/components/zha/sensor.py ElectricalMeasurement
+    let has_elec_meas    = clusters.contains(&0x0B04);
 
     // ── Light or Switch ──────────────────────────────────────────────────
     if has_on_off {
@@ -327,6 +331,69 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
         });
     }
 
+    // ── Energy metering (ZCL 0x0702 Smart Energy Metering) ───────────────
+    if has_metering {
+        // Cumulative energy consumption in kWh.
+        // Source: homeassistant/components/zha/sensor.py SmartEnergySummation
+        // Source: homeassistant/const.py UnitOfEnergy.KILO_WATT_HOUR = "kWh"
+        records.push(ZigbeeEntityRecord {
+            entity_id: format!("sensor.{base}_energy"),
+            ieee_addr: ieee.clone(),
+            domain: "sensor".to_string(),
+            attribute_key: Some("energy".to_string()),
+            device_class: Some("energy".to_string()),
+            unit_of_measurement: Some("kWh".to_string()),
+            name_by_user: None,
+            user_area_id: None,
+        });
+    }
+
+    // ── Electrical measurement (ZCL 0x0B04 Electrical Measurement) ────────
+    if has_elec_meas {
+        // Instantaneous active power in watts.
+        // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementActivePower
+        // Source: homeassistant/const.py UnitOfPower.WATT = "W"
+        // Source: homeassistant/components/sensor/__init__.py SensorDeviceClass.POWER
+        records.push(ZigbeeEntityRecord {
+            entity_id: format!("sensor.{base}_power"),
+            ieee_addr: ieee.clone(),
+            domain: "sensor".to_string(),
+            attribute_key: Some("power".to_string()),
+            device_class: Some("power".to_string()),
+            unit_of_measurement: Some("W".to_string()),
+            name_by_user: None,
+            user_area_id: None,
+        });
+        // RMS voltage in volts.
+        // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementRMSVoltage
+        // Source: homeassistant/const.py UnitOfElectricPotential.VOLT = "V"
+        // Source: homeassistant/components/sensor/__init__.py SensorDeviceClass.VOLTAGE
+        records.push(ZigbeeEntityRecord {
+            entity_id: format!("sensor.{base}_voltage"),
+            ieee_addr: ieee.clone(),
+            domain: "sensor".to_string(),
+            attribute_key: Some("voltage".to_string()),
+            device_class: Some("voltage".to_string()),
+            unit_of_measurement: Some("V".to_string()),
+            name_by_user: None,
+            user_area_id: None,
+        });
+        // RMS current in amperes.
+        // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementRMSCurrent
+        // Source: homeassistant/const.py UnitOfElectricCurrent.AMPERE = "A"
+        // Source: homeassistant/components/sensor/__init__.py SensorDeviceClass.CURRENT
+        records.push(ZigbeeEntityRecord {
+            entity_id: format!("sensor.{base}_current"),
+            ieee_addr: ieee.clone(),
+            domain: "sensor".to_string(),
+            attribute_key: Some("current".to_string()),
+            device_class: Some("current".to_string()),
+            unit_of_measurement: Some("A".to_string()),
+            name_by_user: None,
+            user_area_id: None,
+        });
+    }
+
     records
 }
 
@@ -406,9 +473,16 @@ pub fn push_state(
 
         match ent.domain.as_str() {
             "sensor" => {
-                // HA uses state_class = "measurement" for numeric sensors to enable
-                // long-term statistics and the history graph sparkline.
-                attrs.insert("state_class".into(), Value::String("measurement".into()));
+                // Source: homeassistant/components/sensor/__init__.py SensorStateClass
+                // energy (cumulative kWh from metering cluster) uses total_increasing;
+                // all other numeric sensors use measurement.
+                // Source: homeassistant/components/zha/sensor.py SmartEnergySummation
+                let state_class = if ent.device_class.as_deref() == Some("energy") {
+                    "total_increasing"
+                } else {
+                    "measurement"
+                };
+                attrs.insert("state_class".into(), Value::String(state_class.into()));
             }
             "light" => {
                 // Brightness (0-254 raw from ZCL level cluster).
@@ -567,7 +641,14 @@ pub async fn restore_states_from_history(
                 if let Some(ref dc) = ent.device_class {
                     attrs.insert("device_class".into(), serde_json::Value::String(dc.clone()));
                 }
-                attrs.insert("state_class".into(), serde_json::Value::String("measurement".into()));
+                // Source: homeassistant/components/sensor/__init__.py SensorStateClass
+                // energy device class uses total_increasing (cumulative metering counter).
+                let sc = if ent.device_class.as_deref() == Some("energy") {
+                    "total_increasing"
+                } else {
+                    "measurement"
+                };
+                attrs.insert("state_class".into(), serde_json::Value::String(sc.into()));
                 attrs.insert("restored".into(), serde_json::Value::Bool(true));
                 // Source: homeassistant/helpers/entity_registry.py RegistryEntry.name
                 attrs.insert("friendly_name".into(), serde_json::Value::String(ent.display_name()));
@@ -963,6 +1044,10 @@ pub(crate) fn entity_view_for(
             Some("battery")               => "battery",
             Some("voltage")               => "lightning-bolt",
             Some("atmospheric_pressure")  => "gauge",
+            // Source: homeassistant/components/sensor/__init__.py SensorDeviceClass icons
+            Some("energy")                => "lightning-bolt",  // cumulative kWh counter
+            Some("power")                 => "flash",           // instantaneous watts
+            Some("current")               => "current-ac",      // RMS amperes
             _                             => "gauge",
         },
         "binary_sensor" => binary_sensor_icon(entity.device_class.as_deref().unwrap_or("")),
@@ -1050,6 +1135,10 @@ mod tests {
             ("sensor.volt",                   "sensor",        Some("voltage"),         "lightning-bolt"),
             ("sensor.press",                  "sensor",        Some("atmospheric_pressure"), "gauge"),
             ("sensor.other",                  "sensor",        None,                    "gauge"),
+            // Source: homeassistant/components/sensor/__init__.py SensorDeviceClass icons
+            ("sensor.energy",                 "sensor",        Some("energy"),          "lightning-bolt"),
+            ("sensor.power",                  "sensor",        Some("power"),           "flash"),
+            ("sensor.current",                "sensor",        Some("current"),         "current-ac"),
             // IAS zone type device classes — Source: homeassistant/components/binary_sensor/__init__.py
             ("binary_sensor.occupancy",       "binary_sensor", Some("occupancy"),       "motion-sensor"),
             ("binary_sensor.motion",          "binary_sensor", Some("motion"),          "motion-sensor"),
