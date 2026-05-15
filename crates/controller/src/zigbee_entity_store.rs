@@ -146,6 +146,20 @@ impl ZigbeeEntityStore {
             .collect())
     }
 
+    /// Return all sensor-domain entity records (for use in history page).
+    pub async fn all_sensors(&self) -> Result<Vec<ZigbeeEntityRecord>> {
+        self.ensure_loaded().await?;
+        let cache = self.cache.read().await;
+        Ok(cache
+            .as_ref()
+            .expect("cache populated above")
+            .entities
+            .values()
+            .filter(|e| e.domain == "sensor")
+            .cloned()
+            .collect())
+    }
+
     /// Return all entities belonging to a specific Zigbee device.
     pub async fn list_for_device(&self, ieee_addr: &str) -> Result<Vec<ZigbeeEntityRecord>> {
         self.ensure_loaded().await?;

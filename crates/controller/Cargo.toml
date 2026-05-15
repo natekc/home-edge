@@ -31,6 +31,7 @@ local-ip-address.workspace = true
 mdns-sd.workspace = true
 minijinja.workspace = true
 uuid.workspace = true
+rusqlite.workspace = true
 zigbee2mqtt-rs = { path = "../../../zigbee2mqtt-rs", optional = true }
 
 [dev-dependencies]

@@ -1,13 +1,20 @@
-//! In-memory ring-buffer history store for numeric sensor values.
+//! History store — numeric sensor readings with SQLite persistence.
 //!
-//! Each entity gets a fixed-capacity circular buffer.  Values are stored as
-//! `f64`; non-numeric sensor states (e.g. "on", "off", "unavailable") are
-//! silently ignored by the caller before reaching this store.
+//! Architecture:
+//! - An in-memory ring buffer per entity provides O(1) sparkline reads.
+//! - A SQLite database persists all readings across restarts.
+//! - On startup, the ring buffer is warmed from the last `capacity` entries per entity.
+//! - `record()` writes to both in-memory and SQLite (via spawn_blocking).
+//! - `last_n()` uses the in-memory ring buffer (fast — for sparklines).
+//! - `since()` queries SQLite directly (for the history page chart).
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::path::Path;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use anyhow::Result;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
@@ -53,37 +60,124 @@ impl RingBuffer {
     }
 }
 
-/// Thread-safe in-memory history store.
+type Db = Arc<std::sync::Mutex<rusqlite::Connection>>;
+
+/// Thread-safe history store backed by SQLite for persistence.
+///
+/// Call `HistoryStore::open()` in production code. Use `HistoryStore::new()`
+/// (in-memory only) in unit tests that do not need persistence.
 pub struct HistoryStore {
     inner: RwLock<HashMap<String, RingBuffer>>,
     capacity: usize,
+    db: Option<Db>,
 }
 
 impl HistoryStore {
-    /// Create a new history store with the given per-entity ring-buffer capacity.
-    ///
-    /// `capacity` is typically sourced from `AppConfig.history.capacity`.
+    /// Create an in-memory-only store (no persistence). Intended for tests.
     pub fn new(capacity: usize) -> Self {
         Self {
             inner: RwLock::new(HashMap::new()),
             capacity,
+            db: None,
         }
     }
 
-    /// Record a numeric reading for the given entity_id.
+    /// Open a SQLite-backed store at `db_path`.
+    ///
+    /// - Creates the history table and index if they don't exist.
+    /// - Warms the in-memory ring buffers from the last `capacity` entries per entity.
+    /// - Falls back to in-memory-only on any SQLite error (logs a warning).
+    pub fn open(capacity: usize, db_path: &Path) -> Self {
+        match Self::try_open(capacity, db_path) {
+            Ok(store) => store,
+            Err(e) => {
+                tracing::warn!("history: SQLite open failed ({e:#}); falling back to in-memory");
+                Self::new(capacity)
+            }
+        }
+    }
+
+    fn try_open(capacity: usize, db_path: &Path) -> Result<Self> {
+        let conn = rusqlite::Connection::open(db_path)
+            .map_err(|e| anyhow::anyhow!("open {}: {e}", db_path.display()))?;
+
+        // WAL mode + NORMAL synchronous: reduces write latency on Pi SD card.
+        conn.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous   = NORMAL;
+            CREATE TABLE IF NOT EXISTS history (
+                entity_id TEXT    NOT NULL,
+                ts        INTEGER NOT NULL,
+                value     REAL    NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS history_entity_ts ON history (entity_id, ts);
+        ")?;
+
+        // Warm the in-memory ring buffers.
+        // Load the last `capacity` entries per entity, sorted oldest-first.
+        let mut inner: HashMap<String, RingBuffer> = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT entity_id, ts, value FROM history ORDER BY entity_id, ts",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (entity_id, ts, value) = row?;
+                let rb = inner
+                    .entry(entity_id)
+                    .or_insert_with(|| RingBuffer::new(capacity));
+                rb.push(HistoryEntry { ts: ts as u64, value });
+            }
+        }
+
+        Ok(Self {
+            inner: RwLock::new(inner),
+            capacity,
+            db: Some(Arc::new(std::sync::Mutex::new(conn))),
+        })
+    }
+
+    /// Record a numeric reading.  Updates the in-memory ring buffer and
+    /// asynchronously writes to SQLite.
     pub async fn record(&self, entity_id: &str, value: f64) {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         let entry = HistoryEntry { ts, value };
-        let mut map = self.inner.write().await;
-        map.entry(entity_id.to_string())
-            .or_insert_with(|| RingBuffer::new(self.capacity))
-            .push(entry);
+
+        // Update in-memory ring buffer.
+        {
+            let mut map = self.inner.write().await;
+            map.entry(entity_id.to_string())
+                .or_insert_with(|| RingBuffer::new(self.capacity))
+                .push(entry);
+        }
+
+        // Write to SQLite in a blocking task.
+        if let Some(db) = self.db.clone() {
+            let eid = entity_id.to_string();
+            tokio::task::spawn_blocking(move || {
+                if let Ok(conn) = db.lock() {
+                    if let Err(e) = conn.execute(
+                        "INSERT INTO history (entity_id, ts, value) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![eid, ts as i64, value],
+                    ) {
+                        tracing::warn!("history: db write failed: {e}");
+                    }
+                }
+            });
+        }
     }
 
     /// Return the most recent `n` entries for the given entity, oldest first.
+    /// Reads from the in-memory ring buffer — use this for sparklines.
     pub async fn last_n(&self, entity_id: &str, n: usize) -> Vec<HistoryEntry> {
         self.inner
             .read()
@@ -92,16 +186,84 @@ impl HistoryStore {
             .map(|rb| rb.last_n(n))
             .unwrap_or_default()
     }
+
+    /// Return all entries for the given entity at or after `since_ts` (unix
+    /// seconds), oldest first.  Queries SQLite when available; falls back to
+    /// the in-memory buffer when running without a database.
+    pub async fn since(&self, entity_id: &str, since_ts: u64) -> Vec<HistoryEntry> {
+        if let Some(db) = self.db.clone() {
+            let eid = entity_id.to_string();
+            let result = tokio::task::spawn_blocking(move || -> Result<Vec<HistoryEntry>> {
+                let conn = db.lock().map_err(|_| anyhow::anyhow!("mutex poisoned"))?;
+                let mut stmt = conn.prepare(
+                    "SELECT ts, value FROM history
+                      WHERE entity_id = ?1 AND ts >= ?2
+                      ORDER BY ts",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![eid, since_ts as i64], |row| {
+                    Ok(HistoryEntry {
+                        ts: row.get::<_, i64>(0)? as u64,
+                        value: row.get::<_, f64>(1)?,
+                    })
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+            })
+            .await;
+            match result {
+                Ok(Ok(entries)) => return entries,
+                Ok(Err(e)) => tracing::warn!("history: db query failed: {e}"),
+                Err(e) => tracing::warn!("history: spawn_blocking failed: {e}"),
+            }
+        }
+        // Fall back to in-memory buffer.
+        self.inner
+            .read()
+            .await
+            .get(entity_id)
+            .map(|rb| {
+                rb.entries
+                    .iter()
+                    .filter(|e| e.ts >= since_ts)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Return all entity IDs that have at least one history reading recorded
+    /// since `since_ts`.  Used to build the history-page entity picker.
+    pub async fn entity_ids_since(&self, since_ts: u64) -> Vec<String> {
+        if let Some(db) = self.db.clone() {
+            let result = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+                let conn = db.lock().map_err(|_| anyhow::anyhow!("mutex poisoned"))?;
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT entity_id FROM history WHERE ts >= ?1 ORDER BY entity_id",
+                )?;
+                let rows =
+                    stmt.query_map(rusqlite::params![since_ts as i64], |row| row.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+            })
+            .await;
+            if let Ok(Ok(ids)) = result {
+                return ids;
+            }
+        }
+        // Fall back: return all entity IDs from the ring buffer map.
+        self.inner.read().await.keys().cloned().collect()
+    }
 }
 
 /// Render a simple inline `<svg>` sparkline from history entries.
 ///
-/// Returns an SVG string suitable for embedding directly in HTML (no `| safe`
-/// filter needed — the caller must mark it safe or embed it as raw HTML).
+/// Returns an SVG string suitable for embedding directly in HTML (`| safe` in
+/// templates).
 pub fn render_sparkline(entries: &[HistoryEntry], width: u32, height: u32) -> String {
     if entries.len() < 2 {
         return format!(
-            "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" xmlns=\"http://www.w3.org/2000/svg\"><text x=\"50%\" y=\"50%\" text-anchor=\"middle\" dominant-baseline=\"middle\" fill=\"#aaa\" font-size=\"11\">No data yet</text></svg>"
+            "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" \
+             xmlns=\"http://www.w3.org/2000/svg\">\
+             <text x=\"50%\" y=\"50%\" text-anchor=\"middle\" dominant-baseline=\"middle\" \
+             fill=\"#aaa\" font-size=\"11\">No data yet</text></svg>"
         );
     }
 
@@ -150,7 +312,8 @@ pub fn render_sparkline(entries: &[HistoryEntry], width: u32, height: u32) -> St
     );
 
     format!(
-        "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block\">\n  \
+        "<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" \
+         xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block\">\n  \
          <defs>\n    \
          <linearGradient id=\"sg_{width}_{height}\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n      \
          <stop offset=\"0%\" stop-color=\"#18BCF2\" stop-opacity=\"0.35\"/>\n      \
@@ -158,7 +321,8 @@ pub fn render_sparkline(entries: &[HistoryEntry], width: u32, height: u32) -> St
          </linearGradient>\n  \
          </defs>\n  \
          <path d=\"{area_d}\" fill=\"url(#sg_{width}_{height})\"/>\n  \
-         <path d=\"{path_d}\" fill=\"none\" stroke=\"#18BCF2\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n\
+         <path d=\"{path_d}\" fill=\"none\" stroke=\"#18BCF2\" stroke-width=\"2\" \
+         stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n\
          </svg>"
     )
 }

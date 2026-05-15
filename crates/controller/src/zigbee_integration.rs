@@ -391,6 +391,26 @@ pub fn push_state(
 // Integration runner
 // ---------------------------------------------------------------------------
 
+/// Record numeric sensor readings to the history store for all sensor-domain
+/// entities whose attribute key is present and numeric in `raw_state`.
+async fn record_sensor_history(
+    raw_state: &serde_json::Map<String, serde_json::Value>,
+    entities: &[crate::zigbee_entity_store::ZigbeeEntityRecord],
+    history: &crate::history_store::HistoryStore,
+) {
+    for ent in entities {
+        if ent.domain != "sensor" {
+            continue;
+        }
+        let Some(key) = ent.attribute_key.as_deref() else { continue };
+        let Some(raw) = raw_state.get(key) else { continue };
+        let Some(v) = raw.as_f64().or_else(|| raw.as_str().and_then(|s| s.parse().ok())) else {
+            continue
+        };
+        history.record(&ent.entity_id, v).await;
+    }
+}
+
 /// Consume events from `event_rx` and fan them out to the stores.
 ///
 /// This is the inner loop extracted so it can be driven from tests without
@@ -400,6 +420,7 @@ pub async fn run_event_loop(
     device_store: Arc<ZigbeeDeviceStore>,
     entity_store: Arc<ZigbeeEntityStore>,
     state_store: Arc<StateStore>,
+    history_store: Arc<crate::history_store::HistoryStore>,
 ) {
     while let Some(event) = event_rx.recv().await {
         match event {
@@ -472,12 +493,14 @@ pub async fn run_event_loop(
 
                 // Push initial state from the device's cached values.
                 push_state(&info.initial_state, &entity_records, &state_store);
+                record_sensor_history(&info.initial_state, &entity_records, &history_store).await;
             }
 
             ZigbeeEvent::StateChanged { ieee_addr, delta } => {
                 let ieee = ieee_addr.as_hex();
                 if let Ok(entities) = entity_store.list_for_device(&ieee).await {
                     push_state(&delta, &entities, &state_store);
+                    record_sensor_history(&delta, &entities, &history_store).await;
                 }
                 // Record freshness — mirrors HA's last_seen tracking on state updates.
                 let ts = now_iso8601();
@@ -502,6 +525,7 @@ pub async fn start(
     device_store: Arc<ZigbeeDeviceStore>,
     entity_store: Arc<ZigbeeEntityStore>,
     state_store: Arc<StateStore>,
+    history_store: Arc<crate::history_store::HistoryStore>,
 ) -> ZigbeeHandle {
     // Build the zigbee2mqtt-rs Config from our ZigbeeConfig.
     let z2m_cfg = Config {
@@ -547,7 +571,7 @@ pub async fn start(
     });
 
     // Spawn the event fan-out task.
-    tokio::spawn(run_event_loop(event_rx, device_store, entity_store, state_store));
+    tokio::spawn(run_event_loop(event_rx, device_store, entity_store, state_store, history_store));
 
     ZigbeeHandle {
         cmd_tx,

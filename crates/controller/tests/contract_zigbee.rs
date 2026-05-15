@@ -55,12 +55,13 @@ async fn drive_events(
     entity_store: Arc<ZigbeeEntityStore>,
     state_store: Arc<StateStore>,
 ) {
+    let history = Arc::new(home_edge::history_store::HistoryStore::new(100));
     let (event_tx, event_rx) = mpsc::channel::<ZigbeeEvent>(64);
     for event in events {
         event_tx.send(event).await.expect("send event");
     }
     drop(event_tx); // closing the sender causes run_event_loop to exit cleanly
-    run_event_loop(event_rx, device_store, entity_store, state_store).await;
+    run_event_loop(event_rx, device_store, entity_store, state_store, history).await;
 }
 
 // ---------------------------------------------------------------------------
