@@ -44,7 +44,7 @@
               <h3>{{ device.device_name }}</h3>
               <span class="status-dot online" title="Registered"></span>
             </div>
-            <div class="device-card-meta">{{ device.manufacturer }} {{ device.model }}</div>
+            <div class="device-card-meta">{{ [device.manufacturer, device.model] | select | join(" ") or "—" }}</div>
             <div class="device-card-stats">
               <span class="badge badge-neutral">{{ device.entity_count }} sensor{% if device.entity_count != 1 %}s{% endif %}</span>
               <span class="badge badge-neutral">{{ device.os_name }}</span>
@@ -77,7 +77,7 @@
               <h3>{{ device.device_name }}</h3>
               <span class="status-dot online" title="Paired"></span>
             </div>
-            <div class="device-card-meta">{{ device.manufacturer }} {{ device.model }}</div>
+            <div class="device-card-meta">{{ [device.manufacturer, device.model] | select | join(" ") or "—" }}</div>
             <div class="device-card-stats">
               <span class="badge badge-neutral">{{ device.entity_count }} sensor{% if device.entity_count != 1 %}s{% endif %}</span>
               {% if device.power_source %}
