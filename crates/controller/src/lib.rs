@@ -22,6 +22,8 @@ pub mod area_registry_store;
 #[cfg(feature = "transport_wifi")]
 pub mod zone_store;
 #[cfg(feature = "transport_wifi")]
+pub mod person_store;
+#[cfg(feature = "transport_wifi")]
 pub mod auth_store;
 #[cfg(feature = "transport_wifi")]
 pub mod long_lived_token_store;
