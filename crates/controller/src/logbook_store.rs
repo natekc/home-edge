@@ -54,4 +54,28 @@ impl LogbookStore {
         let buf = self.inner.read().await;
         buf.iter().rev().take(n).cloned().collect()
     }
+
+    /// Return up to `limit` entries, newest first, optionally filtered by entity_id.
+    ///
+    /// When `entity_id_filter` is `Some`, only entries whose `entity_id` contains
+    /// the filter string (case-insensitive substring match) are returned.
+    ///
+    /// Source: homeassistant/components/logbook/__init__.py entity_id filter
+    pub async fn get_filtered(
+        &self,
+        entity_id_filter: Option<&str>,
+        limit: usize,
+    ) -> Vec<LogbookEntry> {
+        let buf = self.inner.read().await;
+        buf.iter()
+            .rev()
+            .filter(|e| {
+                entity_id_filter
+                    .map(|f| e.entity_id.to_lowercase().contains(&f.to_lowercase()))
+                    .unwrap_or(true)
+            })
+            .take(limit)
+            .cloned()
+            .collect()
+    }
 }

@@ -6,7 +6,7 @@
 </div>
 <div class="page-body">
 
-{% if entries | length == 0 %}
+{% if entries | length == 0 and not entity_filter %}
   <div class="ha-card">
     <div class="ha-card-body" style="text-align:center;padding:48px 24px">
       <svg width="48" height="48" style="color:var(--text-secondary);fill:currentColor;margin-bottom:16px"><use href="#icon-format-list"/></svg>
@@ -14,6 +14,16 @@
     </div>
   </div>
 {% else %}
+
+  <!-- Entity filter -->
+  <!-- Source: homeassistant/components/logbook/__init__.py entity_id filter -->
+  <form method="get" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+    <input type="text" name="entity_id" class="form-control"
+           placeholder="Filter by entity ID…" value="{{ entity_filter }}"
+           style="max-width:320px">
+    <button type="submit" class="btn btn-secondary">Filter</button>
+    {% if entity_filter %}<a href="/logbook" class="btn btn-secondary">Clear</a>{% endif %}
+  </form>
 
   <input type="search" id="logbook-search" class="form-control"
          placeholder="Filter by name or entity…"

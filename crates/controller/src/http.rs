@@ -446,7 +446,46 @@ async fn ble_scan_page(State(state): State<Arc<AppState>>) -> Response {
     render_template(&state, "ble_scan.html", ctx)
 }
 
-async fn history_page(State(state): State<Arc<AppState>>) -> Response {
+// ---------------------------------------------------------------------------
+// History page query structs + helpers
+// ---------------------------------------------------------------------------
+
+/// Query parameters for the `/history` page.
+/// Source: homeassistant/components/history/__init__.py start_time/end_time ranges
+#[derive(Deserialize)]
+struct PageHistoryQuery {
+    /// Time range preset: 1h, 6h, 24h (default), 3d, 7d.
+    range: Option<String>,
+    /// Pre-selected entity_id; chart auto-loads on page render.
+    entity: Option<String>,
+}
+
+/// Convert a history range preset string to seconds.
+/// Source: homeassistant/components/history/__init__.py
+fn range_to_secs(range: &str) -> u64 {
+    match range {
+        "1h" => 3_600,
+        "6h" => 21_600,
+        "3d" => 259_200,
+        "7d" => 604_800,
+        _    => 86_400, // default: 24h
+    }
+}
+
+async fn history_page(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PageHistoryQuery>,
+) -> Response {
+    let range = params.range.as_deref().unwrap_or("24h").to_string();
+    let range_secs = range_to_secs(&range);
+    let range_hours = range_secs / 3_600;
+    let now_ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let since_ts = now_ts.saturating_sub(range_secs);
+    let selected_entity = params.entity.unwrap_or_default();
+
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
 
@@ -484,18 +523,57 @@ async fn history_page(State(state): State<Arc<AppState>>) -> Response {
         lhs["display_name"].as_str().unwrap_or("").cmp(rhs["display_name"].as_str().unwrap_or(""))
     });
 
+    // Compute stats for the selected entity (non-binary sensors only).
+    // Source: homeassistant/components/recorder/statistics.py
+    let (stat_min, stat_mean, stat_max): (Option<String>, Option<String>, Option<String>) =
+        if !selected_entity.is_empty() && !selected_entity.starts_with("binary_sensor.") {
+            let entries = state.history.since(&selected_entity, since_ts).await;
+            if let Some((mn, av, mx)) = history_store::stats_for_slice(&entries) {
+                (
+                    Some(format!("{mn:.1}")),
+                    Some(format!("{av:.1}")),
+                    Some(format!("{mx:.1}")),
+                )
+            } else {
+                (None, None, None)
+            }
+        } else {
+            (None, None, None)
+        };
+
     let ctx = app_ctx!(state, "history", location_name.as_str(), &areas,
-        entities => Value::from_serialize(&entity_list),
+        entities        => Value::from_serialize(&entity_list),
+        range           => Value::from_serialize(&range),
+        range_hours     => Value::from_serialize(&range_hours),
+        since_ts        => Value::from_serialize(&since_ts),
+        selected_entity => Value::from_serialize(&selected_entity),
+        stat_min        => Value::from_serialize(&stat_min),
+        stat_mean       => Value::from_serialize(&stat_mean),
+        stat_max        => Value::from_serialize(&stat_max),
     );
     render_template(&state, "history.html", ctx)
 }
 
-async fn logbook_page(State(state): State<Arc<AppState>>) -> Response {
+/// Query parameters for the `/logbook` page.
+/// Source: homeassistant/components/logbook/__init__.py entity_id filter
+#[derive(Deserialize)]
+struct LogbookPageQuery {
+    /// Filter logbook entries to this entity_id (substring match).
+    entity_id: Option<String>,
+}
+
+async fn logbook_page(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<LogbookPageQuery>,
+) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let entries = state.logbook.recent_n(200).await;
+    let entity_filter = params.entity_id.unwrap_or_default();
+    let filter_opt = if entity_filter.is_empty() { None } else { Some(entity_filter.as_str()) };
+    let entries = state.logbook.get_filtered(filter_opt, 200).await;
     let ctx = app_ctx!(state, "logbook", location_name.as_str(), &areas,
-        entries => Value::from_serialize(&entries),
+        entries       => Value::from_serialize(&entries),
+        entity_filter => Value::from_serialize(&entity_filter),
     );
     render_template(&state, "logbook.html", ctx)
 }
