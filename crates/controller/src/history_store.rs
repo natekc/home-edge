@@ -251,6 +251,42 @@ impl HistoryStore {
         // Fall back: return all entity IDs from the ring buffer map.
         self.inner.read().await.keys().cloned().collect()
     }
+
+    /// Return the most recent value for every entity that has history.
+    ///
+    /// Used at startup to re-seed the in-memory `StateStore` with the last
+    /// known sensor readings so entities don't show "unavailable" after a
+    /// redeploy until the sensor next reports.
+    ///
+    /// Queries SQLite when available; falls back to the in-memory ring buffer.
+    pub async fn latest_values(&self) -> Vec<(String, f64)> {
+        if let Some(db) = self.db.clone() {
+            let result = tokio::task::spawn_blocking(move || -> Result<Vec<(String, f64)>> {
+                let conn = db.lock().map_err(|_| anyhow::anyhow!("mutex poisoned"))?;
+                // One row per entity: the reading with the highest ts.
+                let mut stmt = conn.prepare(
+                    "SELECT entity_id, value FROM history
+                      WHERE ts = (SELECT MAX(ts) FROM history h2 WHERE h2.entity_id = history.entity_id)
+                      GROUP BY entity_id",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+            })
+            .await;
+            if let Ok(Ok(pairs)) = result {
+                return pairs;
+            }
+        }
+        // Fall back: last entry from each in-memory ring buffer.
+        self.inner
+            .read()
+            .await
+            .iter()
+            .filter_map(|(eid, rb)| rb.entries.back().map(|e| (eid.clone(), e.value)))
+            .collect()
+    }
 }
 
 /// Render a simple inline `<svg>` sparkline from history entries.
