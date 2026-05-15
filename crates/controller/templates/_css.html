@@ -988,3 +988,20 @@ hr  { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 .settings-row-title { font-size: .95rem; font-weight: 500; }
 .settings-row-sub { font-size: .8rem; color: var(--text-secondary); margin-top: 2px; }
 .settings-row-chevron { color: var(--text-secondary); font-size: 1.2rem; flex-shrink: 0; }
+
+/* ===== Light color picker (more-info dialog) ===== */
+/* Source: homeassistant/components/light/__init__.py ColorMode color picker */
+.mi-color-input {
+  width: 44px; height: 44px; padding: 0;
+  border: none; border-radius: 50%; cursor: pointer; background: none;
+  vertical-align: middle;
+}
+.mi-color-input::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
+.mi-color-input::-webkit-color-swatch { border: none; border-radius: 50%; }
+.mi-color-picker-wrap { display: flex; align-items: center; gap: 8px; }
+.mi-color-swatch {
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 2px solid var(--divider-color);
+  display: inline-block; flex-shrink: 0; pointer-events: none;
+}
+.mi-row--color { align-items: center; }

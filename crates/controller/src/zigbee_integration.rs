@@ -300,6 +300,27 @@ fn new_ctx() -> ha_types::context::Context {
     ha_types::context::Context::new(Uuid::new_v4().to_string())
 }
 
+/// Convert HS (hue 0–360, saturation 0–100) to sRGB at maximum brightness.
+/// Source: homeassistant/util/color.py color_hs_to_RGB
+fn hs_to_rgb(h: f32, s: f32) -> (u8, u8, u8) {
+    let s = s / 100.0;
+    let h = h / 60.0;
+    let i = h.floor() as u32;
+    let f = h - i as f32;
+    let p = 1.0 - s;
+    let q = 1.0 - s * f;
+    let t = 1.0 - s * (1.0 - f);
+    let (r, g, b) = match i % 6 {
+        0 => (1.0_f32, t, p),
+        1 => (q, 1.0_f32, p),
+        2 => (p, 1.0_f32, t),
+        3 => (p, q, 1.0_f32),
+        4 => (t, p, 1.0_f32),
+        _ => (1.0_f32, p, q),
+    };
+    ((r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8)
+}
+
 /// Convert a raw ZCL state map into `ha_types::State` entries and push them
 /// into the `StateStore`.
 ///
@@ -365,6 +386,17 @@ pub fn push_state(
                             serde_json::Number::from_f64(mireds).unwrap_or(serde_json::Number::from(0)),
                         ));
                     }
+                }
+                // Extract hue/saturation from the nested color object and emit as
+                // HA-standard hs_color [h, s] array + rgb_color [r, g, b] array.
+                // Source: homeassistant/components/light/__init__.py ATTR_HS_COLOR, ATTR_RGB_COLOR
+                if let Some(Value::Object(color_obj)) = raw_state.get("color") {
+                    let h = color_obj.get("hue").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    let s = color_obj.get("saturation").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    attrs.insert("hs_color".into(), serde_json::json!([h, s]));
+                    // Source: homeassistant/util/color.py color_hs_to_RGB
+                    let (r, g, b) = hs_to_rgb(h, s);
+                    attrs.insert("rgb_color".into(), serde_json::json!([r, g, b]));
                 }
             }
             _ => {}
@@ -843,6 +875,40 @@ pub(crate) fn entity_view_for(
         .and_then(|v| v.as_u64())
         .map(|v| v as u16)
         .unwrap_or(6535);
+    // Source: homeassistant/components/light/__init__.py ATTR_COLOR_MODE
+    let color_mode = attrs
+        .get("color_mode")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    // Source: homeassistant/components/light/__init__.py ATTR_HS_COLOR
+    let hs_color = attrs
+        .get("hs_color")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            if arr.len() == 2 {
+                let h = arr[0].as_f64()? as f32;
+                let s = arr[1].as_f64()? as f32;
+                Some((h, s))
+            } else { None }
+        });
+    // Source: homeassistant/components/light/__init__.py ATTR_RGB_COLOR
+    let rgb_color = attrs
+        .get("rgb_color")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            if arr.len() == 3 {
+                let r = arr[0].as_u64()? as u8;
+                let g = arr[1].as_u64()? as u8;
+                let b = arr[2].as_u64()? as u8;
+                Some((r, g, b))
+            } else { None }
+        });
+    let rgb_hex = rgb_color.map(|(r, g, b)| format!("#{r:02x}{g:02x}{b:02x}"));
+    let supported_color_modes = attrs
+        .get("supported_color_modes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
 
     let icon_name = match entity.domain.as_str() {
         "light"  => "lightbulb",
@@ -894,6 +960,11 @@ pub(crate) fn entity_view_for(
         color_temp_kelvin,
         min_color_temp_kelvin,
         max_color_temp_kelvin,
+        color_mode,
+        hs_color,
+        rgb_color,
+        rgb_hex,
+        supported_color_modes,
         options:               vec![],
         current_position:      None,
         fan_percentage:        None,

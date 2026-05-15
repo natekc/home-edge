@@ -1154,6 +1154,14 @@ struct UiServiceForm {
     /// Source: homeassistant/components/fan/__init__.py ATTR_PERCENTAGE
     #[serde(default)]
     percentage: Option<String>,
+    /// RGB color components sent from the <input type="color"> picker.
+    /// Source: homeassistant/components/light/__init__.py ATTR_RGB_COLOR
+    #[serde(default)]
+    r: Option<String>,
+    #[serde(default)]
+    g: Option<String>,
+    #[serde(default)]
+    b: Option<String>,
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -1219,6 +1227,18 @@ async fn ui_service_call(
     }
     if let Some(pct) = form.percentage.as_deref().filter(|s| !s.is_empty()) {
         if let Ok(n) = pct.parse::<u8>() { data.insert("percentage".into(), json!(n)); }
+    }
+    // Convert RGB components from <input type="color"> into hs_color.
+    // Source: homeassistant/util/color.py color_RGB_to_hs
+    if let (Some(r_s), Some(g_s), Some(b_s)) = (
+        form.r.as_deref().filter(|s| !s.is_empty()),
+        form.g.as_deref().filter(|s| !s.is_empty()),
+        form.b.as_deref().filter(|s| !s.is_empty()),
+    ) {
+        if let (Ok(r), Ok(g), Ok(b)) = (r_s.parse::<u8>(), g_s.parse::<u8>(), b_s.parse::<u8>()) {
+            let (h, s) = rgb_to_hs(r, g, b);
+            data.insert("hs_color".into(), json!([h, s]));
+        }
     }
     let target = match ServiceTarget::from_parts(None, Some(&data)) {
         Ok(t) => t,
@@ -1601,6 +1621,29 @@ async fn complete_onboarding(State(state): State<Arc<AppState>>) -> impl IntoRes
 //   • Zigbee   → zigbee_integration::entity_view_for()  (zigbee_integration.rs)
 //   • <future> → <backend_module>::entity_view_for()    (see entity_view.rs docs)
 
+/// Convert sRGB to HS (hue 0–360, saturation 0–100).
+/// Source: homeassistant/util/color.py color_RGB_to_hs
+fn rgb_to_hs(r: u8, g: u8, b: u8) -> (f32, f32) {
+    let rf = r as f32 / 255.0;
+    let gf = g as f32 / 255.0;
+    let bf = b as f32 / 255.0;
+    let max = rf.max(gf).max(bf);
+    let min = rf.min(gf).min(bf);
+    let delta = max - min;
+    let s = if max == 0.0 { 0.0 } else { delta / max };
+    let h = if delta == 0.0 {
+        0.0
+    } else if max == rf {
+        60.0 * (((gf - bf) / delta) % 6.0)
+    } else if max == gf {
+        60.0 * ((bf - rf) / delta + 2.0)
+    } else {
+        60.0 * ((rf - gf) / delta + 4.0)
+    };
+    let h = if h < 0.0 { h + 360.0 } else { h };
+    (h, s * 100.0)
+}
+
 fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
     let value = state
         .states
@@ -1654,6 +1697,41 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         .map(|v| v.min(100) as u8);
     // Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
     let is_unavailable = value == "unavailable" || value == "unknown";
+    // Source: homeassistant/components/light/__init__.py ATTR_COLOR_MODE
+    let color_mode = attrs
+        .get("color_mode")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    // Source: homeassistant/components/light/__init__.py ATTR_HS_COLOR
+    let hs_color = attrs
+        .get("hs_color")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            if arr.len() == 2 {
+                let h = arr[0].as_f64()? as f32;
+                let s = arr[1].as_f64()? as f32;
+                Some((h, s))
+            } else { None }
+        });
+    // Source: homeassistant/components/light/__init__.py ATTR_RGB_COLOR
+    let rgb_color = attrs
+        .get("rgb_color")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            if arr.len() == 3 {
+                let r = arr[0].as_u64()? as u8;
+                let g = arr[1].as_u64()? as u8;
+                let b = arr[2].as_u64()? as u8;
+                Some((r, g, b))
+            } else { None }
+        });
+    let rgb_hex = rgb_color.map(|(r, g, b)| format!("#{r:02x}{g:02x}{b:02x}"));
+    // Source: homeassistant/components/light/__init__.py ATTR_SUPPORTED_COLOR_MODES
+    let supported_color_modes = attrs
+        .get("supported_color_modes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
     EntityView {
         entity_id: entity.entity_id.clone(),
         webhook_id: Some(entity.webhook_id.clone()),
@@ -1674,6 +1752,11 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         color_temp_kelvin,
         min_color_temp_kelvin,
         max_color_temp_kelvin,
+        color_mode,
+        hs_color,
+        rgb_color,
+        rgb_hex,
+        supported_color_modes,
         options,
         current_position,
         fan_percentage,
