@@ -45,6 +45,24 @@
         <dt>SW build</dt>      <dd>{{ device.sw_build_id | default("—") }}</dd>
         <dt>Interview</dt>     <dd>{% if device.interview_complete %}<span class="badge badge-success">Complete</span>{% else %}<span class="badge badge-warning">Pending — page refreshes automatically</span>{% endif %}</dd>
         <dt>Last seen</dt>     <dd>{{ device.last_seen | default("—") }}</dd>
+        {# Battery and LQI — only shown when data is available from the state store.
+           Source: homeassistant/components/zha/sensor.py BatterySensor / LQISensor #}
+        {% if battery_pct %}
+        <dt>Battery</dt>
+        <dd>
+          <span class="badge {% if battery_pct | int(0) < 20 %}badge-danger{% elif battery_pct | int(0) < 50 %}badge-warning{% else %}badge-success{% endif %}">
+            {{ battery_pct }}%
+          </span>
+        </dd>
+        {% endif %}
+        {% if lqi %}
+        <dt>Link quality</dt>
+        <dd>
+          <span class="badge {% if lqi < 50 %}badge-danger{% elif lqi < 100 %}badge-warning{% else %}badge-success{% endif %}">
+            {{ lqi }}/255
+          </span>
+        </dd>
+        {% endif %}
         <dt>Area</dt>
         <dd>
           {# Inline area picker for the device itself #}

@@ -100,6 +100,9 @@ pub struct ZigbeeEntityMetaUpdate {
     pub user_area_id: Option<Option<String>>,
     /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
     pub disabled: Option<bool>,
+    /// User-supplied unit override (e.g. °F instead of °C).
+    /// None = leave unchanged; Some(None) = clear; Some(Some(s)) = set.
+    pub unit_of_measurement: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -204,6 +207,24 @@ impl ZigbeeEntityStore {
             .collect())
     }
 
+    /// Return sensor + binary_sensor entities for the history entity picker.
+    ///
+    /// Binary sensors are included so door/motion/occupancy state timelines
+    /// can be plotted from the history page.
+    /// Source: homeassistant/components/history/__init__.py entity filtering
+    pub async fn all_plottable_entities(&self) -> Result<Vec<ZigbeeEntityRecord>> {
+        self.ensure_loaded().await?;
+        let cache = self.cache.read().await;
+        Ok(cache
+            .as_ref()
+            .expect("cache populated above")
+            .entities
+            .values()
+            .filter(|e| e.domain == "sensor" || e.domain == "binary_sensor")
+            .cloned()
+            .collect())
+    }
+
     /// Return all entities belonging to a specific Zigbee device.
     pub async fn list_for_device(&self, ieee_addr: &str) -> Result<Vec<ZigbeeEntityRecord>> {
         self.ensure_loaded().await?;
@@ -252,6 +273,9 @@ impl ZigbeeEntityStore {
         // Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by
         if let Some(v) = update.disabled {
             ent.disabled = v;
+        }
+        if let Some(v) = update.unit_of_measurement {
+            ent.unit_of_measurement = v;
         }
         self.save(data).await?;
         Ok(true)
