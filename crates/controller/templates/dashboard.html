@@ -14,11 +14,27 @@
       <div class="empty-state">
         <svg><use href="#icon-devices"/></svg>
         <h3>No devices connected yet</h3>
-        <p>
-          Open the <strong>Home Assistant</strong> app, go to
-          <em>Settings → Companion App → Server</em> and connect to this instance.
-        </p>
-        <div class="badge badge-info" style="font-size:.82rem;padding:6px 14px">{{ server_host }}:{{ server_port }}</div>
+        {# 3d: Actionable empty state — separate sections for mobile app and Zigbee #}
+        {# Source: homeassistant/components/onboarding/ integration guidance #}
+        <div style="display:flex;flex-direction:column;gap:12px;padding:8px 0;text-align:left;max-width:420px;margin:0 auto">
+          <div style="display:flex;align-items:center;gap:12px">
+            <svg width="24" height="24" style="flex-shrink:0;fill:var(--secondary-text)"><use href="#icon-devices"/></svg>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600">Mobile App</div>
+              <div style="font-size:.82rem;color:var(--secondary-text)">Open the HA Companion App → Settings → Add Server → <code>{{ server_host }}:{{ server_port }}</code></div>
+            </div>
+            <a href="/ble" class="btn btn-secondary btn-sm" style="margin-left:auto;flex-shrink:0">Pair via BLE</a>
+          </div>
+          <hr style="border:none;border-top:1px solid var(--divider-color);margin:0">
+          <div style="display:flex;align-items:center;gap:12px">
+            <svg width="24" height="24" style="flex-shrink:0;fill:var(--secondary-text)"><use href="#icon-zigbee"/></svg>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600">Zigbee Devices</div>
+              <div style="font-size:.82rem;color:var(--secondary-text)">Pair Zigbee sensors and lights directly</div>
+            </div>
+            <a href="/zigbee" class="btn btn-secondary btn-sm" style="margin-left:auto;flex-shrink:0">Manage</a>
+          </div>
+        </div>
       </div>
     </div>
   </div>

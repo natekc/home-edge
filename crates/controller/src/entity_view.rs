@@ -80,4 +80,12 @@ pub(crate) struct EntityView {
 pub(crate) struct AreaCard {
     pub(crate) area_name: String,
     pub(crate) entities: Vec<EntityView>,
+    /// Area temperature display string (e.g. "20.1 °C"), populated when a
+    /// temperature sensor entity exists in the area.
+    /// Source: homeassistant/helpers/area_registry.py AreaEntry.temperature_entity_id
+    pub(crate) area_temp: Option<String>,
+    /// Area humidity display string (e.g. "52 %"), populated when a
+    /// humidity sensor entity exists in the area.
+    /// Source: homeassistant/helpers/area_registry.py AreaEntry.humidity_entity_id
+    pub(crate) area_humidity: Option<String>,
 }

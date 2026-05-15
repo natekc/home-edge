@@ -5,7 +5,13 @@
 {% else %}
 {% for card in area_cards %}
 <div class="entities-card">
-  <div class="entities-card-title">{{ card.area_name }}</div>
+  {# 3b: Area card header with optional temperature + humidity badges #}
+  {# Source: homeassistant/helpers/area_registry.py AreaEntry.temperature_entity_id / humidity_entity_id #}
+  <div class="entities-card-title">
+    {{ card.area_name }}
+    {% if card.area_temp %}<span style="font-size:.8rem;color:var(--secondary-text);margin-left:8px">🌡 {{ card.area_temp }}</span>{% endif %}
+    {% if card.area_humidity %}<span style="font-size:.8rem;color:var(--secondary-text);margin-left:6px">💧 {{ card.area_humidity }}</span>{% endif %}
+  </div>
 
   {% for entity in card.entities %}
   {# --- Determine extra row class for colouring active states --- #}
@@ -22,7 +28,14 @@
 
     <svg class="entity-list-icon"><use href="#icon-{{ entity.icon_name }}"/></svg>
 
-    <span class="entity-list-name">{{ entity.display_name }}</span>
+    {# 3e: Light inline brightness — wrap name in a column so brightness sits below it #}
+    {# Source: homeassistant/components/light/__init__.py ATTR_BRIGHTNESS #}
+    <div class="entity-list-name" style="display:flex;flex-direction:column;gap:0">
+      <span>{{ entity.display_name }}</span>
+      {% if entity.entity_type == "light" and entity.brightness is not none and entity.value == "on" %}
+      <span style="font-size:.72rem;color:var(--secondary-text)">{{ (entity.brightness / 2.55) | round }}%</span>
+      {% endif %}
+    </div>
 
     {# Right side: toggle for controllable binary entities, button for activatables, state text for the rest #}
     {% if entity.entity_type == "light" or entity.entity_type == "switch" or entity.entity_type == "fan" %}
@@ -53,7 +66,20 @@
     </button>
 
     {% elif entity.entity_type == "sensor" %}
-    <span class="entity-list-state">{{ entity.value }}{% if entity.unit %}&nbsp;{{ entity.unit }}{% endif %}</span>
+    {# 3a: Prominent sensor value display — larger value with smaller unit #}
+    {# Source: homeassistant/components/lovelace/ glance card sensor value display #}
+    <span class="entity-list-state">
+      <span style="font-size:1.1rem;font-weight:700">{{ entity.value }}</span>{% if entity.unit %}<span style="font-size:.75rem;color:var(--secondary-text)">&nbsp;{{ entity.unit }}</span>{% endif %}
+    </span>
+
+    {% elif entity.entity_type == "binary_sensor" %}
+    {# 3c: Colored status dot for binary sensor active/inactive states #}
+    {# Source: homeassistant/components/binary_sensor/__init__.py #}
+    {% set dot_class = "active" if entity.value == "on" or entity.value == "true" else "off" %}
+    <span style="display:flex;align-items:center;gap:4px">
+      <span class="status-dot {{ dot_class }}"></span>
+      <span class="entity-list-state">{{ entity.value | capitalize }}</span>
+    </span>
 
     {% else %}
     <span class="entity-list-state">{{ entity.value }}</span>
@@ -65,5 +91,6 @@
 </div>
 {% endfor %}
 {% endif %}
+
 
 

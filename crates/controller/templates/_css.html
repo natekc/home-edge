@@ -335,6 +335,10 @@ button { cursor: pointer; font-family: inherit; }
 .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .status-dot.online  { background: var(--success); }
 .status-dot.offline { background: var(--secondary-text); }
+/* Binary sensor active/inactive states */
+/* Source: homeassistant/components/binary_sensor/__init__.py */
+.status-dot.active  { background: var(--warning); }   /* on / triggered — amber */
+.status-dot.off     { background: var(--secondary-text); } /* off / clear — neutral */
 
 /* --- Forms ------------------------------------------------------------- */
 .form-group { margin-bottom: 16px; }
