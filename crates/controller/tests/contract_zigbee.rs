@@ -21,7 +21,7 @@ use home_edge::state_store::StateStore;
 use home_edge::zigbee_integration::run_event_loop;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
-use zigbee2mqtt_rs::{IeeeAddr, ZigbeeEvent};
+use zigbee2mqtt_rs::{DeviceInfo, IeeeAddr, ZigbeeEvent};
 use zigbee2mqtt_rs::devices::Device;
 use zigbee2mqtt_rs::zigbee::{NwkAddr, EndpointDesc};
 
@@ -107,7 +107,7 @@ async fn interview_complete_creates_entities_and_initial_state() {
     dev.state.insert("battery".to_string(), json!(87));
 
     drive_events(
-        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        [ZigbeeEvent::DeviceInterviewComplete { info: DeviceInfo::from(&dev) }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),
@@ -157,7 +157,7 @@ async fn state_changed_updates_entity_state() {
 
     // Phase 1: interview to register entities.
     drive_events(
-        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        [ZigbeeEvent::DeviceInterviewComplete { info: DeviceInfo::from(&dev) }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),
@@ -176,7 +176,7 @@ async fn state_changed_updates_entity_state() {
     new_state.insert("state".to_string(), json!("ON"));
     new_state.insert("brightness".to_string(), json!(128));
     drive_events(
-        [ZigbeeEvent::StateChanged { ieee_addr: ieee, state: new_state }],
+        [ZigbeeEvent::StateChanged { ieee_addr: ieee, delta: new_state }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),
@@ -209,7 +209,7 @@ async fn device_left_marks_entities_unavailable() {
     let mut dev = mock_device(ieee, "bedroom_sensor", vec![0x0402]);
     dev.state.insert("temperature".to_string(), json!(20.0));
     drive_events(
-        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        [ZigbeeEvent::DeviceInterviewComplete { info: DeviceInfo::from(&dev) }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),
@@ -246,7 +246,7 @@ async fn delete_device_removes_records_and_state() {
     dev.state.insert("state".to_string(), json!("ON"));
 
     drive_events(
-        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        [ZigbeeEvent::DeviceInterviewComplete { info: DeviceInfo::from(&dev) }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),
@@ -288,7 +288,7 @@ async fn patch_device_updates_name_by_user() {
     let dev = mock_device(ieee, "plug_0001", vec![0x0006]);
 
     drive_events(
-        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        [ZigbeeEvent::DeviceInterviewComplete { info: DeviceInfo::from(&dev) }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),
@@ -344,7 +344,7 @@ async fn ias_zone_creates_contact_and_tamper_entities() {
     dev.state.insert("battery".to_string(), json!(95));
 
     drive_events(
-        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        [ZigbeeEvent::DeviceInterviewComplete { info: DeviceInfo::from(&dev) }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),
@@ -396,7 +396,7 @@ async fn power_cluster_creates_three_battery_entities() {
     dev.state.insert("battery_low".to_string(), json!(false));
 
     drive_events(
-        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        [ZigbeeEvent::DeviceInterviewComplete { info: DeviceInfo::from(&dev) }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),
@@ -446,7 +446,7 @@ async fn sensor_entities_have_state_class_measurement() {
     dev.state.insert("illuminance_lux".to_string(), json!(340));
 
     drive_events(
-        [ZigbeeEvent::DeviceInterviewComplete { ieee_addr: ieee, device: dev }],
+        [ZigbeeEvent::DeviceInterviewComplete { info: DeviceInfo::from(&dev) }],
         Arc::clone(&state.zigbee_devices),
         Arc::clone(&state.zigbee_entities),
         Arc::clone(&state.states),

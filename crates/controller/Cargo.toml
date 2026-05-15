@@ -9,7 +9,7 @@ rust-version.workspace = true
 default = ["transport_wifi", "zigbee"]
 transport_wifi = []
 transport_ble = []
-zigbee = ["dep:zigbee2mqtt-rs"]
+zigbee = ["dep:zigbee2mqtt-rs", "zigbee2mqtt-rs?/ch340-usbdevfs"]
 
 [dependencies]
 anyhow.workspace = true
