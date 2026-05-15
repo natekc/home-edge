@@ -120,6 +120,9 @@ impl ServiceTarget {
 pub struct ServiceData {
     pub brightness: Option<i64>,
     pub color_temp_kelvin: Option<i64>,
+    /// HS color: hue 0–360, saturation 0–100.
+    /// Source: homeassistant/components/light/__init__.py ATTR_HS_COLOR
+    pub hs_color: Option<(f32, f32)>,
     pub option: Option<String>,
     pub position: Option<u8>,
     pub temperature: Option<f64>,
@@ -144,6 +147,16 @@ impl ServiceData {
             Some(Value::Number(n)) => n.as_i64(),
             Some(Value::Null) | None => None,
             Some(_) => return Err(ServiceError::InvalidFormat("color_temp_kelvin must be a number".into())),
+        };
+        // Source: homeassistant/components/light/__init__.py ATTR_HS_COLOR
+        let hs_color = match data.get("hs_color") {
+            Some(Value::Array(arr)) if arr.len() == 2 => {
+                let h = arr[0].as_f64().unwrap_or(0.0) as f32;
+                let s = arr[1].as_f64().unwrap_or(0.0) as f32;
+                Some((h, s))
+            }
+            Some(Value::Null) | None => None,
+            Some(_) => return Err(ServiceError::InvalidFormat("hs_color must be a [h, s] array".into())),
         };
         let option = match data.get("option") {
             Some(Value::String(s)) => Some(s.clone()),
@@ -171,7 +184,7 @@ impl ServiceData {
             Some(Value::Null) | None => None,
             Some(_) => return Err(ServiceError::InvalidFormat("percentage must be a number".into())),
         };
-        Ok(Self { brightness, color_temp_kelvin, option, position, temperature, hvac_mode, percentage })
+        Ok(Self { brightness, color_temp_kelvin, hs_color, option, position, temperature, hvac_mode, percentage })
     }
 }
 
@@ -355,6 +368,11 @@ fn set_entities_state(
         }
         if let Some(color_temp_kelvin) = request.data.color_temp_kelvin {
             attributes.insert("color_temp_kelvin".into(), json!(color_temp_kelvin));
+        }
+        // Source: homeassistant/components/light/__init__.py ATTR_HS_COLOR, ATTR_COLOR_MODE
+        if let Some((h, s)) = request.data.hs_color {
+            attributes.insert("hs_color".into(), json!([h, s]));
+            attributes.insert("color_mode".into(), json!("hs"));
         }
         let new_state = make_state_with_context(
             entity_id.clone(),

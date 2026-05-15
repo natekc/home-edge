@@ -62,6 +62,20 @@ pub(crate) struct EntityView {
     /// Per-device maximum color temperature in kelvin.
     /// Source: homeassistant/components/light/__init__.py ATTR_MAX_COLOR_TEMP_KELVIN, DEFAULT_MAX_KELVIN = 6535
     pub(crate) max_color_temp_kelvin: u16,
+    /// Active color mode for lights ("hs", "rgb", "color_temp", "brightness", "onoff").
+    /// Source: homeassistant/components/light/__init__.py ATTR_COLOR_MODE, ColorMode
+    pub(crate) color_mode: Option<String>,
+    /// HS color: hue 0–360, saturation 0–100.
+    /// Source: homeassistant/components/light/__init__.py ATTR_HS_COLOR
+    pub(crate) hs_color: Option<(f32, f32)>,
+    /// RGB color (r, g, b each 0–255).
+    /// Source: homeassistant/components/light/__init__.py ATTR_RGB_COLOR
+    pub(crate) rgb_color: Option<(u8, u8, u8)>,
+    /// Pre-formatted "#rrggbb" hex string derived from rgb_color; used directly in templates.
+    pub(crate) rgb_hex: Option<String>,
+    /// Supported color modes list.
+    /// Source: homeassistant/components/light/__init__.py ATTR_SUPPORTED_COLOR_MODES
+    pub(crate) supported_color_modes: Vec<String>,
     /// Select entity available options.
     pub(crate) options: Vec<String>,
     /// Cover current position 0–100, `None` if unavailable.
