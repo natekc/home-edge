@@ -420,22 +420,41 @@ async fn ble_scan_page(State(state): State<Arc<AppState>>) -> Response {
 async fn history_page(State(state): State<Arc<AppState>>) -> Response {
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let all_entities = match state.mobile_entities.all().await {
-        Ok(e) => e,
+
+    // Collect mobile (phone) entities that are numeric sensors.
+    let mut entity_list: Vec<serde_json::Value> = match state.mobile_entities.all().await {
+        Ok(e) => e
+            .into_iter()
+            .filter(|e| !e.disabled && e.entity_type == "sensor")
+            .map(|e| json!({
+                "entity_id": e.entity_id,
+                "display_name": e.display_name(),
+                "entity_type": "sensor",
+                "source": "mobile",
+            }))
+            .collect(),
         Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
     };
-    let mut entity_list: Vec<serde_json::Value> = all_entities
-        .iter()
-        .filter(|e| !e.disabled)
-        .map(|e| json!({
-            "entity_id": e.entity_id,
-            "display_name": e.display_name(),
-            "entity_type": e.entity_type,
-        }))
-        .collect();
+
+    // Also include Zigbee sensor entities (only when Zigbee feature is compiled in).
+    #[cfg(feature = "zigbee")]
+    {
+        if let Ok(zigbee_ents) = state.zigbee_entities.all_sensors().await {
+            for ent in zigbee_ents {
+                entity_list.push(json!({
+                    "entity_id": ent.entity_id,
+                    "display_name": ent.display_name(),
+                    "entity_type": "sensor",
+                    "source": "zigbee",
+                }));
+            }
+        }
+    }
+
     entity_list.sort_by(|lhs, rhs| {
         lhs["display_name"].as_str().unwrap_or("").cmp(rhs["display_name"].as_str().unwrap_or(""))
     });
+
     let ctx = app_ctx!(state, "history", location_name.as_str(), &areas,
         entities => Value::from_serialize(&entity_list),
     );
@@ -1152,7 +1171,11 @@ fn html_escape_str(s: &str) -> String {
 
 #[derive(Deserialize)]
 struct HistoryQuery {
+    /// For ring-buffer queries: last N entries (max 1000). Used by sparklines.
     last: Option<usize>,
+    /// Unix timestamp (seconds). When present, return all entries at or after
+    /// this time from the SQLite store. Used by the history page chart.
+    since: Option<u64>,
 }
 
 async fn api_history(
@@ -1160,9 +1183,16 @@ async fn api_history(
     Path(entity_id): Path<String>,
     Query(params): Query<HistoryQuery>,
 ) -> Response {
-    let n = params.last.unwrap_or(100).min(1000);
-    let entries = state.history.last_n(&entity_id, n).await;
-    Json(entries).into_response()
+    if let Some(since_ts) = params.since {
+        // Time-range query → SQLite-backed, unlimited count.
+        let entries = state.history.since(&entity_id, since_ts).await;
+        Json(entries).into_response()
+    } else {
+        // Last-N query → in-memory ring buffer (fast, for sparklines).
+        let n = params.last.unwrap_or(100).min(1000);
+        let entries = state.history.last_n(&entity_id, n).await;
+        Json(entries).into_response()
+    }
 }
 
 // ---------------------------------------------------------------------------

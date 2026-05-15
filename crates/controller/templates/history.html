@@ -2,61 +2,157 @@
 {% block content %}
 <div class="page-header">
   <h1>History</h1>
-  <p>State history for your entities.</p>
+  <p>Sensor history for your entities.</p>
 </div>
 <div class="page-body">
   {% if entities | length == 0 %}
   <div class="ha-card">
-    <div class="ha-card-body text-muted">No entities registered yet.</div>
+    <div class="ha-card-body text-muted">No sensor entities registered yet.</div>
   </div>
   {% else %}
+
+  <!-- Entity + range selector -->
   <div class="ha-card" style="margin-bottom:16px">
-    <div class="ha-card-body">
-      <label for="history-entity-select" style="display:block;font-size:.85rem;margin-bottom:8px;color:var(--text-secondary)">Select entity</label>
-      <select id="history-entity-select" class="form-control"
-              onchange="loadHistoryFor(this.value)">
-        <option value="">— choose an entity —</option>
-        {% for e in entities %}
-        <option value="{{ e.entity_id }}">{{ e.display_name }} ({{ e.entity_type }})</option>
-        {% endfor %}
-      </select>
+    <div class="ha-card-body" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:1;min-width:200px">
+        <label for="history-entity-select" style="display:block;font-size:.85rem;margin-bottom:6px;color:var(--text-secondary)">Entity</label>
+        <select id="history-entity-select" class="form-control" onchange="loadHistory()">
+          <option value="">— choose an entity —</option>
+          {% for e in entities %}
+          <option value="{{ e.entity_id }}">{{ e.display_name }}{% if e.source == "zigbee" %} (Zigbee){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label style="display:block;font-size:.85rem;margin-bottom:6px;color:var(--text-secondary)">Range</label>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-sm range-btn active" data-hours="24" onclick="setRange(this)">24 h</button>
+          <button class="btn btn-sm range-btn" data-hours="168" onclick="setRange(this)">7 d</button>
+          <button class="btn btn-sm range-btn" data-hours="720" onclick="setRange(this)">30 d</button>
+        </div>
+      </div>
     </div>
   </div>
-  <div id="history-chart" class="ha-card">
+
+  <!-- Chart + table -->
+  <div id="history-content" class="ha-card">
     <div class="ha-card-body text-muted" style="text-align:center;padding:40px 20px">
       Select an entity above to view its history.
     </div>
   </div>
+
   {% endif %}
 </div>
+<style>
+.range-btn { background:var(--ha-card-background,#1c1c1e); color:var(--text-secondary); border:1px solid rgba(255,255,255,.15); border-radius:6px; padding:4px 12px; cursor:pointer; font-size:.8rem; }
+.range-btn.active { background:var(--primary-color,#18bcf2); color:#fff; border-color:transparent; }
+.history-table { width:100%; border-collapse:collapse; font-size:.85rem; }
+.history-table th { text-align:left; padding:6px 12px; color:var(--text-secondary); font-weight:500; border-bottom:1px solid rgba(255,255,255,.08); }
+.history-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,.04); }
+</style>
 <script>
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function loadHistoryFor(entityId) {
-  if (!entityId) return;
-  var target = document.getElementById('history-chart');
-  target.innerHTML = '<div class="ha-card-body text-muted" style="text-align:center">Loading...</div>';
-  fetch('/api/edge/history/' + encodeURIComponent(entityId) + '?last=100')
-    .then(function(r) { return r.json(); })
-    .then(function(entries) {
-      if (!entries || entries.length === 0) {
-        target.innerHTML = '<div class="ha-card-body text-muted" style="text-align:center;padding:40px">No history available.</div>';
-        return;
-      }
-      var rows = entries.map(function(e) {
-        var d = new Date(e.recorded_at * 1000);
-        return '<tr><td style="color:var(--text-secondary);font-size:.8rem;white-space:nowrap">'
-          + esc(d.toLocaleString())
-          + '</td><td style="font-weight:500">'
-          + esc(e.state)
-          + '</td></tr>';
-      }).join('');
-      target.innerHTML = '<div class="ha-card-body" style="padding:0"><table style="width:100%;border-collapse:collapse">' + rows + '</table></div>';
-    })
-    .catch(function() {
-      target.innerHTML = '<div class="ha-card-body" style="color:var(--error)">Failed to load history.</div>';
-    });
-}
+(function(){
+  var _activeHours = 24;
+
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  function fmtTime(ts, hours){
+    var d = new Date(ts * 1000);
+    if(hours <= 24) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    return d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  }
+
+  function buildSvg(entries, width, height){
+    if(entries.length < 2) return '';
+    var PAD = {top:16, right:12, bottom:28, left:48};
+    var W = width - PAD.left - PAD.right;
+    var H = height - PAD.top - PAD.bottom;
+    var minTs = entries[0].ts, maxTs = entries[entries.length-1].ts;
+    var vals = entries.map(function(e){ return e.value; });
+    var minV = Math.min.apply(null, vals), maxV = Math.max.apply(null, vals);
+    var vRange = maxV - minV || 1;
+    var tsRange = maxTs - minTs || 1;
+
+    function px(ts){ return PAD.left + ((ts - minTs) / tsRange) * W; }
+    function py(v){ return PAD.top + H - ((v - minV) / vRange) * H; }
+
+    // Line + area path
+    var pts = entries.map(function(e){ return px(e.ts).toFixed(1)+','+py(e.value).toFixed(1); });
+    var linePath = 'M' + pts.join('L');
+    var areaPath = linePath
+      + 'L' + px(maxTs).toFixed(1) + ',' + (PAD.top + H).toFixed(1)
+      + 'L' + px(minTs).toFixed(1) + ',' + (PAD.top + H).toFixed(1)
+      + 'Z';
+
+    // Y-axis labels (3 ticks: min, mid, max)
+    var yTicks = [minV, (minV+maxV)/2, maxV];
+    var yLabels = yTicks.map(function(v){
+      return '<text x="'+(PAD.left-6)+'" y="'+(py(v)+4).toFixed(1)+'" text-anchor="end" font-size="10" fill="#8a8a8e">'+v.toFixed(1)+'</text>'
+           + '<line x1="'+PAD.left+'" y1="'+py(v).toFixed(1)+'" x2="'+(PAD.left+W)+'" y2="'+py(v).toFixed(1)+'" stroke="rgba(255,255,255,.06)" stroke-width="1"/>';
+    }).join('');
+
+    // X-axis labels (up to 5 ticks)
+    var numXTicks = Math.min(5, entries.length);
+    var xStep = Math.floor(entries.length / (numXTicks - 1 || 1));
+    var xLabels = '';
+    for(var i=0; i<entries.length; i += xStep){
+      var e = entries[Math.min(i, entries.length-1)];
+      xLabels += '<text x="'+px(e.ts).toFixed(1)+'" y="'+(PAD.top+H+18)+'" text-anchor="middle" font-size="10" fill="#8a8a8e">'+fmtTime(e.ts, _activeHours)+'</text>';
+    }
+    // Always include the last entry label
+    var last = entries[entries.length-1];
+    xLabels += '<text x="'+px(last.ts).toFixed(1)+'" y="'+(PAD.top+H+18)+'" text-anchor="middle" font-size="10" fill="#8a8a8e">'+fmtTime(last.ts, _activeHours)+'</text>';
+
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 '+width+' '+height+'" preserveAspectRatio="none">'
+      + '<defs><linearGradient id="hg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#18bcf2" stop-opacity=".35"/><stop offset="100%" stop-color="#18bcf2" stop-opacity="0"/></linearGradient></defs>'
+      + yLabels + xLabels
+      + '<path d="'+areaPath+'" fill="url(#hg)"/>'
+      + '<path d="'+linePath+'" fill="none" stroke="#18bcf2" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
+      + '</svg>';
+  }
+
+  window.setRange = function(btn){
+    document.querySelectorAll('.range-btn').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    _activeHours = parseInt(btn.dataset.hours, 10);
+    loadHistory();
+  };
+
+  window.loadHistory = function(){
+    var entityId = document.getElementById('history-entity-select').value;
+    if(!entityId) return;
+    var target = document.getElementById('history-content');
+    target.innerHTML = '<div class="ha-card-body text-muted" style="text-align:center;padding:40px">Loading…</div>';
+    var since = Math.floor(Date.now() / 1000) - _activeHours * 3600;
+    var url = '/api/edge/history/' + encodeURIComponent(entityId) + '?since=' + since;
+    fetch(url)
+      .then(function(r){ return r.json(); })
+      .then(function(entries){
+        if(!entries || entries.length === 0){
+          target.innerHTML = '<div class="ha-card-body text-muted" style="text-align:center;padding:40px">No history for the selected period.</div>';
+          return;
+        }
+        entries.sort(function(a,b){ return a.ts - b.ts; });
+
+        // Chart
+        var svgHtml = buildSvg(entries, 700, 220);
+
+        // Table (latest first)
+        var tableRows = entries.slice().reverse().map(function(e){
+          var d = new Date(e.ts * 1000);
+          return '<tr><td>'+esc(d.toLocaleString())+'</td><td>'+esc(String(e.value))+'</td></tr>';
+        }).join('');
+
+        target.innerHTML =
+          '<div class="ha-card-body" style="padding:16px">' + svgHtml + '</div>'
+          + '<div style="overflow-x:auto;border-top:1px solid rgba(255,255,255,.07)">'
+          + '<table class="history-table"><thead><tr><th>Time</th><th>Value</th></tr></thead>'
+          + '<tbody>' + tableRows + '</tbody></table></div>';
+      })
+      .catch(function(){
+        target.innerHTML = '<div class="ha-card-body" style="color:var(--error,#f44336);padding:20px">Failed to load history.</div>';
+      });
+  };
+})();
 </script>
 {% endblock %}
