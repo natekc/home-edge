@@ -1084,7 +1084,7 @@ async fn fragment_more_info(
 
     let (stat_min, stat_mean, stat_max): (Option<String>, Option<String>, Option<String>) =
         if entity_type == "sensor" {
-            match crate::history_store::stats_for_period(&history_24h) {
+            match crate::history_store::stats_for_slice(&history_24h) {
                 Some((mn, mean, mx)) => (
                     Some(format!("{mn:.1}")),
                     Some(format!("{mean:.1}")),
