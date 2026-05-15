@@ -2,50 +2,326 @@
 {% block content %}
 {% if onboarded %}
 
-<h1>{{ product_name }} is ready</h1>
-<p>Your instance is configured and running.</p>
+{# ── Already onboarded ─────────────────────────────────────────────────── #}
+<div class="wizard-steps">
+  <div class="wizard-step-dot done"></div>
+  <div class="wizard-step-dot done"></div>
+  <div class="wizard-step-dot done"></div>
+  <div class="wizard-step-dot done"></div>
+</div>
+<h1>Setup complete</h1>
+<p>{{ product_name }} is configured and running.</p>
 <a href="/" class="btn btn-primary btn-full" style="display:flex;justify-content:center">
-  Go to Dashboard
+  Go to dashboard
 </a>
 
 {% else %}
 
-<div class="wizard-steps">
-  <div class="wizard-step-dot {{ 'done' if steps[0].done else 'active' }}"></div>
-  <div class="wizard-step-dot {{ 'done' if steps[1].done else ('active' if steps[0].done else '') }}"></div>
-  <div class="wizard-step-dot {{ 'done' if steps[2].done else ('active' if steps[1].done else '') }}"></div>
-  <div class="wizard-step-dot {{ 'done' if steps[3].done else ('active' if steps[2].done else '') }}"></div>
+{# ── Onboarding wizard (one step visible at a time, driven by JS) ──────── #}
+
+{# Progress dots — JS replaces classes each time a step advances #}
+<div class="wizard-steps" id="onb-dots">
+  <div class="wizard-step-dot"></div>
+  <div class="wizard-step-dot"></div>
+  <div class="wizard-step-dot"></div>
+  <div class="wizard-step-dot"></div>
 </div>
 
-<h1>Set up {{ product_name }}</h1>
-<p>
-  Open the <strong>Home Assistant</strong> app, tap
-  <strong>Add Server</strong>, and enter this address:
-</p>
+{# ── Step 1: Create owner account ──────────────────────────────────────── #}
+<section id="onb-step-user" hidden>
+  <h1>Welcome</h1>
+  <p>Create an owner account to get started.</p>
+  <div id="onb-err-user" class="alert-error" hidden></div>
+  <form id="onb-form-user" onsubmit="onbSubmitUser(event)">
+    <div class="form-group">
+      <label for="onb-name">Name</label>
+      <input id="onb-name" class="form-control" type="text"
+             placeholder="Your name" autocomplete="name" required>
+    </div>
+    <div class="form-group">
+      <label for="onb-username">Username</label>
+      <input id="onb-username" class="form-control" type="text"
+             placeholder="username" autocomplete="username" required
+             pattern="[a-z0-9_\-]+" title="Lowercase letters, digits, _ or -">
+    </div>
+    <div class="form-group">
+      <label for="onb-password">Password</label>
+      <input id="onb-password" class="form-control" type="password"
+             autocomplete="new-password" required minlength="8">
+    </div>
+    <div class="form-group">
+      <label for="onb-confirm">Confirm password</label>
+      <input id="onb-confirm" class="form-control" type="password"
+             autocomplete="new-password" required minlength="8">
+    </div>
+    <button type="submit" class="btn btn-primary btn-full" id="onb-btn-user">
+      Create account
+    </button>
+  </form>
+</section>
 
-<div style="background:var(--page-bg);border-radius:10px;padding:14px 16px;margin:0 0 18px">
-  <div class="text-muted" style="font-size:.75rem;margin-bottom:2px">Connect to</div>
-  <div style="font-weight:700;font-size:1rem;word-break:break-all">http://{{ server_host }}:{{ server_port }}</div>
-</div>
+{# ── Step 2: Configure your home ───────────────────────────────────────── #}
+<section id="onb-step-core" hidden>
+  <h1>Where's your home?</h1>
+  <p>Used for sunrise, sunset, and weather information.</p>
+  <div id="onb-err-core" class="alert-error" hidden></div>
+  <form id="onb-form-core" onsubmit="onbSubmitCore(event)">
+    <div class="form-group">
+      <label for="onb-location-name">Home name</label>
+      <input id="onb-location-name" class="form-control" type="text"
+             placeholder="Home" value="Home">
+    </div>
+    <div class="form-group">
+      <label for="onb-language">Language</label>
+      <select id="onb-language" class="form-control">
+        <option value="en" selected>English</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="onb-units">Unit system</label>
+      <select id="onb-units" class="form-control">
+        <option value="metric" selected>Metric</option>
+        <option value="imperial">Imperial</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="onb-timezone">Time zone</label>
+      <select id="onb-timezone" class="form-control">
+        {# populated by JS via Intl API #}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary btn-full" id="onb-btn-core">
+      Next
+    </button>
+    <button type="button" class="btn btn-secondary btn-full" style="margin-top:8px"
+            onclick="onbShow('user')">Back</button>
+  </form>
+</section>
 
-<div>
-  {% for s in steps %}
-  <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-    <span class="{{ 'badge badge-success' if s.done else 'badge badge-neutral' }}" style="width:22px;justify-content:center">
-      {% if s.done %}✓{% else %}{{ loop.index }}{% endif %}
-    </span>
-    <span style="font-size:.88rem;color:{{ 'var(--text)' if s.done else 'var(--text-secondary)' }}">
-      {{ s.label }}
-    </span>
+{# ── Step 3: Analytics ─────────────────────────────────────────────────── #}
+<section id="onb-step-analytics" hidden>
+  <h1>Share analytics data</h1>
+  <p>
+    Help improve {{ product_name }} by sharing basic, anonymized usage statistics.
+    No personal or sensor data is ever sent.
+  </p>
+  <label style="display:flex;gap:12px;align-items:flex-start;cursor:pointer;margin:0 0 24px">
+    <input type="checkbox" id="onb-analytics-opt" style="margin-top:2px;width:18px;height:18px;flex-shrink:0">
+    <span style="font-size:.88rem">Yes, share anonymized analytics to help improve {{ product_name }}</span>
+  </label>
+  <div id="onb-err-analytics" class="alert-error" hidden></div>
+  <button class="btn btn-primary btn-full" id="onb-btn-analytics"
+          onclick="onbSubmitAnalytics()">Next</button>
+  <button type="button" class="btn btn-secondary btn-full" style="margin-top:8px"
+          onclick="onbShow('core')">Back</button>
+</section>
+
+{# ── Step 4: Connect Home Assistant app ────────────────────────────────── #}
+<section id="onb-step-finish" hidden>
+  <h1>You're all set!</h1>
+  <p>
+    Connect the <strong>Home Assistant</strong> mobile app to control and
+    monitor your home. Tap <strong>Add Server</strong> and enter this address:
+  </p>
+  <div style="background:var(--page-bg);border-radius:10px;padding:14px 16px;margin:0 0 24px">
+    <div class="text-muted" style="font-size:.75rem;margin-bottom:2px">Server address</div>
+    <div style="font-weight:700;font-size:1rem;word-break:break-all">
+      http://{{ server_host }}:{{ server_port }}
+    </div>
   </div>
-  {% endfor %}
-</div>
+  <a href="/" class="btn btn-primary btn-full" style="display:flex;justify-content:center">
+    Go to dashboard
+  </a>
+</section>
 
-<form method="post" action="/api/onboarding/complete" style="margin-top:18px">
-  <button type="submit" class="btn btn-secondary btn-sm" style="font-size:.78rem">
-    Force complete (dev only)
-  </button>
-</form>
+<script>
+(function () {
+  // ── State ──────────────────────────────────────────────────────────────
+  var STEPS = ['user', 'core', 'analytics', 'finish'];
+  var accessToken = sessionStorage.getItem('onb_access_token') || null;
+
+  // ── Helpers ────────────────────────────────────────────────────────────
+  function showError(id, msg) {
+    var el = document.getElementById('onb-err-' + id);
+    el.textContent = msg;
+    el.hidden = false;
+  }
+  function clearError(id) {
+    var el = document.getElementById('onb-err-' + id);
+    if (el) { el.textContent = ''; el.hidden = true; }
+  }
+  function setBusy(btnId, busy, label) {
+    var btn = document.getElementById(btnId);
+    btn.disabled = busy;
+    if (label) btn.textContent = label;
+  }
+
+  // ── Expose showStep globally for Back buttons ──────────────────────────
+  window.onbShow = function (name) {
+    var idx = STEPS.indexOf(name);
+    STEPS.forEach(function (s) {
+      document.getElementById('onb-step-' + s).hidden = (s !== name);
+    });
+    // Update progress dots
+    var dots = document.querySelectorAll('#onb-dots .wizard-step-dot');
+    dots.forEach(function (d, i) {
+      d.className = 'wizard-step-dot' +
+        (i < idx ? ' done' : i === idx ? ' active' : '');
+    });
+    window.scrollTo(0, 0);
+  };
+
+  // ── Populate timezone select ───────────────────────────────────────────
+  var TZ_LIST = [
+    'Africa/Abidjan','Africa/Cairo','Africa/Johannesburg','Africa/Lagos','Africa/Nairobi',
+    'America/Anchorage','America/Argentina/Buenos_Aires','America/Bogota',
+    'America/Chicago','America/Denver','America/Los_Angeles','America/Mexico_City',
+    'America/New_York','America/Phoenix','America/Sao_Paulo','America/Toronto',
+    'America/Vancouver','Asia/Bangkok','Asia/Dubai','Asia/Hong_Kong',
+    'Asia/Jakarta','Asia/Kolkata','Asia/Seoul','Asia/Shanghai','Asia/Singapore',
+    'Asia/Tokyo','Australia/Melbourne','Australia/Perth','Australia/Sydney',
+    'Europe/Amsterdam','Europe/Athens','Europe/Berlin','Europe/Brussels',
+    'Europe/Budapest','Europe/Copenhagen','Europe/Dublin','Europe/Helsinki',
+    'Europe/Lisbon','Europe/London','Europe/Madrid','Europe/Moscow',
+    'Europe/Oslo','Europe/Paris','Europe/Rome','Europe/Stockholm',
+    'Europe/Vienna','Europe/Warsaw','Europe/Zurich',
+    'Pacific/Auckland','Pacific/Honolulu','UTC'
+  ];
+  (function () {
+    var detected = (Intl && Intl.DateTimeFormat
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone : null) || 'UTC';
+    if (!TZ_LIST.includes(detected)) TZ_LIST.unshift(detected);
+    var sel = document.getElementById('onb-timezone');
+    TZ_LIST.forEach(function (tz) {
+      var o = document.createElement('option');
+      o.value = tz;
+      o.textContent = tz.replace(/_/g, '\u00a0');  // non-breaking space for readability
+      if (tz === detected) o.selected = true;
+      sel.appendChild(o);
+    });
+  })();
+
+  // ── Determine initial step from server-side progress ──────────────────
+  var initialStep = (function () {
+    {% if steps[2].done %}return 'finish';
+    {% elif steps[1].done %}return 'analytics';
+    {% elif steps[0].done %}return 'core';
+    {% else %}return 'user';{% endif %}
+  })();
+  onbShow(initialStep);
+
+  // ── Step 1: Create account ─────────────────────────────────────────────
+  window.onbSubmitUser = function (evt) {
+    evt.preventDefault();
+    clearError('user');
+    var name     = document.getElementById('onb-name').value.trim();
+    var username = document.getElementById('onb-username').value.trim();
+    var password = document.getElementById('onb-password').value;
+    var confirm  = document.getElementById('onb-confirm').value;
+
+    if (password !== confirm) {
+      showError('user', 'Passwords do not match.');
+      return;
+    }
+    setBusy('onb-btn-user', true, 'Creating\u2026');
+
+    fetch('/api/onboarding/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: location.origin + '/',
+        name: name, username: username, password: password, language: 'en'
+      })
+    })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      if (!res.ok) {
+        showError('user', res.j.message || 'Could not create account.');
+        setBusy('onb-btn-user', false, 'Create account');
+        return;
+      }
+      // Exchange auth_code for access token
+      return fetch('/auth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'grant_type=authorization_code'
+          + '&code=' + encodeURIComponent(res.j.auth_code)
+          + '&client_id=' + encodeURIComponent(location.origin + '/')
+      })
+      .then(function (r2) { return r2.json(); })
+      .then(function (tok) {
+        accessToken = tok.access_token;
+        if (accessToken) sessionStorage.setItem('onb_access_token', accessToken);
+        onbShow('core');
+        setBusy('onb-btn-user', false, 'Create account');
+      });
+    })
+    .catch(function () {
+      showError('user', 'Network error. Please try again.');
+      setBusy('onb-btn-user', false, 'Create account');
+    });
+  };
+
+  // ── Step 2: Core config ────────────────────────────────────────────────
+  window.onbSubmitCore = function (evt) {
+    evt.preventDefault();
+    clearError('core');
+    setBusy('onb-btn-core', true, 'Saving\u2026');
+
+    fetch('/api/onboarding/core_config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location_name: document.getElementById('onb-location-name').value.trim() || 'Home',
+        language:  document.getElementById('onb-language').value,
+        unit_system: document.getElementById('onb-units').value,
+        time_zone: document.getElementById('onb-timezone').value
+      })
+    })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      setBusy('onb-btn-core', false, 'Next');
+      if (!res.ok) { showError('core', res.j.message || 'Could not save settings.'); return; }
+      onbShow('analytics');
+    })
+    .catch(function () {
+      showError('core', 'Network error. Please try again.');
+      setBusy('onb-btn-core', false, 'Next');
+    });
+  };
+
+  // ── Step 3: Analytics ─────────────────────────────────────────────────
+  window.onbSubmitAnalytics = function () {
+    clearError('analytics');
+    setBusy('onb-btn-analytics', true, 'Saving\u2026');
+
+    var headers = { 'Content-Type': 'application/json' };
+    if (accessToken) headers['Authorization'] = 'Bearer ' + accessToken;
+
+    fetch('/api/onboarding/analytics', { method: 'POST', headers: headers })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      setBusy('onb-btn-analytics', false, 'Next');
+      // 403 "already done" is fine — move forward
+      if (!res.ok && !(res.j.code === 'already_done' || res.j.message === 'Analytics step already done')) {
+        if (res.j.message === 'Missing or invalid Bearer token') {
+          showError('analytics',
+            'Your session expired. Please refresh and log in first, then return to complete setup.');
+        } else {
+          showError('analytics', res.j.message || 'Error saving analytics preference.');
+        }
+        return;
+      }
+      sessionStorage.removeItem('onb_access_token');
+      onbShow('finish');
+    })
+    .catch(function () {
+      showError('analytics', 'Network error. Please try again.');
+      setBusy('onb-btn-analytics', false, 'Next');
+    });
+  };
+})();
+</script>
 
 {% endif %}
 {% endblock %}
