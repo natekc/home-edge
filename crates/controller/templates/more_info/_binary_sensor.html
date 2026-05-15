@@ -6,7 +6,10 @@
   </div>
 </div>
 {% if entity.device_class %}
-<div class="mi-meta">Class: {{ entity.device_class }}</div>
+<div class="mi-meta" style="margin-bottom:8px">
+  {# Source: homeassistant/components/binary_sensor/__init__.py device_class display #}
+  <span class="mi-badge">{{ entity.device_class | replace("_", " ") | title }}</span>
+</div>
 {% endif %}
 {% if last_changed %}
 <div class="mi-meta">Last changed: <span class="mi-ts" data-ts="{{ last_changed }}">{{ last_changed }}</span></div>

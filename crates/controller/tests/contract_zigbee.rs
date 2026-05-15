@@ -342,6 +342,7 @@ async fn ias_zone_creates_contact_and_tamper_entities() {
     let ieee = IeeeAddr::from_hex("0x00158d0006666666").expect("valid ieee");
     // Door/window sensor: IAS Zone (0x0500) + Power (0x0001).
     let mut dev = mock_device(ieee, "front_door_sensor", vec![0x0500, 0x0001]);
+    dev.state.insert("zone_type".to_string(), json!(0x0015u16)); // Contact switch → "door"
     dev.state.insert("contact".to_string(), json!(false));
     dev.state.insert("tamper".to_string(), json!(false));
     dev.state.insert("battery".to_string(), json!(95));
