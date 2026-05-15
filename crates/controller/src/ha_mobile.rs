@@ -192,12 +192,32 @@ async fn mobile_app_register(
     };
 
     let resp = RegistrationResponse {
-        webhook_id: record.webhook_id,
-        secret: record.secret,
+        webhook_id: record.webhook_id.clone(),
+        secret: record.secret.clone(),
         // Source: "no cloud subscription" — always null for embedded device
         cloudhook_url: None,
         remote_ui_url: None,
     };
+
+    // Auto-create a Person linked to this device if no existing person already
+    // claims the device as a tracker.
+    // Source: homeassistant/components/person/__init__.py — persons are linked
+    //         to device_trackers via CONF_DEVICE_TRACKERS; here we seed one
+    //         automatically on first registration so location updates work
+    //         without manual configuration.
+    let existing = state.person_store.all_persons();
+    if !existing
+        .iter()
+        .any(|p| p.device_trackers.contains(&record.webhook_id))
+    {
+        state.person_store.add_or_update(crate::person_store::Person {
+            // Use webhook_id as the stable slug — it's already [a-z0-9] safe.
+            id: record.webhook_id.clone(),
+            name: record.device_name.clone(),
+            device_trackers: vec![record.webhook_id.clone()],
+            user_id: record.owner_username.clone(),
+        });
+    }
 
     // Source: return self.json(..., status_code=HTTPStatus.CREATED)
     (StatusCode::CREATED, Json(resp)).into_response()

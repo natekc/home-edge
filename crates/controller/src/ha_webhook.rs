@@ -267,8 +267,71 @@ async fn handle_mobile_webhook(
             (StatusCode::OK, Json(json!(zones))).into_response()
         }
         // Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_update_location
-        // Accepts a device location update. Home-edge acknowledges but does not store.
+        // Accepts a device location update and drives person entity state.
+        // Source: homeassistant/components/person/__init__.py  _async_handle_tracker_update
         "update_location" => {
+            let data = object.get("data").and_then(|v| v.as_object());
+            if let Some(data) = data {
+                let gps = data.get("gps").and_then(|v| v.as_array());
+                if let Some(gps) = gps {
+                    let lat = gps.first().and_then(|v| v.as_f64());
+                    let lon = gps.get(1).and_then(|v| v.as_f64());
+                    // Source: homeassistant/helpers/entity.py  ATTR_GPS_ACCURACY
+                    let accuracy = data
+                        .get("gps_accuracy")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+
+                    if let (Some(lat), Some(lon)) = (lat, lon) {
+                        let zones = state.zone_store.list().await.unwrap_or_default();
+                        // Update every person that tracks this device.
+                        state.person_store.handle_location_update(
+                            &device.webhook_id,
+                            lat,
+                            lon,
+                            accuracy,
+                            &zones,
+                        );
+
+                        // Push updated person states into the StateStore so the
+                        // HA companion app and WS subscribers see person entities.
+                        // Source: homeassistant/components/person/__init__.py
+                        //         _async_write_ha_state → state_machine.async_set
+                        for ps in state.person_store.all_states() {
+                            let entity_id = format!("person.{}", ps.person_id);
+                            let mut attrs: std::collections::HashMap<String, serde_json::Value> =
+                                std::collections::HashMap::new();
+                            // Source: homeassistant/helpers/entity.py  ATTR_FRIENDLY_NAME
+                            attrs.insert(
+                                "friendly_name".to_string(),
+                                json!(ps.person_id),
+                            );
+                            // Source: homeassistant/helpers/entity.py  ATTR_LATITUDE
+                            if let Some(v) = ps.latitude {
+                                attrs.insert("latitude".to_string(), json!(v));
+                            }
+                            // Source: homeassistant/helpers/entity.py  ATTR_LONGITUDE
+                            if let Some(v) = ps.longitude {
+                                attrs.insert("longitude".to_string(), json!(v));
+                            }
+                            // Source: homeassistant/helpers/entity.py  ATTR_GPS_ACCURACY
+                            if let Some(v) = ps.gps_accuracy {
+                                attrs.insert("gps_accuracy".to_string(), json!(v));
+                            }
+                            // Source: homeassistant/components/person/__init__.py  ATTR_SOURCE
+                            if let Some(ref src) = ps.source {
+                                attrs.insert("source".to_string(), json!(src));
+                            }
+                            let state_obj = crate::state_store::make_state(
+                                entity_id,
+                                ps.state.clone(),
+                                crate::state_store::StateAttributes::from_hash(attrs),
+                            );
+                            let _ = state.states.set(state_obj);
+                        }
+                    }
+                }
+            }
             (StatusCode::OK, Json(json!({}))).into_response()
         }
         // Source: homeassistant/components/mobile_app/webhook.py  handle_webhook_fire_event

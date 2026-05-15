@@ -234,6 +234,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/ui/services/{domain}/{service}",                post(ui_service_call))
         // Mutation API (HTMX)
         .route("/api/devices/{webhook_id}",                      patch(api_device_rename))
+        // Person entity REST API
+        // Source: homeassistant/components/person/__init__.py  REST API handlers
+        .route("/api/persons",                                   get(api_persons_list).post(api_persons_create))
+        .route("/api/persons/{id}",                              axum::routing::delete(api_persons_delete))
         // BLE stubs
         .route("/api/ble/scan",                                  post(api_ble_scan))
         .route("/api/ble/pair",                                  post(api_ble_pair))
@@ -384,11 +388,33 @@ async fn dashboard_response(state: &AppState) -> Response {
     let location_name = load_location_name(state).await;
     let areas = load_areas(state).await;
     let has_any_device = !device_summaries.is_empty() || !zigbee_device_summaries.is_empty();
+
+    // Build person and person_states data for the dashboard.
+    // Source: homeassistant/components/person/__init__.py  PersonStorageCollection
+    let persons = state.person_store.all_persons();
+    let person_states: std::collections::HashMap<String, serde_json::Value> = persons
+        .iter()
+        .filter_map(|p| {
+            state.person_store.get_state(&p.id).map(|ps| {
+                let v = serde_json::json!({
+                    "state": ps.state,
+                    "latitude": ps.latitude,
+                    "longitude": ps.longitude,
+                    "gps_accuracy": ps.gps_accuracy,
+                    "source": ps.source,
+                });
+                (p.id.clone(), v)
+            })
+        })
+        .collect();
+
     let ctx = app_ctx!(state, "dashboard", location_name.as_str(), &areas,
         devices               => Value::from_serialize(&device_summaries),
         zigbee_devices        => Value::from_serialize(&zigbee_device_summaries),
         has_any_device        => has_any_device,
         area_cards            => Value::from_serialize(&area_cards),
+        persons               => Value::from_serialize(&persons),
+        person_states         => Value::from_serialize(&person_states),
     );
     render_template(state, "dashboard.html", ctx)
 }
@@ -1511,6 +1537,73 @@ async fn ui_service_call(
 #[derive(Deserialize)]
 struct DeviceRenameForm {
     device_name: String,
+}
+
+// ---------------------------------------------------------------------------
+// Person entity REST API
+// ---------------------------------------------------------------------------
+
+/// GET /api/persons — list all persons.
+///
+/// Source: homeassistant/components/person/__init__.py  PersonStorageCollection REST handlers
+async fn api_persons_list(State(state): State<Arc<AppState>>) -> Response {
+    let persons = state.person_store.all_persons();
+    (StatusCode::OK, Json(serde_json::to_value(&persons).unwrap_or(serde_json::json!([])))).into_response()
+}
+
+/// POST /api/persons — create or update a person.
+///
+/// Body: `{"id": "...", "name": "...", "device_trackers": ["..."], "user_id": null}`
+/// Source: homeassistant/components/person/__init__.py  PersonStorageCollection.async_create_item
+async fn api_persons_create(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(id) = body.get("id").and_then(|v| v.as_str()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"message": "missing required field: id"})),
+        )
+            .into_response();
+    };
+    let Some(name) = body.get("name").and_then(|v| v.as_str()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"message": "missing required field: name"})),
+        )
+            .into_response();
+    };
+    let device_trackers = body
+        .get("device_trackers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let person = crate::person_store::Person {
+        id: id.to_string(),
+        name: name.to_string(),
+        device_trackers,
+        user_id: body
+            .get("user_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    };
+    state.person_store.add_or_update(person);
+    (StatusCode::OK, Json(json!({"success": true}))).into_response()
+}
+
+/// DELETE /api/persons/{id} — remove a person.
+///
+/// Source: homeassistant/components/person/__init__.py  PersonStorageCollection.async_delete_item
+async fn api_persons_delete(
+    State(state): State<Arc<AppState>>,
+    Path(person_id): Path<String>,
+) -> Response {
+    state.person_store.remove(&person_id);
+    (StatusCode::OK, Json(json!({"success": true}))).into_response()
 }
 
 async fn api_device_rename(

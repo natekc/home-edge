@@ -23,6 +23,8 @@ use crate::area_registry_store::AreaRegistryStore;
 use crate::notification_store::NotificationStore;
 use crate::zone_store::ZoneStore;
 #[cfg(feature = "transport_wifi")]
+use crate::person_store::PersonStore;
+#[cfg(feature = "transport_wifi")]
 use crate::auth_store::AuthStore;
 #[cfg(feature = "transport_wifi")]
 use crate::long_lived_token_store::LongLivedTokenStore;
@@ -61,6 +63,9 @@ pub struct AppState {
     pub auth: AuthStore,
     pub area_registry: AreaRegistryStore,
     pub zone_store: ZoneStore,
+    /// Person entity registry and location state.
+    /// Source: homeassistant/components/person/__init__.py  PersonStorageCollection
+    pub person_store: Arc<PersonStore>,
     pub mobile_devices: MobileDeviceStore,
     pub mobile_entities: MobileEntityStore,
     pub states: std::sync::Arc<StateStore>,
@@ -94,6 +99,8 @@ impl AppState {
         let auth = AuthStore::new(storage.root().to_path_buf());
         let area_registry = AreaRegistryStore::new(storage.root().to_path_buf());
         let zone_store = ZoneStore::new(storage.root().to_path_buf());
+        // Source: homeassistant/components/person/__init__.py  PersonStorageCollection
+        let person_store = Arc::new(PersonStore::new());
         let mobile_devices = MobileDeviceStore::new(storage.root().to_path_buf());
         let mobile_entities = MobileEntityStore::new(storage.root().to_path_buf());
         let tokens = TokenStore::new(storage.root().to_path_buf());
@@ -109,6 +116,7 @@ impl AppState {
             auth,
             area_registry,
             zone_store,
+            person_store,
             mobile_devices,
             mobile_entities,
             config,

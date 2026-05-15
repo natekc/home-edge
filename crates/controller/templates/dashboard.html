@@ -116,6 +116,31 @@
     {% include "fragments/sensors.html" %}
   </div>
 
+  <!-- People section — shown when at least one person is registered.
+       Source: homeassistant/components/person/__init__.py  PersonStorageCollection -->
+  {% if persons | length > 0 %}
+  <div class="page-section-header">People</div>
+  <div class="person-cards" style="display:flex;flex-wrap:wrap;gap:12px;padding:0 16px 16px">
+    {% for person in persons %}
+    {% set ps = person_states[person.id] %}
+    <div class="ha-card person-card" style="min-width:140px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:8px">
+      <div class="person-avatar" style="width:48px;height:48px;border-radius:50%;background:var(--primary-color);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.3rem;font-weight:700">
+        {{ person.name | first | upper }}
+      </div>
+      <div style="font-weight:600;font-size:.9rem">{{ person.name }}</div>
+      <div class="transport-badge" style="font-size:.75rem">
+        {% if ps %}
+          {# Source: homeassistant/components/zone/__init__.py  STATE_HOME / STATE_NOT_HOME #}
+          {% if ps.state == "home" %}🏠 Home
+          {% elif ps.state == "not_home" %}🔴 Away
+          {% else %}📍 {{ ps.state }}{% endif %}
+        {% else %}❓ Unknown{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% endif %}
 </div>
 {% endblock %}
