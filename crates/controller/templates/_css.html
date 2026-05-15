@@ -53,6 +53,24 @@
   --sidebar-active:     #0288d1;
 }
 
+/* --- Theme overrides --------------------------------------------------- */
+/* Source: homeassistant/components/frontend/__init__.py THEMES */
+/* Light theme — explicit overrides when data-theme="light" is set on <html>. */
+/* Dark theme is the HA default; dark overrides are already in :root above,  */
+/* so no separate [data-theme="dark"] block is needed.                        */
+[data-theme="light"] {
+  --page-bg:                #f5f5f5;
+  --card-bg:                #fff;
+  --primary-text:           #212121;
+  --secondary-text:         #757575;
+  --sidebar-background-color: #fff;
+  --divider-color:          #e0e0e0;
+  --text:                   #212121;
+  --text-secondary:         #757575;
+  --sidebar-bg:             #fff;
+  --sidebar-text:           #212121;
+}
+
 /* --- Reset ------------------------------------------------------------- */
 *, *::before, *::after { box-sizing: border-box; }
 /* Set background on html so iOS WebKit rubber-band overscroll doesn't show black */

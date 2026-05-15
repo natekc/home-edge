@@ -79,6 +79,11 @@ pub fn build_env() -> Environment<'static> {
     .expect("notifications.html");
     env.add_template("system.html", include_str!("../templates/system.html"))
         .expect("system.html");
+    env.add_template(
+        "settings_users.html",
+        include_str!("../templates/settings_users.html"),
+    )
+    .expect("settings_users.html");
     env.add_template("areas.html", include_str!("../templates/areas.html"))
         .expect("areas.html");
     env.add_template(

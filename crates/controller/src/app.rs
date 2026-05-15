@@ -25,6 +25,8 @@ use crate::zone_store::ZoneStore;
 #[cfg(feature = "transport_wifi")]
 use crate::auth_store::AuthStore;
 #[cfg(feature = "transport_wifi")]
+use crate::long_lived_token_store::LongLivedTokenStore;
+#[cfg(feature = "transport_wifi")]
 use crate::ha_auth::{LoginFlowStore, TokenStore};
 #[cfg(feature = "transport_wifi")]
 use crate::ha_webhook::WebhookStore;
@@ -68,6 +70,10 @@ pub struct AppState {
     pub services: ServiceRegistry,
     pub templates: minijinja::Environment<'static>,
     pub history: std::sync::Arc<crate::history_store::HistoryStore>,
+    pub long_lived_tokens: LongLivedTokenStore,
+    /// Unix timestamp (seconds) of process start — used for uptime display.
+    /// Source: homeassistant/components/system_health/__init__.py  SystemHealthInfo
+    pub start_time: std::time::Instant,
     pub logbook: std::sync::Arc<crate::logbook_store::LogbookStore>,
     pub notifications: NotificationStore,
     /// Zigbee device registry (only populated when the `zigbee` feature is enabled
@@ -91,6 +97,7 @@ impl AppState {
         let mobile_devices = MobileDeviceStore::new(storage.root().to_path_buf());
         let mobile_entities = MobileEntityStore::new(storage.root().to_path_buf());
         let tokens = TokenStore::new(storage.root().to_path_buf());
+        let long_lived_tokens = LongLivedTokenStore::new(storage.root().to_path_buf());
         let history_capacity = config.history.capacity;
         let history_db_path = storage.root().join("history.db");
         #[cfg(feature = "zigbee")]
@@ -115,6 +122,8 @@ impl AppState {
             history: std::sync::Arc::new(
                 crate::history_store::HistoryStore::open(history_capacity, &history_db_path)
             ),
+            long_lived_tokens,
+            start_time: std::time::Instant::now(),
             logbook: std::sync::Arc::new(crate::logbook_store::LogbookStore::new(history_capacity)),
             notifications: NotificationStore::new(),
             #[cfg(feature = "zigbee")]
@@ -133,6 +142,7 @@ impl AppState {
             .core
             .set_runtime_mode(RuntimeMode::from_persisted_onboarding(onboarding.onboarded));
         state.tokens.load_persisted().await?;
+        state.long_lived_tokens.load().await?;
         state
             .area_registry
             .seed_if_empty(&state.config.areas.names)
