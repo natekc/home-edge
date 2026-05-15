@@ -1901,6 +1901,23 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
+    // Source: homeassistant/components/climate/__init__.py ATTR_PRESET_MODE / ATTR_PRESET_MODES
+    let preset_modes: Vec<String> = attrs
+        .get("preset_modes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let preset_mode = attrs.get("preset_mode").and_then(|v| v.as_str()).map(|s| s.to_string());
+    // Source: homeassistant/components/climate/__init__.py ATTR_FAN_MODE / ATTR_FAN_MODES
+    let fan_modes: Vec<String> = attrs
+        .get("fan_modes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let fan_mode = attrs.get("fan_mode").and_then(|v| v.as_str()).map(|s| s.to_string());
+    // Source: homeassistant/components/climate/__init__.py ATTR_HUMIDITY / ATTR_CURRENT_HUMIDITY
+    let target_humidity = attrs.get("humidity").and_then(|v| v.as_f64()).map(|v| v as f32);
+    let current_humidity = attrs.get("current_humidity").and_then(|v| v.as_f64()).map(|v| v as f32);
     let brightness = attrs
         .get("brightness")
         .and_then(|v| v.as_u64())
@@ -1987,6 +2004,12 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         current_temperature,
         target_temperature,
         hvac_modes,
+        preset_mode,
+        preset_modes,
+        fan_mode,
+        fan_modes,
+        target_humidity,
+        current_humidity,
         brightness,
         color_temp_kelvin,
         min_color_temp_kelvin,
@@ -2002,6 +2025,23 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         device_name: None, // mobile-app entities are not under a Zigbee device
         // Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
         is_unavailable,
+    }
+}
+
+/// Domain sort priority for area card entity ordering.
+/// Source: homeassistant/components/frontend/ lovelace area card entity ordering
+fn domain_sort_key(entity_type: &str) -> u8 {
+    match entity_type {
+        "light"         => 0,
+        "switch"        => 1,
+        "climate"       => 2,
+        "cover"         => 3,
+        "lock"          => 4,
+        "fan"           => 5,
+        "media_player"  => 6,
+        "binary_sensor" => 7,
+        "sensor"        => 8,
+        _               => 9,
     }
 }
 
@@ -2125,7 +2165,21 @@ async fn build_area_cards(state: &AppState, all_views: &[EntityView]) -> Vec<Are
                 .iter()
                 .find(|e| e.entity_type == "sensor" && e.device_class == "humidity")
                 .map(|e| if e.unit.is_empty() { e.value.clone() } else { format!("{} {}", e.value, e.unit) });
-            AreaCard { area_name, entities, area_temp, area_humidity }
+            // Source: homeassistant/components/frontend/ area card domain count badges
+            let lights_on = entities.iter()
+                .filter(|e| e.entity_type == "light" && e.value == "on")
+                .count();
+            let switches_on = entities.iter()
+                .filter(|e| e.entity_type == "switch" && e.value == "on")
+                .count();
+            // Source: homeassistant/components/frontend/ lovelace area card entity ordering
+            let mut sorted_entities = entities;
+            sorted_entities.sort_by(|a, b| {
+                domain_sort_key(&a.entity_type)
+                    .cmp(&domain_sort_key(&b.entity_type))
+                    .then_with(|| a.display_name.cmp(&b.display_name))
+            });
+            AreaCard { area_name, entities: sorted_entities, area_temp, area_humidity, lights_on, switches_on }
         })
         .collect();
     // Named areas sort alphabetically; "Unassigned" goes last.

@@ -11,9 +11,17 @@
     {{ card.area_name }}
     {% if card.area_temp %}<span style="font-size:.8rem;color:var(--secondary-text);margin-left:8px">🌡 {{ card.area_temp }}</span>{% endif %}
     {% if card.area_humidity %}<span style="font-size:.8rem;color:var(--secondary-text);margin-left:6px">💧 {{ card.area_humidity }}</span>{% endif %}
+    {# Source: homeassistant/components/frontend/ area card domain count badges #}
+    {% if card.lights_on > 0 %}
+    <span style="font-size:.8rem;color:var(--secondary-text);margin-left:6px">💡 {{ card.lights_on }} on</span>
+    {% endif %}
   </div>
 
   {% for entity in card.entities %}
+  {# Source: homeassistant/components/frontend/ entity grouping divider #}
+  {% if loop.changed(entity.entity_type) and not loop.first %}
+  <div class="entity-group-divider" aria-hidden="true"></div>
+  {% endif %}
   {# --- Determine extra row class for colouring active states --- #}
   {% set row_class = "" %}
   {% if entity.is_unavailable %}
