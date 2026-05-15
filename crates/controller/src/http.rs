@@ -1825,15 +1825,9 @@ async fn api_zigbee_permit_join(
     match &state.zigbee {
         Some(handle) => match handle.permit_join(duration).await {
             Ok(()) => {
-                // HTMX clients follow HX-Redirect for a full client-side navigation.
-                // Plain browser and API clients follow the 303 Location header.
-                axum::response::Response::builder()
-                    .status(StatusCode::SEE_OTHER)
-                    .header("Location", "/zigbee")
-                    .header("HX-Redirect", "/zigbee")
-                    .body(axum::body::Body::empty())
-                    .unwrap()
-                    .into_response()
+                // The Add Device modal uses JS fetch — return JSON so the caller
+                // knows how long the permit window is open without following a redirect.
+                (StatusCode::OK, Json(json!({ "ok": true, "remaining_secs": duration }))).into_response()
             }
             Err(e) => internal_error(&e),
         },
@@ -1845,15 +1839,7 @@ async fn api_zigbee_permit_join(
 async fn api_zigbee_permit_join_stop(State(state): State<Arc<AppState>>) -> Response {
     match &state.zigbee {
         Some(handle) => match handle.permit_join(0).await {
-            Ok(()) => {
-                axum::response::Response::builder()
-                    .status(StatusCode::SEE_OTHER)
-                    .header("Location", "/zigbee")
-                    .header("HX-Redirect", "/zigbee")
-                    .body(axum::body::Body::empty())
-                    .unwrap()
-                    .into_response()
-            }
+            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(e) => internal_error(&e),
         },
         None => (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new("zigbee bridge not running".into()))).into_response(),
