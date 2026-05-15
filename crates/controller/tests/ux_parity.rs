@@ -124,6 +124,7 @@ fn fixture_ctx(template: &str) -> Value {
             "time_zone":     "UTC",
             "unit_system":   "metric",
             "country":       "US",
+            "access_tokens": [],
         })),
         "system.html" => base_ctx("system", json!({
             "version":      "0.1.0",
