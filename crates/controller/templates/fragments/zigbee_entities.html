@@ -18,6 +18,7 @@
         <th>State</th>
         <th>Unit</th>
         <th>Area</th>
+        <th>Disabled</th>
       </tr>
     </thead>
     <tbody>
@@ -52,6 +53,17 @@
             </select>
             <button type="submit" class="btn btn-secondary btn-sm" style="font-size:.78rem;padding:2px 8px">Set</button>
           </form>
+        </td>
+        {# Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by #}
+        <td style="text-align:center">
+          <label class="toggle" style="margin:0">
+            <input type="checkbox" {% if ent.disabled %}checked{% endif %}
+                   hx-patch="/api/zigbee/entities/{{ ent.entity_id }}"
+                   hx-vals='js:{"disabled": event.target.checked ? "true" : "false"}'
+                   hx-swap="none"
+                   hx-trigger="change">
+            <span class="toggle-slider"></span>
+          </label>
         </td>
       </tr>
       {% endfor %}

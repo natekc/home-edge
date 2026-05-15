@@ -36,7 +36,7 @@
           <select id="area_id" name="area_id" class="form-control">
             <option value="">— No area —</option>
             {% for area in areas %}
-            <option value="{{ area }}" {% if entity.user_area_id == area %}selected{% endif %}>{{ area }}</option>
+            <option value="{{ area.area_id }}" {% if entity.user_area_id == area.area_id %}selected{% endif %}>{{ area.name }}</option>
             {% endfor %}
           </select>
         </div>
