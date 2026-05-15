@@ -11,22 +11,13 @@
       <h1>Zigbee Devices</h1>
       <p>Devices connected via the embedded Zigbee bridge.</p>
     </div>
-    {% if bridge_running and not pairing_remaining_secs %}
-    <div>
-      <form hx-post="/api/zigbee/permit_join"
-            hx-target="body"
-            style="display:inline-flex;align-items:center;gap:8px">
-        <select name="duration" class="form-control form-control-sm" style="width:auto">
-          <option value="60" selected>1 min</option>
-          <option value="120">2 min</option>
-          <option value="254">Max (4 min)</option>
-        </select>
-        <button type="submit" class="btn btn-primary" style="display:flex;align-items:center;gap:5px">
-          <svg width="16" height="16"><use href="#icon-plus"/></svg>
-          Add Device
-        </button>
-      </form>
-    </div>
+    {% if bridge_running %}
+    <button id="add-device-btn" class="btn btn-primary"
+            style="display:flex;align-items:center;gap:5px"
+            onclick="pjOpen()">
+      <svg width="16" height="16"><use href="#icon-plus"/></svg>
+      Add Device
+    </button>
     {% endif %}
   </div>
 </div>
@@ -48,10 +39,6 @@
 serial_port = "/dev/ttyUSB0"   # path to your coordinator's serial port
 adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
 # permit_join_on_startup = false</pre>
-        <p style="font-size:.82rem;color:var(--text-secondary);margin-top:12px">
-          The Zigbee coordinator connects over a local serial port and works independently
-          of how your phone connects to home-edge (WiFi or BLE).
-        </p>
       </div>
     </div>
   </div>
@@ -64,8 +51,7 @@ adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
     </div>
     <div class="ha-card-body">
       <p style="margin-bottom:12px">
-        The bridge is configured but could not connect to the coordinator. Check the
-        serial port is correct and the dongle is plugged in.
+        The bridge is configured but could not connect to the coordinator.
       </p>
       <table style="font-size:.88rem;border-collapse:collapse;width:100%">
         <tr>
@@ -77,142 +63,355 @@ adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
           <td><code style="color:var(--color-error,#d32f2f)">{{ bridge_error }}</code></td>
         </tr>
       </table>
-      <div style="margin-top:16px;font-size:.82rem;color:var(--text-secondary)">
-        <strong>Things to check:</strong>
-        <ul style="margin:6px 0 0 16px;padding:0">
-          <li>Is the Zigbee USB dongle plugged in? Run <code>ls /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/</code> on the device.</li>
-          <li>Does the path in <code>serial_port</code> match the actual device node?</li>
-          <li>Does the <code>home-edge</code> process have permission to open the port? (Try adding it to the <code>dialout</code> group.)</li>
-        </ul>
-        After fixing, restart the home-edge service to retry.
-      </div>
     </div>
   </div>
 
   {% else %}
 
-  {# ── Pairing-mode active banner ───────────────────────────────────── #}
-  {% if pairing_remaining_secs > 0 %}
-  <div class="ha-card" id="pairing-banner"
-       style="margin-bottom:16px;border:2px solid var(--color-primary)">
-    <div class="ha-card-body"
-         style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <svg width="24" height="24" style="color:var(--color-primary);flex-shrink:0">
-        <use href="#icon-plus"/>
-      </svg>
-      <div style="flex:1">
-        <strong>Pairing mode active</strong>
-        <span style="color:var(--text-secondary);margin-left:8px">
-          Put your Zigbee device into pairing mode.
-          Time remaining: <span id="pj-countdown">{{ pairing_remaining_secs }}</span>s
-        </span>
-      </div>
-      <form hx-post="/api/zigbee/permit_join/stop"
-            hx-target="body"
-            style="display:inline">
-        <button type="submit" class="btn btn-secondary btn-sm">Stop pairing</button>
-      </form>
-    </div>
-  </div>
-  <script>
-  (function(){
-    var rem = {{ pairing_remaining_secs }};
-    var el = document.getElementById('pj-countdown');
-    var banner = document.getElementById('pairing-banner');
-    var timer = setInterval(function(){
-      rem--;
-      if(rem <= 0){
-        clearInterval(timer);
-        // Reload the full page so the Add Device button is restored
-        // and polling stops cleanly.
-        window.location.reload();
-        return;
-      }
-      el && (el.textContent = rem);
-    }, 1000);
-  })();
-  </script>
-  {% endif %}
-
-  {# ── Device list (with HTMX polling while pairing is active) ─────── #}
-  <div class="ha-card">
+  {# ── Device list ──────────────────────────────────────────────────── #}
+  <div class="ha-card" id="device-list-card">
     <div class="ha-card-header">
       <span class="ha-card-title">Devices ({{ devices | length }})</span>
     </div>
-    <div class="ha-card-body" style="padding:0">
-      <div id="zigbee-device-list"
-           {% if pairing_remaining_secs > 0 %}
-           hx-get="/fragments/zigbee/devices"
-           hx-trigger="every 2s"
-           hx-swap="innerHTML"
-           {% endif %}
-           style="{% if devices | length > 0 %}padding:0{% else %}padding:16px{% endif %}">
-        {# Inline the same fragment content so first load needs no extra request. #}
-        {% if devices | length == 0 %}
-        <p style="color:var(--text-secondary)">
-          No Zigbee devices yet.
-          {% if pairing_remaining_secs > 0 %}
-          Put your device into pairing mode now.
-          {% else %}
-          Click <strong>Add Device</strong> and put your Zigbee device into pairing mode.
-          {% endif %}
-        </p>
-        {% else %}
-        <table class="data-table" style="width:100%">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Model</th>
-              <th>Manufacturer</th>
-              <th>Power</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for device in devices %}
-            <tr>
-              <td>
-                <a href="/zigbee/{{ device.ieee_addr }}" style="font-weight:500">
-                  {{ device.name_by_user if device.name_by_user else device.friendly_name }}
-                </a>
-                <div style="font-size:.75rem;color:var(--text-secondary)">{{ device.ieee_addr }}</div>
-              </td>
-              <td>{{ device.model | default("—") }}</td>
-              <td>{{ device.manufacturer | default("—") }}</td>
-              <td>{{ device.power_source | default("—") }}</td>
-              <td>
-                {% if device.interview_complete %}
-                <span class="badge badge-success">Ready</span>
-                {% else %}
-                <span class="badge badge-warning">
-                  <span class="spinner-sm" aria-hidden="true"></span>
-                  Interviewing…
-                </span>
-                {% endif %}
-              </td>
-              <td>
-                <a href="/zigbee/{{ device.ieee_addr }}" class="btn btn-sm">Details</a>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% endif %}
-      </div>
+    <div class="ha-card-body" style="{% if devices | length > 0 %}padding:0{% endif %}">
+      {% if devices | length == 0 %}
+      <p style="color:var(--text-secondary)">
+        No Zigbee devices yet. Click <strong>Add Device</strong> and put your
+        Zigbee device into pairing mode.
+      </p>
+      {% else %}
+      <table class="data-table" style="width:100%">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Model</th>
+            <th>Power</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for device in devices %}
+          <tr>
+            <td>
+              <a href="/zigbee/{{ device.ieee_addr }}" style="font-weight:500">
+                {{ device.name_by_user if device.name_by_user else device.friendly_name }}
+              </a>
+              <div style="font-size:.75rem;color:var(--text-secondary)">
+                {% if device.manufacturer %}{{ device.manufacturer }}{% endif %}
+                {{ device.ieee_addr }}
+              </div>
+            </td>
+            <td>{{ device.model | default("—") }}</td>
+            <td>{{ device.power_source | default("—") }}</td>
+            <td>
+              {% if device.interview_complete %}
+              <span class="badge badge-success">Ready</span>
+              {% else %}
+              <span class="badge badge-warning">
+                <span class="spinner-sm" aria-hidden="true"></span>
+                Interviewing…
+              </span>
+              {% endif %}
+            </td>
+            <td>
+              <a href="/zigbee/{{ device.ieee_addr }}" class="btn btn-sm">Details</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
     </div>
   </div>
 
-  {# ── Help text ────────────────────────────────────────────────────── #}
   {% if not pairing_remaining_secs %}
   <p style="font-size:.82rem;color:var(--text-secondary);margin-top:16px">
-    <strong>Note:</strong> Zigbee data collection works on all client transports
-    (WiFi and BLE).  The coordinator communicates over a local serial connection
-    independently of how your phone connects to home-edge.
+    The coordinator communicates over a local serial connection independently
+    of how your phone connects to home-edge.
   </p>
   {% endif %}
 
   {% endif %}{# bridge_running #}
 </div>
+
+{# ══════════════════════════════════════════════════════════════════════════
+   Add Device dialog — mirrors HA's ha-config-flow-step for ZHA add device.
+   Steps: searching → found (+ interviewing) → configure name/area → finish
+   ════════════════════════════════════════════════════════════════════════ #}
+{% if bridge_running %}
+<dialog id="pj-dialog" class="more-info-dialog pj-dialog">
+  <div class="more-info-dialog-inner" style="text-align:center;padding-bottom:28px">
+
+    {# Close / cancel button in corner #}
+    <button class="more-info-close" aria-label="Close" onclick="pjCancel()">
+      <svg><use href="#icon-close"/></svg>
+    </button>
+
+    {# ── Step 1: Searching ─────────────────────────────────────────── #}
+    <section id="pj-step-searching">
+      <div class="ble-scanner" style="margin-bottom:20px">
+        <div class="ble-ring"></div>
+        <div class="ble-ring"></div>
+        <div class="ble-ring"></div>
+        <div class="ble-center">
+          <svg width="24" height="24" style="fill:#fff"><use href="#icon-zigbee"/></svg>
+        </div>
+      </div>
+      <h2 style="font-size:1.3rem;font-weight:500;margin:0 0 8px">
+        Waiting for device
+      </h2>
+      <p style="color:var(--secondary-text);margin:0 0 4px">
+        Put your Zigbee device into pairing mode.
+      </p>
+      <p style="color:var(--secondary-text);margin:0 0 24px;font-size:.88rem">
+        Time remaining: <strong><span id="pj-countdown">60</span>s</strong>
+      </p>
+      <button class="btn btn-secondary btn-full" onclick="pjCancel()">Cancel</button>
+    </section>
+
+    {# ── Step 2: Found ─────────────────────────────────────────────── #}
+    <section id="pj-step-found" hidden>
+      <div style="width:56px;height:56px;background:var(--success);border-radius:50%;
+                  display:flex;align-items:center;justify-content:center;margin:0 auto 16px;
+                  font-size:1.6rem;color:#fff">✓</div>
+      <h2 style="font-size:1.3rem;font-weight:500;margin:0 0 4px">Device found!</h2>
+      <p id="pj-dev-model" style="color:var(--secondary-text);margin:0 0 20px;font-size:.9rem"></p>
+
+      {# Interview in progress #}
+      <div id="pj-interview-progress">
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;
+                    color:var(--secondary-text);font-size:.88rem;margin-bottom:8px">
+          <span class="spinner" style="width:16px;height:16px"></span>
+          Getting device details…
+        </div>
+        <p style="font-size:.8rem;color:var(--secondary-text);margin:0 0 16px">
+          This usually takes 10–30 seconds.
+        </p>
+      </div>
+
+      {# Interview complete — name + area form #}
+      <div id="pj-configure" hidden>
+        <div class="form-group" style="text-align:left;margin-bottom:12px">
+          <label for="pj-name-input" style="font-size:.86rem;font-weight:500;margin-bottom:4px;display:block">Device name</label>
+          <input id="pj-name-input" class="form-control" type="text"
+                 placeholder="My sensor">
+        </div>
+        <div class="form-group" style="text-align:left;margin-bottom:20px">
+          <label for="pj-area-select" style="font-size:.86rem;font-weight:500;margin-bottom:4px;display:block">Area</label>
+          <select id="pj-area-select" class="form-control">
+            <option value="">— No area —</option>
+            {% for area in areas %}
+            <option value="{{ area.area_id }}">{{ area.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="pjFinish()">
+          Add to home
+        </button>
+      </div>
+    </section>
+
+  </div>
+</dialog>
+{% endif %}
+
+<script>
+(function () {
+  // ── State ────────────────────────────────────────────────────────────
+  var pairingIeee = null;
+  var timers = [];
+  // Snapshot of device IEEEs that existed before pairing started
+  var knownIeees = new Set(
+    Array.from(document.querySelectorAll('[data-ieee]')).map(function (el) {
+      return el.dataset.ieee;
+    })
+  );
+
+  // ── Open dialog (called by button and auto-open on page load) ────────
+  window.pjOpen = function (resumeWithSecs) {
+    var dialog = document.getElementById('pj-dialog');
+    if (!dialog) return;
+    pjReset();
+    dialog.showModal();
+
+    if (resumeWithSecs) {
+      // Already pairing (page loaded while pairing was active) — just show countdown
+      pjStartCountdown(resumeWithSecs);
+      pjStartPollingDevices();
+    } else {
+      // Start fresh
+      fetch('/api/zigbee/permit_join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'duration=60'
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        pjStartCountdown(j.remaining_secs || 60);
+        pjStartPollingDevices();
+      })
+      .catch(function () {
+        // Coordinator unavailable — close and fall back to page navigation
+        dialog.close();
+      });
+    }
+  };
+
+  // ── Cancel / close ───────────────────────────────────────────────────
+  window.pjCancel = function () {
+    fetch('/api/zigbee/permit_join/stop', { method: 'POST' }).catch(function () {});
+    pjCleanup();
+    var dialog = document.getElementById('pj-dialog');
+    if (dialog) dialog.close();
+    // Reload so the device list reflects any partial joins
+    window.location.reload();
+  };
+
+  // ── Step 1: countdown ────────────────────────────────────────────────
+  function pjStartCountdown(secs) {
+    var el = document.getElementById('pj-countdown');
+    if (el) el.textContent = secs;
+    var t = setInterval(function () {
+      secs--;
+      if (el) el.textContent = Math.max(0, secs);
+      if (secs <= 0) {
+        clearInterval(t);
+        if (!pairingIeee) {
+          // Timed out with no device found — close dialog
+          var dialog = document.getElementById('pj-dialog');
+          if (dialog) dialog.close();
+          window.location.reload();
+        }
+      }
+    }, 1000);
+    timers.push(t);
+  }
+
+  // ── Step 2: poll for new device joining ──────────────────────────────
+  function pjStartPollingDevices() {
+    var t = setInterval(function () {
+      fetch('/api/zigbee/devices')
+        .then(function (r) { return r.json(); })
+        .then(function (devices) {
+          var newDev = null;
+          for (var i = 0; i < devices.length; i++) {
+            if (!knownIeees.has(devices[i].ieee_addr)) {
+              newDev = devices[i];
+              break;
+            }
+          }
+          if (newDev) {
+            pairingIeee = newDev.ieee_addr;
+            clearInterval(t);
+            pjShowFound(newDev);
+          }
+        })
+        .catch(function () {});
+    }, 2000);
+    timers.push(t);
+  }
+
+  function pjShowFound(dev) {
+    // Stop permit-join window — device is found
+    fetch('/api/zigbee/permit_join/stop', { method: 'POST' }).catch(function () {});
+    // Clear all countdown / device poll timers
+    timers.forEach(clearInterval);
+    timers = [];
+
+    // Transition to "found" step
+    document.getElementById('pj-step-searching').hidden = true;
+    document.getElementById('pj-step-found').hidden = false;
+
+    var modelEl = document.getElementById('pj-dev-model');
+    var parts = [];
+    if (dev.manufacturer) parts.push(dev.manufacturer);
+    if (dev.model) parts.push(dev.model);
+    modelEl.textContent = parts.join(' · ') || dev.ieee_addr;
+
+    document.getElementById('pj-name-input').value =
+      dev.display_name || dev.friendly_name || '';
+
+    if (dev.interview_complete) {
+      pjShowConfigure();
+    } else {
+      pjStartPollingInterview(dev.ieee_addr);
+    }
+  }
+
+  // ── Step 3: poll until interview complete ────────────────────────────
+  function pjStartPollingInterview(ieee) {
+    var t = setInterval(function () {
+      fetch('/api/zigbee/devices')
+        .then(function (r) { return r.json(); })
+        .then(function (devices) {
+          for (var i = 0; i < devices.length; i++) {
+            if (devices[i].ieee_addr === ieee && devices[i].interview_complete) {
+              clearInterval(t);
+              // Update name to what interview discovered
+              var nameIn = document.getElementById('pj-name-input');
+              if (nameIn && !nameIn.value.trim()) {
+                nameIn.value = devices[i].display_name || devices[i].friendly_name || '';
+              }
+              pjShowConfigure();
+              break;
+            }
+          }
+        })
+        .catch(function () {});
+    }, 3000);
+    timers.push(t);
+  }
+
+  function pjShowConfigure() {
+    document.getElementById('pj-interview-progress').hidden = true;
+    document.getElementById('pj-configure').hidden = false;
+  }
+
+  // ── Step 4: save name/area, navigate to device page ─────────────────
+  window.pjFinish = function () {
+    if (!pairingIeee) return;
+    var name = document.getElementById('pj-name-input').value.trim();
+    var area = document.getElementById('pj-area-select').value;
+    var body = new URLSearchParams();
+    if (name) body.append('name_by_user', name);
+    if (area) body.append('user_area_id', area);
+
+    fetch('/api/zigbee/devices/' + encodeURIComponent(pairingIeee), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    })
+    .finally(function () {
+      window.location.href = '/zigbee/' + encodeURIComponent(pairingIeee);
+    });
+  };
+
+  // ── Helpers ──────────────────────────────────────────────────────────
+  function pjCleanup() {
+    timers.forEach(clearInterval);
+    timers = [];
+    pairingIeee = null;
+  }
+
+  function pjReset() {
+    pjCleanup();
+    var s = document.getElementById('pj-step-searching');
+    var f = document.getElementById('pj-step-found');
+    if (s) s.hidden = false;
+    if (f) f.hidden = true;
+    var ip = document.getElementById('pj-interview-progress');
+    var c  = document.getElementById('pj-configure');
+    if (ip) ip.hidden = false;
+    if (c)  c.hidden  = true;
+  }
+
+  // ── Auto-open if pairing already active on page load ─────────────────
+  var resumeSecs = {{ pairing_remaining_secs | default(0) }};
+  if (resumeSecs > 0) {
+    pjOpen(resumeSecs);
+  }
+})();
+</script>
 {% endblock %}
 
