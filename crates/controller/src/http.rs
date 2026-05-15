@@ -175,6 +175,7 @@ fn zigbee_router(state: Arc<AppState>) -> Router {
             .route("/api/zigbee/permit_join/status",         get(api_zigbee_permit_join_status))
             // HTMX fragments (transport_wifi UI)
             .route("/fragments/zigbee/devices",              get(fragment_zigbee_devices))
+            .route("/fragments/zigbee/entities/{ieee}",      get(fragment_zigbee_entities))
             // UI pages
             .route("/zigbee",                                get(zigbee_devices_page))
             .route("/zigbee/{ieee}",                         get(zigbee_device_detail_page))
@@ -1762,7 +1763,12 @@ async fn api_zigbee_device_delete(
         let _ = (&*state.states).remove(entity_id);
     }
     match state.zigbee_devices.remove(&ieee).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            // HTML form POST (from the detail page's Remove button) expects a redirect.
+            // REST DELETE callers that want 204 can follow the redirect or inspect the
+            // Location header.  Both paths are served correctly by a 303 See Other.
+            axum::response::Redirect::to("/zigbee").into_response()
+        }
         Ok(false) => (StatusCode::NOT_FOUND, Json(ErrorResponse::new("device not found".into()))).into_response(),
         Err(e) => internal_error(&e),
     }
@@ -1910,6 +1916,30 @@ async fn fragment_zigbee_devices(State(state): State<Arc<AppState>>) -> Response
         pairing_remaining_secs => pairing_remaining_secs,
     };
     render_template(&state, "fragments/zigbee_devices.html", ctx)
+}
+
+/// HTMX fragment: live entity state rows for a single Zigbee device.
+/// Polled by the detail page every 5 s after interview completes.
+#[cfg(feature = "zigbee")]
+async fn fragment_zigbee_entities(
+    State(state): State<Arc<AppState>>,
+    Path(ieee): Path<String>,
+) -> Response {
+    let areas = load_areas(&state).await;
+    let entity_records = match state.zigbee_entities.list_for_device(&ieee).await {
+        Ok(e) => e,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Html(format!("{e:#}"))).into_response(),
+    };
+    let entities: Vec<EntityView> = entity_records
+        .iter()
+        .map(|e| crate::zigbee_integration::entity_view_for(e, &state.states))
+        .collect();
+    let ctx = context! {
+        entities => Value::from_serialize(&entities),
+        areas    => Value::from_serialize(&areas),
+        ieee     => ieee,
+    };
+    render_template(&state, "fragments/zigbee_entities.html", ctx)
 }
 
 #[cfg(feature = "zigbee")]
