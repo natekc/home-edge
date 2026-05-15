@@ -1,0 +1,86 @@
+{% extends "_base_app.html" %}
+{% block content %}
+<!-- Source: homeassistant/auth/__init__.py  AuthManager -->
+<!--         homeassistant/components/auth/__init__.py -->
+<div class="page-header">
+  <h1>Users</h1>
+  <p>Manage user accounts.</p>
+</div>
+
+<div class="page-body">
+  <div class="ha-card">
+    <div class="ha-card-body" style="padding:0">
+      <table style="width:100%;border-collapse:collapse">
+
+        {% if user %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:14px 16px">
+            <div style="font-weight:500">{{ user.name }}</div>
+            <div style="font-size:.82rem;color:var(--secondary-text)">{{ user.username }}</div>
+          </td>
+          <td style="padding:14px 16px;text-align:right">
+            <button
+              class="btn btn-secondary btn-sm"
+              onclick="document.getElementById('pw-form-{{ user.username }}').hidden=!document.getElementById('pw-form-{{ user.username }}').hidden"
+            >Change password</button>
+          </td>
+        </tr>
+        <tr id="pw-row-{{ user.username }}" style="border-bottom:1px solid var(--border)">
+          <td colspan="2" style="padding:0 16px 14px">
+            <form
+              id="pw-form-{{ user.username }}"
+              hidden
+              method="post"
+              action="/api/edge/users/{{ user.username }}/password"
+              style="margin-top:12px"
+            >
+              {% if pw_error %}
+              <p style="color:var(--danger);font-size:.82rem;margin:0 0 8px">{{ pw_error }}</p>
+              {% endif %}
+              {% if pw_saved %}
+              <p style="color:var(--success);font-size:.82rem;margin:0 0 8px">Password updated.</p>
+              {% endif %}
+              <div style="display:flex;flex-direction:column;gap:8px;max-width:320px">
+                <input
+                  type="password"
+                  name="current_password"
+                  class="form-control"
+                  placeholder="Current password"
+                  required
+                  autocomplete="current-password"
+                >
+                <input
+                  type="password"
+                  name="new_password"
+                  class="form-control"
+                  placeholder="New password"
+                  required
+                  minlength="8"
+                  autocomplete="new-password"
+                >
+                <button type="submit" class="btn btn-primary">Update password</button>
+              </div>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td style="padding:14px 16px;color:var(--secondary-text)">No users found.</td>
+        </tr>
+        {% endif %}
+
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Keep the change-password form visible after a POST redirect (pw_error or pw_saved). */
+(function() {
+  var show = {% if pw_error or pw_saved %}true{% else %}false{% endif %};
+  if (show) {
+    document.querySelectorAll('[id^="pw-form-"]').forEach(function(f) { f.hidden = false; });
+  }
+})();
+</script>
+{% endblock %}

@@ -203,6 +203,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/ble",                                           get(ble_scan_page))
         .route("/settings",                                      get(settings_page))
         .route("/profile",                                       get(profile_page))
+        // Settings sub-pages
+        .route("/settings/users",                                get(settings_users_page))
+        // Profile API — theme and long-lived tokens
         .route("/devices",                                        get(devices_list_page))
         .route("/devices/{webhook_id}",                          get(device_detail_page))
         .route("/devices/{webhook_id}/entities/{entity_id}",     get(entity_edit_page))
@@ -234,6 +237,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         // BLE stubs
         .route("/api/ble/scan",                                  post(api_ble_scan))
         .route("/api/ble/pair",                                  post(api_ble_pair))
+        // Profile API — theme and long-lived tokens
+        .route("/api/edge/profile/theme",                        post(api_profile_set_theme))
+        .route("/api/edge/tokens/create",                        post(api_token_create))
+        .route("/api/edge/tokens/{id}/revoke",                   post(api_token_revoke))
+        // User management API
+        .route("/api/edge/users/{username}/password",            post(api_user_change_password))
         // History JSON
         // Edge-internal history API. Not a replica of HA's /api/history/period endpoint
         // (which uses compressed-state wire format: {"s", "a", "lu"}).
@@ -281,7 +290,11 @@ fn redirect(path: &'static str) -> Response {
     (StatusCode::SEE_OTHER, headers).into_response()
 }
 
-async fn profile_page(State(state): State<Arc<AppState>>) -> Response {
+async fn profile_page(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ProfileQuery>,
+    headers: HeaderMap,
+) -> Response {
     let onboarding = state.storage.load_onboarding().await.unwrap_or_default();
     let user = state
         .auth
@@ -294,13 +307,20 @@ async fn profile_page(State(state): State<Arc<AppState>>) -> Response {
         .clone()
         .unwrap_or_else(|| state.config.ui.product_name.clone());
     let areas = load_areas(&state).await;
+    let access_tokens = state.long_lived_tokens.list().await;
+    // Source: homeassistant/components/frontend/__init__.py  theme persistence
+    let current_theme = read_cookie(&headers, "he_theme")
+        .unwrap_or_else(|| "system".to_string());
     let ctx = app_ctx!(state, "profile", location_name.as_str(), &areas,
-        user_name     => user.as_ref().map(|u| u.name.as_str()).unwrap_or("—"),
-        user_username => user.as_ref().map(|u| u.username.as_str()).unwrap_or("—"),
-        language      => onboarding.language.as_deref().unwrap_or("—"),
-        time_zone     => onboarding.time_zone.as_deref().unwrap_or("—"),
-        unit_system   => onboarding.unit_system.as_deref().unwrap_or("—"),
-        country       => onboarding.country.as_deref().unwrap_or("—"),
+        user_name       => user.as_ref().map(|u| u.name.as_str()).unwrap_or("—"),
+        user_username   => user.as_ref().map(|u| u.username.as_str()).unwrap_or("—"),
+        language        => onboarding.language.as_deref().unwrap_or("—"),
+        time_zone       => onboarding.time_zone.as_deref().unwrap_or("—"),
+        unit_system     => onboarding.unit_system.as_deref().unwrap_or("—"),
+        country         => onboarding.country.as_deref().unwrap_or("—"),
+        current_theme   => current_theme.as_str(),
+        access_tokens   => Value::from_serialize(&access_tokens),
+        new_token       => params.new_token.as_deref().unwrap_or(""),
     );
     render_template(&state, "profile.html", ctx)
 }
@@ -619,15 +639,234 @@ async fn system_page(State(state): State<Arc<AppState>>) -> Response {
     let mode = format!("{:?}", state.core.runtime_mode());
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
+    // Source: homeassistant/components/system_health/__init__.py  SystemHealthInfo
+    let uptime_secs = state.start_time.elapsed().as_secs();
     let ctx = app_ctx!(state, "system", location_name.as_str(), &areas,
-        version      => env!("CARGO_PKG_VERSION"),
-        runtime_mode => mode.as_str(),
+        version          => env!("CARGO_PKG_VERSION"),
+        he_version       => env!("CARGO_PKG_VERSION"),
+        runtime_mode     => mode.as_str(),
+        uptime_formatted => format_uptime(uptime_secs).as_str(),
     );
     render_template(&state, "system.html", ctx)
 }
 
-async fn areas_page(State(state): State<Arc<AppState>>) -> Response {
+// ---------------------------------------------------------------------------
+// Profile query / structs
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, Default)]
+struct ProfileQuery {
+    new_token: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Settings — Users sub-page
+// ---------------------------------------------------------------------------
+
+/// Source: homeassistant/auth/__init__.py  AuthManager
+async fn settings_users_page(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<UsersPageQuery>,
+) -> Response {
+    let user = state
+        .auth
+        .load_user_with_legacy_fallback(&state.storage)
+        .await
+        .ok()
+        .flatten();
     let location_name = load_location_name(&state).await;
+    let areas = load_areas(&state).await;
+    let ctx = app_ctx!(state, "settings", location_name.as_str(), &areas,
+        user      => Value::from_serialize(&user),
+        pw_error  => params.error.as_deref().unwrap_or(""),
+        pw_saved  => params.saved.unwrap_or(false),
+    );
+    render_template(&state, "settings_users.html", ctx)
+}
+
+#[derive(Deserialize, Default)]
+struct UsersPageQuery {
+    error: Option<String>,
+    saved: Option<bool>,
+}
+
+// ---------------------------------------------------------------------------
+// Theme API
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ThemeRequest {
+    theme: String,
+}
+
+/// POST /api/edge/profile/theme
+///
+/// Persists the user's theme preference in a long-lived cookie (`he_theme`).
+///
+/// Source: homeassistant/components/frontend/__init__.py  frontend.set_theme
+async fn api_profile_set_theme(
+    body: Json<ThemeRequest>,
+) -> Response {
+    let value = match body.theme.as_str() {
+        "light" | "dark" | "system" => body.theme.clone(),
+        _ => return (StatusCode::BAD_REQUEST, "invalid theme").into_response(),
+    };
+    // Persist as a one-year cookie. SameSite=Strict prevents CSRF.
+    let cookie = format!(
+        "he_theme={value}; Path=/; SameSite=Strict; Max-Age=31536000"
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        HeaderValue::try_from(cookie).expect("valid cookie header"),
+    );
+    (StatusCode::NO_CONTENT, headers).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Long-lived token API
+// ---------------------------------------------------------------------------
+
+/// POST /api/edge/tokens/create
+///
+/// Creates a new long-lived access token and redirects to profile with the
+/// plaintext token in the query string (shown once).
+///
+/// Source: homeassistant/components/auth/__init__.py  CreateTokenView
+async fn api_token_create(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Form(form): axum::extract::Form<TokenCreateForm>,
+) -> Response {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return redirect("/profile");
+    }
+    match state.long_lived_tokens.create(name).await {
+        Ok(token) => {
+            // Redirect so F5 doesn't re-POST. Token in query string — shown once.
+            let location = format!("/profile?new_token={token}");
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::LOCATION,
+                HeaderValue::try_from(location).expect("valid location"),
+            );
+            (StatusCode::SEE_OTHER, headers).into_response()
+        }
+        Err(err) => page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
+    }
+}
+
+#[derive(Deserialize)]
+struct TokenCreateForm {
+    name: String,
+}
+
+/// POST /api/edge/tokens/{id}/revoke
+///
+/// Revokes a token by id and redirects back to profile.
+///
+/// Source: homeassistant/components/auth/__init__.py  (delete token)
+async fn api_token_revoke(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    if let Err(err) = state.long_lived_tokens.revoke(&id).await {
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
+    }
+    redirect("/profile")
+}
+
+// ---------------------------------------------------------------------------
+// User management API
+// ---------------------------------------------------------------------------
+
+/// POST /api/edge/users/{username}/password
+///
+/// Validates the current password and replaces it with a new one (argon2id).
+///
+/// Source: homeassistant/auth/__init__.py  AuthManager.async_change_password
+async fn api_user_change_password(
+    State(state): State<Arc<AppState>>,
+    Path(username): Path<String>,
+    axum::extract::Form(form): axum::extract::Form<ChangePasswordForm>,
+) -> Response {
+    let user = match state
+        .auth
+        .load_user_with_legacy_fallback(&state.storage)
+        .await
+    {
+        Ok(Some(u)) if u.username == username => u,
+        Ok(_) => return redirect("/settings/users"),
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
+    };
+
+    if !crate::auth_store::verify_password(&form.current_password, &user.password) {
+        let loc = "/settings/users?error=Current+password+is+incorrect";
+        let mut headers = HeaderMap::new();
+        headers.insert(header::LOCATION, HeaderValue::from_static(loc));
+        return (StatusCode::SEE_OTHER, headers).into_response();
+    }
+
+    let new_hash = match crate::auth_store::hash_password(&form.new_password) {
+        Ok(h) => h,
+        Err(err) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),
+    };
+
+    let updated = crate::storage::StoredUser {
+        password: new_hash,
+        ..user
+    };
+    if let Err(err) = state.auth.save_user(&updated).await {
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
+    }
+    redirect("/settings/users?saved=true")
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordForm {
+    current_password: String,
+    new_password: String,
+}
+
+// ---------------------------------------------------------------------------
+// System health helpers
+// ---------------------------------------------------------------------------
+
+/// Format uptime seconds as a human-readable string.
+///
+/// Source: homeassistant/util/dt.py  format_timedelta
+fn format_uptime(secs: u64) -> String {
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let minutes = (secs % 3600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{minutes}m")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cookie helpers
+// ---------------------------------------------------------------------------
+
+/// Parse a named cookie value from the `Cookie` request header.
+fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
+    headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies
+                .split(';')
+                .find(|c| c.trim().starts_with(&prefix))
+                .map(|c| c.trim()[prefix.len()..].to_string())
+        })
+}
+
+async fn areas_page(State(state): State<Arc<AppState>>) -> Response {    let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let zones = load_zones(&state).await;
     let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,

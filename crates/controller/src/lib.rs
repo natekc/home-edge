@@ -24,6 +24,8 @@ pub mod zone_store;
 #[cfg(feature = "transport_wifi")]
 pub mod auth_store;
 #[cfg(feature = "transport_wifi")]
+pub mod long_lived_token_store;
+#[cfg(feature = "transport_wifi")]
 pub mod ha_api;
 #[cfg(feature = "transport_wifi")]
 pub mod ha_auth;

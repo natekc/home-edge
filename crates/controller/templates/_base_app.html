@@ -37,6 +37,9 @@
   </script>
   <!-- htmx inlined: no CDN round-trip, always available on local LAN -->
   <script>{% include "_htmx.js" %}</script>
+  <!-- Source: homeassistant/components/frontend/__init__.py  theme persistence -->
+  <!-- Apply stored theme immediately so there is no flash of unstyled content. -->
+  <script>(function(){var t=document.cookie.split(';').find(function(c){return c.trim().startsWith('he_theme=');});if(t){var v=t.split('=')[1].trim();if(v==='light'||v==='dark')document.documentElement.setAttribute('data-theme',v);}})();</script>
 </head>
 <body>
 {% include "_icons.html" %}

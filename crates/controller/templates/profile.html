@@ -36,5 +36,85 @@
     </div>
   </div>
 
+  <!-- ── Theme selector ─────────────────────────────────────────────────── -->
+  <!-- Source: homeassistant/components/frontend/__init__.py THEMES -->
+  <!--         homeassistant/auth/models.py  user preferences -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header"><h2>Appearance</h2></div>
+    <div class="ha-card-body">
+      <label style="font-size:.9rem;color:var(--secondary-text);margin-bottom:6px;display:block">Theme</label>
+      <select
+        id="theme-select"
+        class="form-control"
+        style="max-width:220px"
+        onchange="setTheme(this.value)"
+      >
+        <option value="system" {% if current_theme == "system" %}selected{% endif %}>System default</option>
+        <option value="light"  {% if current_theme == "light"  %}selected{% endif %}>Light</option>
+        <option value="dark"   {% if current_theme == "dark"   %}selected{% endif %}>Dark</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- ── Long-lived access tokens ───────────────────────────────────────── -->
+  <!-- Source: homeassistant/components/auth/__init__.py CreateTokenView -->
+  <!--         homeassistant/auth/auth_store.py RefreshToken -->
+  <div class="ha-card" style="margin-bottom:16px">
+    <div class="ha-card-header"><h2>Long-lived access tokens</h2></div>
+    <div class="ha-card-body">
+      <p style="font-size:.82rem;color:var(--secondary-text)">Tokens allow external scripts and apps to access the API without a browser login.</p>
+
+      {% if access_tokens | length > 0 %}
+      <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+        {% for tok in access_tokens %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:6px 0">{{ tok.name }}</td>
+          <td style="padding:6px 0;color:var(--secondary-text);font-size:.8rem">Created {{ tok.created_at }}</td>
+          <td style="padding:6px 0;text-align:right">
+            <form method="post" action="/api/edge/tokens/{{ tok.id }}/revoke" style="display:inline">
+              <button class="btn btn-secondary btn-sm" type="submit">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+
+      <form id="create-token-form" method="post" action="/api/edge/tokens/create">
+        <div style="display:flex;gap:8px">
+          <input type="text" name="name" class="form-control" placeholder="Token name" required style="flex:1">
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+
+      {% if new_token %}
+      <div style="margin-top:12px;padding:10px;background:var(--card-bg);border:1px solid var(--primary-color);border-radius:6px">
+        <p style="margin:0 0 6px;font-size:.82rem;color:var(--secondary-text)">Copy this token — it won't be shown again:</p>
+        <code style="word-break:break-all;font-size:.8rem">{{ new_token }}</code>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
 </div>
+
+<script>
+/* Source: homeassistant/components/frontend/__init__.py  frontend.set_theme */
+function setTheme(value) {
+  fetch('/api/edge/profile/theme', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({theme: value})
+  }).then(function(r) {
+    if (r.ok) {
+      if (value === 'light' || value === 'dark') {
+        document.documentElement.setAttribute('data-theme', value);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+    }
+  });
+}
+</script>
 {% endblock %}
+
