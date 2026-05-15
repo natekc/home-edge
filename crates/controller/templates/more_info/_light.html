@@ -17,38 +17,34 @@
       <span class="mi-toggle-thumb"></span>
     </button>
   </div>
+  {% if entity.brightness is not none %}
   <div class="mi-row mi-row--slider">
     <span class="mi-label">Brightness</span>
     <input class="mi-slider" type="range" name="brightness" min="0" max="255"
-           value="{{ entity.brightness | default(128) }}"
+           value="{{ entity.brightness }}"
            hx-post="/ui/services/light/turn_on"
            hx-include="closest .mi-controls"
            hx-swap="none"
            hx-trigger="change"
-           hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')">
-    <span class="mi-slider-val">{{ entity.brightness | default(128) }}</span>
+           hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')"
+           oninput="this.closest('.mi-row--slider').querySelector('.mi-slider-val').textContent=Math.round(this.value*100/255)+'%'">
+    <span class="mi-slider-val">{{ entity.brightness * 100 // 255 }}%</span>
   </div>
+  {% endif %}
   {% if entity.color_temp_kelvin %}
   <div class="mi-row mi-row--slider">
     <span class="mi-label">Color temp</span>
-    <input class="mi-slider" type="range" name="color_temp_kelvin" min="{{ entity.min_color_temp_kelvin }}" max="{{ entity.max_color_temp_kelvin }}"
+    <input class="mi-slider mi-ct-slider" type="range" name="color_temp_kelvin"
+           min="{{ entity.min_color_temp_kelvin }}" max="{{ entity.max_color_temp_kelvin }}"
            value="{{ entity.color_temp_kelvin }}"
+           style="background:linear-gradient(to right,#ffb347,#fff8e7,#d4eeff)"
            hx-post="/ui/services/light/turn_on"
            hx-include="closest .mi-controls"
            hx-swap="none"
            hx-trigger="change"
-           hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')">
+           hx-on::after-request="htmx.trigger(document.getElementById('area-cards'),'refresh')"
+           oninput="this.closest('.mi-row--slider').querySelector('.mi-slider-val').textContent=this.value+'K'">
     <span class="mi-slider-val">{{ entity.color_temp_kelvin }}K</span>
   </div>
   {% endif %}
 </div>
-<script>
-(function(){
-  document.querySelectorAll('.mi-slider').forEach(function(slider){
-    slider.addEventListener('input', function(){
-      this.closest('.mi-row--slider').querySelector('.mi-slider-val').textContent =
-        this.name === 'color_temp_kelvin' ? this.value + 'K' : this.value;
-    });
-  });
-})();
-</script>

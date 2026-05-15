@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
 use axum::Router;
@@ -975,10 +976,65 @@ async fn fragment_more_info(
     } else {
         None
     };
+
+    // 24 h history for sensor / binary_sensor charts.
+    let now_ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let since_ts = now_ts.saturating_sub(86400);
+
+    let history_24h: Vec<_> = if entity_type == "sensor" || entity_type == "binary_sensor" {
+        state.history.since(&entity_id, since_ts).await
+    } else {
+        vec![]
+    };
+
+    let history_chart: Option<String> = if entity_type == "sensor" && history_24h.len() >= 2 {
+        Some(crate::history_store::render_history_chart(&history_24h, 400, 120))
+    } else {
+        None
+    };
+
+    let binary_timeline: Option<String> = if entity_type == "binary_sensor" {
+        Some(crate::history_store::render_binary_timeline(
+            &history_24h, 400, 28, since_ts,
+        ))
+    } else {
+        None
+    };
+
+    let (stat_min, stat_mean, stat_max): (Option<String>, Option<String>, Option<String>) =
+        if entity_type == "sensor" {
+            match crate::history_store::stats_for_period(&history_24h) {
+                Some((mn, mean, mx)) => (
+                    Some(format!("{mn:.1}")),
+                    Some(format!("{mean:.1}")),
+                    Some(format!("{mx:.1}")),
+                ),
+                None => (None, None, None),
+            }
+        } else {
+            (None, None, None)
+        };
+
+    // last_changed: ISO 8601 string from the live state store.
+    let last_changed: Option<String> = if entity_type == "sensor" || entity_type == "binary_sensor" {
+        state.states.get(&entity_id).map(|s| s.last_changed.clone())
+    } else {
+        None
+    };
+
     let ctx = context! {
-        entity    => Value::from_serialize(&view),
-        history   => Value::from_serialize(&history),
-        sparkline => sparkline,
+        entity          => Value::from_serialize(&view),
+        history         => Value::from_serialize(&history),
+        sparkline       => sparkline,
+        history_chart   => history_chart,
+        binary_timeline => binary_timeline,
+        stat_min        => stat_min,
+        stat_mean       => stat_mean,
+        stat_max        => stat_max,
+        last_changed    => last_changed,
     };
     render_template(&state, template_name, ctx)
 }

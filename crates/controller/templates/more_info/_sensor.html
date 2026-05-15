@@ -7,29 +7,24 @@
     </div>
   </div>
 </div>
-{% if sparkline %}
+{% if last_changed %}
+<div class="mi-meta">Last changed: <span class="mi-ts" data-ts="{{ last_changed }}">{{ last_changed }}</span></div>
+{% endif %}
+{% if history_chart %}
+<div class="mi-sparkline" style="height:120px">{{ history_chart | safe }}</div>
+{% elif sparkline %}
 <div class="mi-sparkline">{{ sparkline | safe }}</div>
 {% endif %}
-{% if history | length > 0 %}
-<div class="mi-history">
-  <div class="mi-section-title">Recent readings</div>
-  <div class="mi-history-list">
-    {% for entry in history %}
-    <div class="mi-history-row">
-      <span class="mi-history-ts" data-ts="{{ entry.ts }}">{{ entry.ts }}</span>
-      <span class="mi-history-val">{{ entry.value }}{% if entity.unit %}&nbsp;{{ entity.unit }}{% endif %}</span>
-    </div>
-    {% endfor %}
-  </div>
+{% if stat_min %}
+<div class="mi-meta" style="text-align:center;margin-top:6px">
+  Min&nbsp;<strong>{{ stat_min }}</strong>&nbsp;&middot;&nbsp;Mean&nbsp;<strong>{{ stat_mean }}</strong>&nbsp;&middot;&nbsp;Max&nbsp;<strong>{{ stat_max }}</strong>{% if entity.unit %}&nbsp;<span class="mi-unit">{{ entity.unit }}</span>{% endif %}
 </div>
+{% endif %}
 <script>
 (function(){
-  document.querySelectorAll('.mi-history-ts[data-ts]').forEach(function(el){
-    var ts = parseInt(el.dataset.ts, 10);
-    if(!isNaN(ts)){
-      el.textContent = new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    }
-  });
+  var el = document.querySelector('.mi-ts[data-ts]');
+  if(el){
+    try { el.textContent = new Date(el.getAttribute('data-ts')).toLocaleString([],{dateStyle:'short',timeStyle:'short'}); } catch(e){}
+  }
 })();
 </script>
-{% endif %}
