@@ -108,6 +108,13 @@ pub(crate) struct EntityView {
     /// True when the entity state is `"unavailable"` or `"unknown"`.
     /// Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
     pub(crate) is_unavailable: bool,
+    /// Raw user-supplied icon override (e.g. `"mdi:lightbulb"`), if set.
+    /// Distinct from `icon_name` which is the auto-derived display icon.
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+    pub(crate) icon: Option<String>,
+    /// Reason the entity is hidden from the companion app UI.
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+    pub(crate) hidden_by: Option<String>,
 }
 
 /// Area-grouped card passed to the dashboard template.

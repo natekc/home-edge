@@ -44,6 +44,14 @@ pub struct MobileDeviceRecord {
     /// User-set display name overriding the device-reported name.
     #[serde(default)]
     pub name_by_user: Option<String>,
+    /// Area assigned by the user.
+    /// Source: homeassistant/helpers/device_registry.py DeviceEntry.area_id
+    #[serde(default)]
+    pub area_id: Option<String>,
+    /// Reason the device is disabled ("user" | "config_entry" | null).
+    /// Source: homeassistant/helpers/device_registry.py DeviceEntry.disabled_by
+    #[serde(default)]
+    pub disabled_by: Option<String>,
 }
 
 impl MobileDeviceRecord {
@@ -51,6 +59,17 @@ impl MobileDeviceRecord {
     pub fn display_name(&self) -> &str {
         self.name_by_user.as_deref().unwrap_or(&self.device_name)
     }
+}
+
+/// Partial update applied via the device registry update API.
+/// Source: homeassistant/components/config/device_registry.py websocket_update_device
+pub struct DeviceMetaUpdate {
+    /// New user-supplied display name (None = leave unchanged).
+    pub name_by_user: Option<Option<String>>,
+    /// Area assignment (None = leave unchanged, Some(None) = clear).
+    pub area_id: Option<Option<String>>,
+    /// Disable reason (None = leave unchanged, Some(None) = clear/re-enable).
+    pub disabled_by: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -126,6 +145,8 @@ impl MobileDeviceStore {
             supports_encryption: registration.supports_encryption,
             owner_username: registration.owner_username,
             name_by_user: None,
+            area_id: None,
+            disabled_by: None,
         };
         data.devices.push(record.clone());
         self.save(&data).await?;
@@ -161,6 +182,29 @@ impl MobileDeviceStore {
             return Ok(false);
         };
         record.name_by_user = Some(name.to_string());
+        self.save(&data).await?;
+        Ok(true)
+    }
+
+    /// Apply a partial metadata update to a device identified by `webhook_id`.
+    ///
+    /// Returns `Ok(true)` if found and updated, `Ok(false)` if not found.
+    /// Source: homeassistant/components/config/device_registry.py websocket_update_device
+    pub async fn update_meta(&self, webhook_id: &str, update: DeviceMetaUpdate) -> Result<bool> {
+        let _guard = self.lock.lock().await;
+        let mut data = self.load_locked().await?;
+        let Some(record) = data.devices.iter_mut().find(|d| d.webhook_id == webhook_id) else {
+            return Ok(false);
+        };
+        if let Some(name) = update.name_by_user {
+            record.name_by_user = name;
+        }
+        if let Some(area) = update.area_id {
+            record.area_id = area;
+        }
+        if let Some(disabled) = update.disabled_by {
+            record.disabled_by = disabled;
+        }
         self.save(&data).await?;
         Ok(true)
     }

@@ -904,6 +904,145 @@ async fn dispatch_command(
             }
         }
 
+        // Source: homeassistant/components/config/entity_registry.py websocket_update_entity
+        // iOS entity detail page sends this when the user changes name, icon, area, or
+        // disabled/hidden state. `entity_id` identifies the target entity; all other
+        // fields are optional — absent fields are left unchanged.
+        "config/entity_registry/update" => {
+            let entity_id = match extra.get("entity_id").and_then(Value::as_str) {
+                Some(s) => s.to_string(),
+                None => return result_err(id, "invalid_format", "entity_id required"),
+            };
+            // Build a partial update from only the keys present in the message.
+            let name_by_user = extra.get("name").map(|v| {
+                v.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string)
+            });
+            let area_id = extra.get("area_id").map(|v| {
+                v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+            });
+            let disabled_by = extra.get("disabled_by").map(|v| {
+                v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+            });
+            let hidden_by = extra.get("hidden_by").map(|v| {
+                v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+            });
+            let icon = extra.get("icon").map(|v| {
+                v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+            });
+
+            use crate::mobile_entity_store::EntityMetaUpdate;
+            let update = EntityMetaUpdate {
+                name_by_user: name_by_user.flatten(),
+                user_area_id: area_id,
+                unit_of_measurement: None,
+                disabled: disabled_by.as_ref().map(|d| d.is_some()),
+                icon,
+                hidden_by,
+            };
+            match state.mobile_entities.update_meta(&entity_id, update).await {
+                Ok(true) => {
+                    // Return the updated entry in HA core format.
+                    match state.mobile_entities.get_by_entity_id(&entity_id).await {
+                        Ok(Some(e)) => {
+                            let devices = state.mobile_devices.all().await.unwrap_or_default();
+                            let device_id = devices.iter()
+                                .find(|d| d.webhook_id == e.webhook_id)
+                                .and_then(|d| d.device_id.as_deref())
+                                .unwrap_or(&e.webhook_id);
+                            result_ok(id, json!({
+                                "entity_entry": {
+                                    "entity_id": e.entity_id,
+                                    "name": e.name_by_user,
+                                    "original_name": e.sensor_name,
+                                    "platform": "mobile_app",
+                                    "device_id": device_id,
+                                    "area_id": e.user_area_id,
+                                    "disabled_by": if e.disabled { Value::String("user".into()) } else { Value::Null },
+                                    "hidden_by": e.hidden_by,
+                                    "icon": e.icon,
+                                    "entity_category": e.entity_category,
+                                    "aliases": [],
+                                    "labels": [],
+                                }
+                            }))
+                        }
+                        _ => result_ok(id, Value::Null),
+                    }
+                }
+                Ok(false) => result_err(id, "not_found", "Entity not found"),
+                Err(_) => result_err(id, "internal_error", "Failed to update entity"),
+            }
+        }
+
+        // Source: homeassistant/components/config/entity_registry.py websocket_remove_entity
+        "config/entity_registry/remove" => {
+            let entity_id = match extra.get("entity_id").and_then(Value::as_str) {
+                Some(s) => s.to_string(),
+                None => return result_err(id, "invalid_format", "entity_id required"),
+            };
+            match state.mobile_entities.remove_by_entity_id(&entity_id).await {
+                Ok(true) => result_ok(id, Value::Null),
+                Ok(false) => result_err(id, "not_found", "Entity not found"),
+                Err(_) => result_err(id, "internal_error", "Failed to remove entity"),
+            }
+        }
+
+        // Source: homeassistant/components/config/device_registry.py websocket_update_device
+        // iOS device detail page sends this when the user renames a device or
+        // assigns it to an area.
+        "config/device_registry/update" => {
+            let device_id = match extra.get("device_id").and_then(Value::as_str) {
+                Some(s) => s.to_string(),
+                None => return result_err(id, "invalid_format", "device_id required"),
+            };
+            // Find the device by device_id (or fall back to webhook_id).
+            let devices = match state.mobile_devices.all().await {
+                Ok(d) => d,
+                Err(_) => return result_err(id, "internal_error", "Failed to load devices"),
+            };
+            let webhook_id = match devices.iter()
+                .find(|d| d.device_id.as_deref() == Some(&device_id) || d.webhook_id == device_id)
+                .map(|d| d.webhook_id.clone())
+            {
+                Some(id) => id,
+                None => return result_err(id, "not_found", "Device not found"),
+            };
+
+            use crate::mobile_device_store::DeviceMetaUpdate;
+            let update = DeviceMetaUpdate {
+                name_by_user: extra.get("name_by_user").map(|v| {
+                    v.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string)
+                }),
+                area_id: extra.get("area_id").map(|v| {
+                    v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+                }),
+                disabled_by: extra.get("disabled_by").map(|v| {
+                    v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+                }),
+            };
+            match state.mobile_devices.update_meta(&webhook_id, update).await {
+                Ok(true) => {
+                    match state.mobile_devices.get_by_webhook_id(&webhook_id).await {
+                        Ok(Some(d)) => result_ok(id, json!({
+                            "device_entry": {
+                                "id": d.device_id.as_deref().unwrap_or(&d.webhook_id),
+                                "name": d.display_name(),
+                                "name_by_user": d.name_by_user,
+                                "manufacturer": d.manufacturer,
+                                "model": d.model,
+                                "area_id": d.area_id,
+                                "disabled_by": d.disabled_by,
+                                "labels": [],
+                            }
+                        })),
+                        _ => result_ok(id, Value::Null),
+                    }
+                }
+                Ok(false) => result_err(id, "not_found", "Device not found"),
+                Err(_) => result_err(id, "internal_error", "Failed to update device"),
+            }
+        }
+
         // Source: homeassistant/components/lovelace/websocket.py  websocket_lovelace_config
         // iOS sidebar uses get_panels to find lovelace, then fetches lovelace/config.
         // We return a minimal dashboard so the app doesn't error.
