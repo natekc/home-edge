@@ -1,6 +1,13 @@
 {% extends "_base_app.html" %}
 {% block content %}
 <div class="page-header">
+  <div class="breadcrumb">
+    <a href="/settings">Settings</a>
+    <span class="breadcrumb-sep">›</span>
+    <a href="/areas">Areas &amp; zones</a>
+    <span class="breadcrumb-sep">›</span>
+    <span>{{ area.name }}</span>
+  </div>
   <h1>{{ area.name }}</h1>
   <p>Entities in this area.</p>
 </div>
