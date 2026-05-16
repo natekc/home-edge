@@ -651,7 +651,7 @@ async fn dispatch_command(
                             "area_id": a.area_id,
                             "name": a.name,
                             "aliases": a.aliases,
-                            "labels": [],
+                            "labels": a.labels,
                             "floor_id": a.floor_id,
                             "icon": a.icon,
                             "picture": a.picture,
@@ -674,7 +674,7 @@ async fn dispatch_command(
                     "area_id": area.area_id,
                     "name": area.name,
                     "aliases": area.aliases,
-                    "labels": [],
+                    "labels": area.labels,
                     "floor_id": area.floor_id,
                     "icon": area.icon,
                     "picture": area.picture,
@@ -697,13 +697,16 @@ async fn dispatch_command(
             let floor_id = extra.get("floor_id").map(|v| v.as_str().map(str::to_string));
             let icon     = extra.get("icon").map(|v| v.as_str().map(str::to_string));
             let picture  = extra.get("picture").map(|v| v.as_str().map(str::to_string));
+            let labels   = extra.get("labels").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect::<Vec<_>>()
+            });
 
-            match state.area_registry.update(&area_id, name, aliases, floor_id, icon, picture).await {
+            match state.area_registry.update(&area_id, name, aliases, floor_id, icon, picture, labels).await {
                 Ok(Some(area)) => result_ok(id, json!({
                     "area_id": area.area_id,
                     "name": area.name,
                     "aliases": area.aliases,
-                    "labels": [],
+                    "labels": area.labels,
                     "floor_id": area.floor_id,
                     "icon": area.icon,
                     "picture": area.picture,
@@ -929,6 +932,9 @@ async fn dispatch_command(
             let icon = extra.get("icon").map(|v| {
                 v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
             });
+            let labels = extra.get("labels").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect::<Vec<_>>()
+            });
 
             use crate::mobile_entity_store::EntityMetaUpdate;
             let update = EntityMetaUpdate {
@@ -938,6 +944,7 @@ async fn dispatch_command(
                 disabled: disabled_by.as_ref().map(|d| d.is_some()),
                 icon,
                 hidden_by,
+                labels,
             };
             match state.mobile_entities.update_meta(&entity_id, update).await {
                 Ok(true) => {
@@ -962,7 +969,7 @@ async fn dispatch_command(
                                     "icon": e.icon,
                                     "entity_category": e.entity_category,
                                     "aliases": [],
-                                    "labels": [],
+                                    "labels": e.labels,
                                 }
                             }))
                         }
@@ -1019,6 +1026,9 @@ async fn dispatch_command(
                 disabled_by: extra.get("disabled_by").map(|v| {
                     v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
                 }),
+                labels: extra.get("labels").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect::<Vec<_>>()
+                }),
             };
             match state.mobile_devices.update_meta(&webhook_id, update).await {
                 Ok(true) => {
@@ -1032,7 +1042,7 @@ async fn dispatch_command(
                                 "model": d.model,
                                 "area_id": d.area_id,
                                 "disabled_by": d.disabled_by,
-                                "labels": [],
+                                "labels": d.labels,
                             }
                         })),
                         _ => result_ok(id, Value::Null),
@@ -1040,6 +1050,94 @@ async fn dispatch_command(
                 }
                 Ok(false) => result_err(id, "not_found", "Device not found"),
                 Err(_) => result_err(id, "internal_error", "Failed to update device"),
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Label registry
+        // Source: homeassistant/components/config/label_registry.py
+        // -----------------------------------------------------------------------
+
+        // Source: homeassistant/components/config/label_registry.py  websocket_list_labels
+        "config/label_registry/list" => {
+            match state.label_registry.list().await {
+                Ok(labels) => {
+                    let entries: Vec<Value> = labels.into_iter().map(|l| json!({
+                        "label_id": l.label_id,
+                        "name": l.name,
+                        "description": l.description,
+                        "icon": l.icon,
+                        "color": l.color,
+                    })).collect();
+                    result_ok(id, json!(entries))
+                }
+                Err(_) => result_err(id, "internal_error", "Failed to load label registry"),
+            }
+        }
+
+        // Source: homeassistant/components/config/label_registry.py  websocket_create_label
+        "config/label_registry/create" => {
+            let name = match extra.get("name").and_then(|v| v.as_str()) {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => return result_err(id, "invalid_format", "name is required"),
+            };
+            let description = extra.get("description").and_then(|v| v.as_str()).map(str::to_string);
+            let icon        = extra.get("icon").and_then(|v| v.as_str()).map(str::to_string);
+            let color       = extra.get("color").and_then(|v| v.as_str()).map(str::to_string);
+            match state.label_registry.create(name, description, icon, color).await {
+                Ok(l) => result_ok(id, json!({
+                    "label_id": l.label_id,
+                    "name": l.name,
+                    "description": l.description,
+                    "icon": l.icon,
+                    "color": l.color,
+                })),
+                Err(_) => result_err(id, "internal_error", "Failed to create label"),
+            }
+        }
+
+        // Source: homeassistant/components/config/label_registry.py  websocket_update_label
+        "config/label_registry/update" => {
+            let label_id = match extra.get("label_id").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => return result_err(id, "invalid_format", "label_id is required"),
+            };
+            let name        = extra.get("name").and_then(|v| v.as_str()).map(str::to_string);
+            let description = extra.get("description").map(|v| v.as_str().map(str::to_string));
+            let icon        = extra.get("icon").map(|v| v.as_str().map(str::to_string));
+            let color       = extra.get("color").map(|v| v.as_str().map(str::to_string));
+            match state.label_registry.update(&label_id, name, description, icon, color).await {
+                Ok(Some(l)) => result_ok(id, json!({
+                    "label_id": l.label_id,
+                    "name": l.name,
+                    "description": l.description,
+                    "icon": l.icon,
+                    "color": l.color,
+                })),
+                Ok(None) => result_err(id, "not_found", "Label not found"),
+                Err(_)   => result_err(id, "internal_error", "Failed to update label"),
+            }
+        }
+
+        // Source: homeassistant/components/config/label_registry.py  websocket_delete_label
+        // Cascades: removes the label from all entities/devices in this store.
+        "config/label_registry/delete" => {
+            let label_id = match extra.get("label_id").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => return result_err(id, "invalid_format", "label_id is required"),
+            };
+            match state.label_registry.delete(&label_id).await {
+                Ok(true) => {
+                    // Cascade: remove label from all entities and devices.
+                    // Errors are non-fatal — the label is gone; stale refs just get ignored.
+                    let _ = state.mobile_entities.remove_label(&label_id).await;
+                    let _ = state.mobile_devices.remove_label(&label_id).await;
+                    #[cfg(feature = "zigbee")]
+                    let _ = state.zigbee_entities.remove_label(&label_id).await;
+                    result_ok(id, Value::Null)
+                }
+                Ok(false) => result_err(id, "not_found", "Label not found"),
+                Err(_)    => result_err(id, "internal_error", "Failed to delete label"),
             }
         }
 

@@ -84,6 +84,22 @@
           </label>
         </div>
 
+        {% if all_labels | length > 0 %}
+        <div class="form-group">
+          <label>Labels</label>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+            {% for label in all_labels %}
+            <label style="display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--border);border-radius:16px;cursor:pointer;font-size:.85rem;font-weight:normal">
+              <input type="checkbox" name="labels" value="{{ label.label_id }}"
+                     {% if label.label_id in entity.labels %}checked{% endif %}>
+              {% if label.color %}<span style="width:10px;height:10px;border-radius:50%;background:{{ label.color }};flex-shrink:0"></span>{% endif %}
+              {{ label.name }}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
         <div style="display:flex;gap:10px;margin-top:8px">
           <button type="submit" class="btn btn-primary">Save Changes</button>
           <a href="/devices/{{ device.webhook_id }}" class="btn btn-secondary">Cancel</a>

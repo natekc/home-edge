@@ -52,6 +52,10 @@ pub struct MobileDeviceRecord {
     /// Source: homeassistant/helpers/device_registry.py DeviceEntry.disabled_by
     #[serde(default)]
     pub disabled_by: Option<String>,
+    /// Labels assigned to this device.
+    /// Source: homeassistant/helpers/label_registry.py LabelEntry
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 impl MobileDeviceRecord {
@@ -70,6 +74,8 @@ pub struct DeviceMetaUpdate {
     pub area_id: Option<Option<String>>,
     /// Disable reason (None = leave unchanged, Some(None) = clear/re-enable).
     pub disabled_by: Option<Option<String>>,
+    /// Source: homeassistant/helpers/label_registry.py LabelEntry
+    pub labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -147,6 +153,7 @@ impl MobileDeviceStore {
             name_by_user: None,
             area_id: None,
             disabled_by: None,
+            labels: vec![],
         };
         data.devices.push(record.clone());
         self.save(&data).await?;
@@ -205,12 +212,34 @@ impl MobileDeviceStore {
         if let Some(disabled) = update.disabled_by {
             record.disabled_by = disabled;
         }
+        // Source: homeassistant/helpers/label_registry.py LabelEntry
+        if let Some(labels) = update.labels {
+            record.labels = labels;
+        }
         self.save(&data).await?;
         Ok(true)
     }
 
     fn path(&self) -> PathBuf {
         self.root.join("mobile_devices.json")
+    }
+
+    /// Remove a label from all device records (cascade on label delete).
+    pub async fn remove_label(&self, label_id: &str) -> Result<()> {
+        let _guard = self.lock.lock().await;
+        let mut data = self.load_locked().await?;
+        let mut changed = false;
+        for record in data.devices.iter_mut() {
+            let before = record.labels.len();
+            record.labels.retain(|l| l != label_id);
+            if record.labels.len() != before {
+                changed = true;
+            }
+        }
+        if changed {
+            self.save(&data).await?;
+        }
+        Ok(())
     }
 
     async fn load_data(&self) -> Result<MobileDeviceStoreData> {

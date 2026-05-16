@@ -193,6 +193,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -210,6 +211,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -226,6 +228,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -243,6 +246,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -260,6 +264,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
         // Battery voltage — secondary sensor.
         records.push(ZigbeeEntityRecord {
@@ -274,6 +279,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
         // Low-battery warning — binary sensor.
         records.push(ZigbeeEntityRecord {
@@ -288,6 +294,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -305,6 +312,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -322,6 +330,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -348,6 +357,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
         records.push(ZigbeeEntityRecord {
             entity_id: format!("binary_sensor.{base}_tamper"),
@@ -361,6 +371,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -381,6 +392,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -402,6 +414,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
         // RMS voltage in volts.
         // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementRMSVoltage
@@ -419,6 +432,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
         // RMS current in amperes.
         // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementRMSCurrent
@@ -436,6 +450,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         });
     }
 
@@ -1159,6 +1174,8 @@ pub(crate) fn entity_view_for(
         icon: entity.icon.clone(),
         // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
         hidden_by: entity.hidden_by.clone(),
+        // Source: homeassistant/helpers/label_registry.py LabelEntry
+        labels: entity.labels.clone(),
     }
 }
 
@@ -1186,6 +1203,7 @@ mod tests {
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         }
     }
 
@@ -1250,6 +1268,7 @@ mod tests {
             disabled: false,
             icon: None,
             hidden_by: None,
+            labels: vec![],
         }];
 
         let mut raw = serde_json::Map::new();

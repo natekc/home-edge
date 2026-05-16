@@ -115,6 +115,9 @@ pub(crate) struct EntityView {
     /// Reason the entity is hidden from the companion app UI.
     /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
     pub(crate) hidden_by: Option<String>,
+    /// Labels assigned to this entity.
+    /// Source: homeassistant/helpers/label_registry.py LabelEntry
+    pub(crate) labels: Vec<String>,
 }
 
 /// Area-grouped card passed to the dashboard template.

@@ -20,6 +20,8 @@ use tracing::info;
 #[cfg(feature = "transport_wifi")]
 use crate::area_registry_store::AreaRegistryStore;
 #[cfg(feature = "transport_wifi")]
+use crate::label_registry_store::LabelRegistryStore;
+#[cfg(feature = "transport_wifi")]
 use crate::notification_store::NotificationStore;
 use crate::zone_store::ZoneStore;
 #[cfg(feature = "transport_wifi")]
@@ -62,6 +64,8 @@ pub struct AppState {
     pub storage: Storage,
     pub auth: AuthStore,
     pub area_registry: AreaRegistryStore,
+    /// Source: homeassistant/helpers/label_registry.py  LabelRegistry
+    pub label_registry: LabelRegistryStore,
     pub zone_store: ZoneStore,
     /// Person entity registry and location state.
     /// Source: homeassistant/components/person/__init__.py  PersonStorageCollection
@@ -98,6 +102,7 @@ impl AppState {
     pub fn new(config: AppConfig, storage: Storage) -> Self {
         let auth = AuthStore::new(storage.root().to_path_buf());
         let area_registry = AreaRegistryStore::new(storage.root().to_path_buf());
+        let label_registry = LabelRegistryStore::new(storage.root().to_path_buf());
         let zone_store = ZoneStore::new(storage.root().to_path_buf());
         // Source: homeassistant/components/person/__init__.py  PersonStorageCollection
         let person_store = Arc::new(PersonStore::new());
@@ -115,6 +120,7 @@ impl AppState {
             core: AppCore::new(),
             auth,
             area_registry,
+            label_registry,
             zone_store,
             person_store,
             mobile_devices,
@@ -432,6 +438,7 @@ async fn seed_demo(state: &AppState) -> Result<()> {
             disabled:            None,
             hidden_by:           None,
             icon:                None,
+            labels:              None,
         }).await;
     }
 
@@ -498,6 +505,7 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 disabled:             false,
                 icon:                 None,
                 hidden_by:            None,
+                labels:               vec![],
             },
             ZigbeeEntityRecord {
                 entity_id:           "sensor.snzb_02_bedroom_humidity".into(),
@@ -511,6 +519,7 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 disabled:             false,
                 icon:                 None,
                 hidden_by:            None,
+                labels:               vec![],
             },
             ZigbeeEntityRecord {
                 entity_id:           "sensor.snzb_02_bedroom_battery".into(),
@@ -524,6 +533,7 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 disabled:             false,
                 icon:                 None,
                 hidden_by:            None,
+                labels:               vec![],
             },
         ];
         state.zigbee_entities.register_bulk(snzb_entities).await?;
@@ -542,6 +552,7 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 disabled:             false,
                 icon:                 None,
                 hidden_by:            None,
+                labels:               vec![],
             },
         ];
         state.zigbee_entities.register_bulk(bulb_entities).await?;
@@ -560,6 +571,7 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 disabled:             false,
                 icon:                 None,
                 hidden_by:            None,
+                labels:               vec![],
             },
             ZigbeeEntityRecord {
                 entity_id:           "sensor.snzb_03_office_battery".into(),
@@ -573,6 +585,7 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 disabled:             false,
                 icon:                 None,
                 hidden_by:            None,
+                labels:               vec![],
             },
         ];
         state.zigbee_entities.register_bulk(pir_entities).await?;

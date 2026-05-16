@@ -44,6 +44,10 @@ pub struct MobileEntityRecord {
     /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
     #[serde(default)]
     pub hidden_by: Option<String>,
+    /// Labels assigned to this entity.
+    /// Source: homeassistant/helpers/label_registry.py LabelEntry
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 impl MobileEntityRecord {
@@ -63,6 +67,8 @@ pub struct EntityMetaUpdate {
     pub icon: Option<Option<String>>,
     /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
     pub hidden_by: Option<Option<String>>,
+    /// Source: homeassistant/helpers/label_registry.py LabelEntry
+    pub labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -119,6 +125,7 @@ impl MobileEntityStore {
             name_by_user: None,
             user_area_id: None,
             hidden_by: None,
+            labels: vec![],
         };
 
         if data.entities.get(&key) == Some(&record) {
@@ -194,6 +201,10 @@ impl MobileEntityStore {
         if let Some(hidden_by) = update.hidden_by {
             record.hidden_by = hidden_by;
         }
+        // Source: homeassistant/helpers/label_registry.py LabelEntry
+        if let Some(labels) = update.labels {
+            record.labels = labels;
+        }
         save_json_atomic(&self.path(), &data).await?;
         *self.cache.write().await = Some(data);
         Ok(true)
@@ -214,6 +225,25 @@ impl MobileEntityStore {
         save_json_atomic(&self.path(), &data).await?;
         *self.cache.write().await = Some(data);
         Ok(true)
+    }
+
+    /// Remove a label from all entity records (cascade on label delete).
+    pub async fn remove_label(&self, label_id: &str) -> Result<()> {
+        let _guard = self.lock.lock().await;
+        let mut data = self.load_locked().await?;
+        let mut changed = false;
+        for record in data.entities.values_mut() {
+            let before = record.labels.len();
+            record.labels.retain(|l| l != label_id);
+            if record.labels.len() != before {
+                changed = true;
+            }
+        }
+        if changed {
+            save_json_atomic(&self.path(), &data).await?;
+            *self.cache.write().await = Some(data);
+        }
+        Ok(())
     }
 
     fn path(&self) -> PathBuf {

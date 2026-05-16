@@ -45,6 +45,50 @@
   </div>
 
   <div class="ha-card" style="margin-bottom:16px;margin-top:24px">
+    <div class="ha-card-header"><h2>Labels</h2></div>
+    {% if all_labels | length == 0 %}
+    <div class="ha-card-body text-muted">No labels created yet.</div>
+    {% else %}
+    <div class="ha-card-body" style="padding:0">
+      {% for label in all_labels %}
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)">
+        {% if label.color %}
+        <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:{{ label.color }};flex-shrink:0"></span>
+        {% else %}
+        <svg width="20" height="20" style="color:var(--ha-orange,#ff9800);fill:currentColor;flex-shrink:0">
+          <use href="#icon-tag"/>
+        </svg>
+        {% endif %}
+        <span style="flex:1;font-size:.95rem">{{ label.name }}</span>
+        {% if label.description %}
+        <span class="text-muted" style="font-size:.8rem">{{ label.description }}</span>
+        {% endif %}
+        <form method="post" action="/labels/{{ label.label_id }}/delete" style="margin:0">
+          <button type="submit" class="btn btn-secondary" style="font-size:.75rem;padding:4px 10px"
+                  data-label-name="{{ label.name }}"
+                  onclick="return confirm('Delete label \u201c' + this.dataset.labelName + '\u201d?')">Delete</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="ha-card">
+    <div class="ha-card-header"><h2>Add label</h2></div>
+    <div class="ha-card-body">
+      <form method="post" action="/labels">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <input type="text" name="name" class="form-control" placeholder="Label name" required maxlength="64" style="flex:1;min-width:140px">
+          <input type="text" name="icon" class="form-control" placeholder="mdi:tag (optional)" maxlength="64" style="width:180px">
+          <input type="text" name="color" class="form-control" placeholder="e.g. red (optional)" maxlength="32" style="width:140px">
+          <button type="submit" class="btn btn-primary">Add</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="ha-card" style="margin-bottom:16px;margin-top:24px">
     <div class="ha-card-header"><h2>Zones</h2></div>
     {% if zones | length == 0 %}
     <div class="ha-card-body text-muted">No zones configured yet.</div>

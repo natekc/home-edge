@@ -224,6 +224,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/areas",                                             get(areas_page).post(areas_create))
         .route("/areas/{area_id}",                                   get(area_detail_page))
         .route("/areas/{area_id}/delete",                            post(area_delete))
+        // Labels (grouped with areas on the areas page)
+        .route("/labels",                                            post(labels_create))
+        .route("/labels/{label_id}/delete",                          post(labels_delete))
         // Zones (geographic geofence zones — mirrors HA core zone component)
         .route("/zones",                                             post(zones_create))
         .route("/zones/{zone_id}",                                   get(zone_edit_page).post(zone_update))
@@ -940,10 +943,12 @@ fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 async fn areas_page(State(state): State<Arc<AppState>>) -> Response {    let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
     let zones = load_zones(&state).await;
+    let all_labels = state.label_registry.list().await.unwrap_or_default();
     let ctx = app_ctx!(state, "areas", location_name.as_str(), &areas,
-        zones     => Value::from_serialize(&zones),
-        back_url  => "/settings",
-        nav_title => "Areas, labels & zones",
+        zones      => Value::from_serialize(&zones),
+        all_labels => Value::from_serialize(&all_labels),
+        back_url   => "/settings",
+        nav_title  => "Areas, labels & zones",
     );
     render_template(&state, "areas.html", ctx)
 }
@@ -978,7 +983,52 @@ async fn area_delete(
 }
 
 // ---------------------------------------------------------------------------
-// Zone handlers
+// Label handlers
+// Source: homeassistant/components/config/label_registry.py
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct LabelCreateForm {
+    name: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+async fn labels_create(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Form(form): axum::extract::Form<LabelCreateForm>,
+) -> Response {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return redirect("/areas");
+    }
+    let icon  = form.icon.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let color = form.color.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let desc  = form.description.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    if let Err(err) = state.label_registry.create(name, desc, icon, color).await {
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
+    }
+    redirect("/areas")
+}
+
+async fn labels_delete(
+    State(state): State<Arc<AppState>>,
+    Path(label_id): Path<String>,
+) -> Response {
+    // Cascade: remove label from all entities and devices.
+    let _ = state.mobile_entities.remove_label(&label_id).await;
+    let _ = state.mobile_devices.remove_label(&label_id).await;
+    if let Err(err) = state.label_registry.delete(&label_id).await {
+        return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}"));
+    }
+    redirect("/areas")
+}
+
+
 // Source: homeassistant/components/zone/__init__.py
 // ---------------------------------------------------------------------------
 
@@ -1215,12 +1265,14 @@ async fn entity_edit_page(
     let entity_view = entity_to_view(&entity_record, &state);
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
+    let all_labels = state.label_registry.list().await.unwrap_or_default();
     let ctx = app_ctx!(state, "devices", location_name.as_str(), &areas,
         device        => Value::from_serialize(&device),
         entity        => Value::from_serialize(&entity_view),
         saved         => params.saved.unwrap_or(false),
         sparkline     => sparkline,
         history_count => history.len(),
+        all_labels    => Value::from_serialize(&all_labels),
     );
     render_template(&state, "entity_edit.html", ctx)
 }
@@ -1240,6 +1292,8 @@ struct EntityEditForm {
     icon: Option<String>,
     #[serde(default)]
     hidden_by: Option<String>,
+    #[serde(default)]
+    labels: Vec<String>,
 }
 
 async fn entity_edit_save(
@@ -1268,6 +1322,8 @@ async fn entity_edit_save(
         icon: Some(form.icon.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)),
         // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
         hidden_by: Some(form.hidden_by.as_deref().filter(|s| !s.is_empty()).map(str::to_string)),
+        // Source: homeassistant/helpers/label_registry.py LabelEntry
+        labels: Some(form.labels),
     };
     match state.mobile_entities.update_meta(&entity_id, update).await {
         Ok(_) => {
@@ -2215,6 +2271,8 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         icon: entity.icon.clone(),
         // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
         hidden_by: entity.hidden_by.clone(),
+        // Source: homeassistant/helpers/label_registry.py LabelEntry
+        labels: entity.labels.clone(),
     }
 }
 
@@ -2635,6 +2693,7 @@ async fn api_zigbee_entity_update(
         }),
         icon: None,
         hidden_by: None,
+        labels: None,
     };
     match state.zigbee_entities.update_meta(&entity_id, update).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
@@ -2841,11 +2900,13 @@ async fn zigbee_entity_edit_page(
         .unwrap_or_else(|| ieee.clone());
     let entity = crate::zigbee_integration::entity_view_for(&record, &state.states, Some(device_name.clone()));
     let saved = params.get("saved").is_some();
+    let all_labels = state.label_registry.list().await.unwrap_or_default();
     let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
         ieee        => ieee.clone(),
         device_name => device_name,
         entity      => Value::from_serialize(&entity),
         saved       => saved,
+        all_labels  => Value::from_serialize(&all_labels),
     );
     render_template(&state, "zigbee_entity_edit.html", ctx)
 }
@@ -2860,6 +2921,8 @@ struct ZigbeeEntityEditForm {
     icon: Option<String>,
     #[serde(default)]
     hidden_by: Option<String>,
+    #[serde(default)]
+    labels: Vec<String>,
 }
 
 /// POST /zigbee/{ieee}/entities/{entity_id}/save — persist changes from zigbee_entity_edit.html.
@@ -2887,6 +2950,8 @@ async fn zigbee_entity_edit_save(
         icon: Some(form.icon.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)),
         // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
         hidden_by: Some(form.hidden_by.as_deref().filter(|s| !s.is_empty()).map(str::to_string)),
+        // Source: homeassistant/helpers/label_registry.py LabelEntry
+        labels: Some(form.labels),
     };
     match state.zigbee_entities.update_meta(&entity_id, update).await {
         Ok(_) => {
