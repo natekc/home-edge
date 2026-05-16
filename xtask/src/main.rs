@@ -9,6 +9,7 @@
 //!   cargo xtask push --tarball … --host ubuntu@myboard.local  # different host
 //!   cargo xtask deploy --zigbee --host pi@192.168.1.50        # build with Zigbee + deploy
 //!   cargo xtask rollback                                      # restore previous binary on device
+//!   cargo xtask screenshot                                    # capture mobile layout screenshots
 //!
 //! All commands support `--help` for details.
 
@@ -129,6 +130,24 @@ enum Cmd {
         #[arg(long, default_value_t = DEFAULT_ALIVE_COUNT)]
         alive_count: u32,
     },
+
+    /// Start home-edge with demo data and take Playwright screenshots of every page.
+    ///
+    /// Requires Node.js and `npx playwright` to be available on PATH.
+    /// On first run, install the browser with:
+    ///
+    ///   npx playwright install chromium
+    ///
+    /// Screenshots are saved to `--out-dir` (default: screenshots/) along with
+    /// an `index.html` gallery.
+    Screenshot {
+        /// Port the ephemeral demo server will listen on.
+        #[arg(long, default_value_t = 8199)]
+        port: u16,
+        /// Directory to write PNG screenshots and the index.html gallery.
+        #[arg(long, default_value = "screenshots")]
+        out_dir: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -149,6 +168,9 @@ fn main() -> Result<()> {
         Cmd::Rollback { host, connect_timeout, alive_interval, alive_count } => {
             let opts = SshOpts { connect_timeout, alive_interval, alive_count };
             rollback(&host, &opts)?;
+        }
+        Cmd::Screenshot { port, out_dir } => {
+            screenshot(port, &out_dir)?;
         }
     }
     Ok(())
@@ -279,6 +301,103 @@ fn rollback(host: &str, opts: &SshOpts) -> Result<()> {
     );
     run(&mut cmd)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot
+// ---------------------------------------------------------------------------
+
+/// Build home-edge with `--features zigbee`, start it with `--demo`, run the
+/// Playwright script, and kill the server when done.
+fn screenshot(port: u16, out_dir: &Path) -> Result<()> {
+    let root = workspace_root();
+
+    // 1. Build a debug binary (faster than release for local use).
+    eprintln!("Building home-edge (debug, +zigbee)...");
+    let mut build = Command::new("cargo");
+    build
+        .args(["build", "--features", "zigbee", "-p", "home-edge"])
+        .current_dir(&root);
+    run(&mut build)?;
+
+    // 2. Write a temp config that uses a throwaway data dir and the chosen port.
+    let tmp_dir = std::env::temp_dir().join("home-edge-screenshot");
+    std::fs::create_dir_all(&tmp_dir).context("creating temp data dir")?;
+    let cfg_path = tmp_dir.join("config.toml");
+    let data_dir = tmp_dir.join("data");
+    std::fs::create_dir_all(&data_dir).context("creating temp data dir")?;
+    let cfg_content = format!(
+        "[server]\nhost = \"127.0.0.1\"\nport = {port}\n\n[storage]\ndata_dir = \"{}\"\n\n[ui]\nproduct_name = \"Home Edge\"\n",
+        data_dir.display()
+    );
+    std::fs::write(&cfg_path, cfg_content).context("writing temp config")?;
+
+    // 3. Start the server in the background.
+    let binary = root.join("target/debug/home-edge");
+    eprintln!("Starting demo server on port {port}...");
+    let mut server = std::process::Command::new(&binary)
+        .arg("--config")
+        .arg(&cfg_path)
+        .arg("--demo")
+        .spawn()
+        .with_context(|| format!("failed to spawn {}", binary.display()))?;
+
+    // 4. Wait until the server is ready (poll /health, up to 15 s).
+    let base = format!("http://127.0.0.1:{port}");
+    eprintln!("Waiting for server to be ready...");
+    let ready = wait_for_server(&base, 15);
+
+    // 5. Run the Playwright script (even if server didn't respond, to clean up).
+    let script_result = if ready {
+        let abs_out = if out_dir.is_relative() { root.join(out_dir) } else { out_dir.to_owned() };
+        std::fs::create_dir_all(&abs_out).context("creating out-dir")?;
+        let script = root.join("scripts/screenshot.js");
+        eprintln!("Running Playwright screenshot script...");
+        let mut node = Command::new("node");
+        node.arg(&script)
+            .env("SCREENSHOT_BASE_URL", &base)
+            .env("SCREENSHOT_OUT_DIR", abs_out.to_str().context("out-dir not valid UTF-8")?);
+        let status = node.status().context("failed to launch node")?;
+        if status.success() {
+            eprintln!("Screenshots written to {}", out_dir.display());
+            eprintln!("Open {}/index.html to view the gallery.", out_dir.display());
+            Ok(())
+        } else {
+            bail!("Playwright script exited with {status}");
+        }
+    } else {
+        bail!("Server did not become ready within 15 seconds");
+    };
+
+    // 6. Kill the server regardless of outcome.
+    let _ = server.kill();
+    let _ = server.wait();
+
+    script_result
+}
+
+/// Poll `{base}/` until an HTTP 200 (or 3xx) is received, or `timeout_secs` elapses.
+fn wait_for_server(base: &str, timeout_secs: u64) -> bool {
+    let url = format!("{base}/");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    while std::time::Instant::now() < deadline {
+        let Ok(status) = ureq::get(&url).call().map(|r| r.status()).or_else(|e| {
+            // ureq treats redirects as errors in some versions; treat 3xx as ready.
+            if let ureq::Error::Status(code, _) = &e {
+                Ok(*code)
+            } else {
+                Err(e)
+            }
+        }) else {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            continue;
+        };
+        if status < 500 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
