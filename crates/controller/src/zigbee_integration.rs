@@ -356,6 +356,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("kWh".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
@@ -374,6 +375,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("W".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
         // RMS voltage in volts.
         // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementRMSVoltage
@@ -388,6 +390,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("V".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
         // RMS current in amperes.
         // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementRMSCurrent
@@ -402,6 +405,7 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             unit_of_measurement: Some("A".to_string()),
             name_by_user: None,
             user_area_id: None,
+            disabled: false,
         });
     }
 
