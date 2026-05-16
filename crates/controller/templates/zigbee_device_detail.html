@@ -50,7 +50,7 @@
         {% if battery_pct %}
         <dt>Battery</dt>
         <dd>
-          <span class="badge {% if battery_pct | int(0) < 20 %}badge-danger{% elif battery_pct | int(0) < 50 %}badge-warning{% else %}badge-success{% endif %}">
+          <span class="badge {% if battery_pct | int < 20 %}badge-danger{% elif battery_pct | int < 50 %}badge-warning{% else %}badge-success{% endif %}">
             {{ battery_pct }}%
           </span>
         </dd>
