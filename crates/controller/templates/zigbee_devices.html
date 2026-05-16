@@ -24,8 +24,8 @@
 
 <div class="page-body">
 
-  {% if not bridge_running %}
-  {# ── Bridge not configured ─────────────────────────────────────────── #}
+  {% if not bridge_running and devices | length == 0 %}
+  {# ── Bridge not configured, no previously-seen devices ───────────── #}
   <div class="ha-card" style="margin-bottom:16px">
     <div class="ha-card-body">
       <div class="empty-state">
@@ -39,6 +39,21 @@
 serial_port = "/dev/ttyUSB0"   # path to your coordinator's serial port
 adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
 # permit_join_on_startup = false</pre>
+      </div>
+    </div>
+  </div>
+
+  {% elif not bridge_running and devices | length > 0 %}
+  {# ── Bridge offline but previously-paired devices exist ──────────── #}
+  {# Show stored device list (read-only) with a banner — mirrors HA's  #}
+  {# "integration unavailable" state which still shows cached data.     #}
+  {# Source: homeassistant/components/frontend/ integration error banner #}
+  <div class="ha-card" style="margin-bottom:12px;border-left:4px solid var(--warning-color,#f59e0b)">
+    <div class="ha-card-body" style="display:flex;align-items:center;gap:12px;padding:12px 16px">
+      <svg width="20" height="20" style="flex-shrink:0;fill:var(--warning-color,#f59e0b)"><use href="#icon-alert-circle"/></svg>
+      <div style="flex:1;min-width:0">
+        <strong>Zigbee bridge is offline.</strong>
+        Devices shown below are from the last session. Restart home-edge with a <code>[zigbee]</code> config to reconnect.
       </div>
     </div>
   </div>
@@ -66,9 +81,10 @@ adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
     </div>
   </div>
 
-  {% else %}
+  {% endif %}
 
-  {# ── Device list ──────────────────────────────────────────────────── #}
+  {# ── Device list — shown when bridge is running, errored (cached), or offline with known devices #}
+  {% if bridge_running or bridge_error or (not bridge_running and devices | length > 0) %}
   <div class="ha-card" id="device-list-card">
     <div class="ha-card-header">
       <span class="ha-card-title">Devices ({{ devices | length }})</span>
@@ -105,7 +121,9 @@ adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
             <td>{{ device.model | default("—") }}</td>
             <td>{{ device.power_source | default("—") }}</td>
             <td>
-              {% if device.interview_complete %}
+              {% if not bridge_running %}
+              <span class="badge badge-neutral">Offline</span>
+              {% elif device.interview_complete %}
               <span class="badge badge-success">Ready</span>
               {% else %}
               <span class="badge badge-warning">
@@ -125,14 +143,14 @@ adapter    = "auto"             # auto-detect adapter type (znp, ezsp, …)
     </div>
   </div>
 
-  {% if not pairing_remaining_secs %}
+  {% if bridge_running and not pairing_remaining_secs %}
   <p style="font-size:.82rem;color:var(--text-secondary);margin-top:16px">
     The coordinator communicates over a local serial connection independently
     of how your phone connects to home-edge.
   </p>
   {% endif %}
 
-  {% endif %}{# bridge_running #}
+  {% endif %}{# device list block #}
 </div>
 
 {# ══════════════════════════════════════════════════════════════════════════

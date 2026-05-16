@@ -19,7 +19,7 @@
         </svg>
         <a href="/areas/{{ area.area_id }}" style="flex:1;font-size:.95rem;text-decoration:none;color:inherit">{{ area.name }}</a>
         <form method="post" action="/areas/{{ area.area_id }}/delete" style="margin:0">
-          <button type="submit" class="btn btn-secondary" style="font-size:.75rem;padding:4px 10px"
+          <button type="submit" class="btn btn-outline-danger" style="font-size:.75rem;padding:4px 10px"
                   data-area-name="{{ area.name }}"
                   onclick="return confirm('Delete area \u201c' + this.dataset.areaName + '\u201d?')">Delete</button>
         </form>
