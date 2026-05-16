@@ -617,6 +617,28 @@ async fn seed_demo(state: &AppState) -> Result<()> {
         None,
     ).await;
 
+    // ── Logbook entries ────────────────────────────────────────────────────
+    // Source: homeassistant/components/logbook/ — state-change event format
+    {
+        use crate::logbook_store::LogbookEntry;
+        let now = now_ts;
+        let entries = vec![
+            LogbookEntry { ts: now - 3600, entity_id: "sensor.snzb_02_bedroom_temperature".into(), display_name: "Bedroom Temperature".into(), old_state: "19.8".into(), new_state: "20.1".into() },
+            LogbookEntry { ts: now - 3200, entity_id: "light.tradfri_bulb_bedroom".into(), display_name: "Bedroom Bulb".into(), old_state: "off".into(), new_state: "on".into() },
+            LogbookEntry { ts: now - 2800, entity_id: "sensor.snzb_02_bedroom_humidity".into(), display_name: "Bedroom Humidity".into(), old_state: "54".into(), new_state: "56".into() },
+            LogbookEntry { ts: now - 2400, entity_id: "binary_sensor.snzb_03_office_occupancy".into(), display_name: "Office Motion".into(), old_state: "off".into(), new_state: "on".into() },
+            LogbookEntry { ts: now - 2000, entity_id: "binary_sensor.snzb_03_office_occupancy".into(), display_name: "Office Motion".into(), old_state: "on".into(), new_state: "off".into() },
+            LogbookEntry { ts: now - 1600, entity_id: "sensor.snzb_02_bedroom_temperature".into(), display_name: "Bedroom Temperature".into(), old_state: "20.1".into(), new_state: "20.4".into() },
+            LogbookEntry { ts: now - 1200, entity_id: "light.tradfri_bulb_bedroom".into(), display_name: "Bedroom Bulb".into(), old_state: "on".into(), new_state: "off".into() },
+            LogbookEntry { ts: now - 800,  entity_id: "sensor.phone_battery_level".into(), display_name: "Phone Battery".into(), old_state: "90".into(), new_state: "84".into() },
+            LogbookEntry { ts: now - 400,  entity_id: "sensor.snzb_02_bedroom_temperature".into(), display_name: "Bedroom Temperature".into(), old_state: "20.4".into(), new_state: "20.2".into() },
+            LogbookEntry { ts: now - 120,  entity_id: "binary_sensor.snzb_03_office_occupancy".into(), display_name: "Office Motion".into(), old_state: "off".into(), new_state: "on".into() },
+        ];
+        for entry in entries {
+            state.logbook.record(entry).await;
+        }
+    }
+
     tracing::info!("--demo: seeding complete");
     Ok(())
 }
