@@ -9,3 +9,4 @@ publish = false
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+ureq = { version = "2", default-features = false }
