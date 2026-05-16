@@ -24,9 +24,20 @@
 {% endif %}
 <script>
 (function(){
+  function relTime(iso) {
+    try {
+      var d = new Date(iso), now = Date.now(), diff = Math.floor((now - d) / 1000);
+      if (diff < 60)  return diff + 's ago';
+      if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+      if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+      return d.toLocaleString([],{dateStyle:'short',timeStyle:'short'});
+    } catch(e) { return iso; }
+  }
   var el = document.querySelector('.mi-ts[data-ts]');
-  if(el){
-    try { el.textContent = new Date(el.getAttribute('data-ts')).toLocaleString([],{dateStyle:'short',timeStyle:'short'}); } catch(e){}
+  if (el) {
+    var ts = el.getAttribute('data-ts');
+    el.textContent = relTime(ts);
+    setInterval(function(){ el.textContent = relTime(ts); }, 30000);
   }
 })();
 </script>
