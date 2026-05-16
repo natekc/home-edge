@@ -191,6 +191,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -206,6 +208,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -220,6 +224,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -235,6 +241,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -250,6 +258,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
         // Battery voltage — secondary sensor.
         records.push(ZigbeeEntityRecord {
@@ -262,6 +272,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
         // Low-battery warning — binary sensor.
         records.push(ZigbeeEntityRecord {
@@ -274,6 +286,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -289,6 +303,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -304,6 +320,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -328,6 +346,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
         records.push(ZigbeeEntityRecord {
             entity_id: format!("binary_sensor.{base}_tamper"),
@@ -339,6 +359,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -357,6 +379,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -376,6 +400,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
         // RMS voltage in volts.
         // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementRMSVoltage
@@ -391,6 +417,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
         // RMS current in amperes.
         // Source: homeassistant/components/zha/sensor.py ElectricalMeasurementRMSCurrent
@@ -406,6 +434,8 @@ pub fn entities_for_device(device: &zigbee2mqtt_rs::DeviceInfo) -> Vec<ZigbeeEnt
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         });
     }
 
@@ -1125,6 +1155,10 @@ pub(crate) fn entity_view_for(
         device_name,
         // Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
         is_unavailable,
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+        icon: entity.icon.clone(),
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+        hidden_by: entity.hidden_by.clone(),
     }
 }
 
@@ -1150,6 +1184,8 @@ mod tests {
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         }
     }
 
@@ -1212,6 +1248,8 @@ mod tests {
             name_by_user: None,
             user_area_id: None,
             disabled: false,
+            icon: None,
+            hidden_by: None,
         }];
 
         let mut raw = serde_json::Map::new();

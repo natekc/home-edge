@@ -1236,6 +1236,10 @@ struct EntityEditForm {
     area_id: String,
     unit_override: String,
     disabled: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    hidden_by: Option<String>,
 }
 
 async fn entity_edit_save(
@@ -1260,6 +1264,10 @@ async fn entity_edit_save(
             Some(Some(form.unit_override.trim().to_string()))
         },
         disabled: Some(form.disabled.as_deref() == Some("true")),
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+        icon: Some(form.icon.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)),
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+        hidden_by: Some(form.hidden_by.as_deref().filter(|s| !s.is_empty()).map(str::to_string)),
     };
     match state.mobile_entities.update_meta(&entity_id, update).await {
         Ok(_) => {
@@ -2203,6 +2211,10 @@ fn entity_to_view(entity: &MobileEntityRecord, state: &AppState) -> EntityView {
         device_name: None, // mobile-app entities are not under a Zigbee device
         // Source: homeassistant/const.py STATE_UNAVAILABLE, STATE_UNKNOWN
         is_unavailable,
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+        icon: entity.icon.clone(),
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+        hidden_by: entity.hidden_by.clone(),
     }
 }
 
@@ -2621,6 +2633,8 @@ async fn api_zigbee_entity_update(
             let t = s.trim().to_string();
             if t.is_empty() { None } else { Some(t) }
         }),
+        icon: None,
+        hidden_by: None,
     };
     match state.zigbee_entities.update_meta(&entity_id, update).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
@@ -2806,63 +2820,49 @@ async fn zigbee_device_detail_page(
     render_template(&state, "zigbee_device_detail.html", ctx)
 }
 
-/// GET /zigbee/{ieee}/entities/{entity_id}
-///
-/// Full-page edit form for a single Zigbee entity (rename, area, unit override, disable).
-/// Mirrors the mobile `/devices/{webhook_id}/entities/{entity_id}` entity edit page.
+/// GET /zigbee/{ieee}/entities/{entity_id} — full-page entity settings form.
+/// Source: homeassistant/helpers/entity_registry.py RegistryEntry (icon, hidden_by, disabled_by)
 #[cfg(feature = "zigbee")]
 async fn zigbee_entity_edit_page(
     State(state): State<Arc<AppState>>,
     Path((ieee, entity_id)): Path<(String, String)>,
-    Query(params): Query<ZigbeeEntityEditQuery>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let device = match state.zigbee_devices.get_by_ieee(&ieee).await {
-        Ok(Some(d)) => d,
-        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Zigbee device not found"),
-        Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
-    };
-    let entity_record = match state.zigbee_entities.get(&entity_id).await {
-        Ok(Some(e)) => e,
-        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Zigbee entity not found"),
-        Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
-    };
-    let device_name = Some(device.display_name().into_owned());
-    let entity_view = crate::zigbee_integration::entity_view_for(&entity_record, &state.states, device_name.clone());
-    let history = state.history.last_n(&entity_id, 100).await;
-    let sparkline = if history.len() >= 2 {
-        Some(history_store::render_sparkline(&history, 320, 60))
-    } else {
-        None
-    };
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    let device_view = ZigbeeDevicePageView::from(device);
+    let record = match state.zigbee_entities.get(&entity_id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return page_error(StatusCode::NOT_FOUND, "Entity not found"),
+        Err(e) => return page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
+    };
+    let device_name = state.zigbee_devices.get_by_ieee(&ieee).await
+        .ok().flatten()
+        .map(|d| d.name_by_user.clone().unwrap_or_else(|| d.friendly_name.clone()))
+        .unwrap_or_else(|| ieee.clone());
+    let entity = crate::zigbee_integration::entity_view_for(&record, &state.states, Some(device_name.clone()));
+    let saved = params.get("saved").is_some();
     let ctx = app_ctx!(&state, "zigbee", location_name.as_str(), &areas,
-        device        => Value::from_serialize(&device_view),
-        entity        => Value::from_serialize(&entity_view),
-        saved         => params.saved.unwrap_or(false),
-        sparkline     => sparkline,
-        history_count => history.len(),
+        ieee        => ieee.clone(),
+        device_name => device_name,
+        entity      => Value::from_serialize(&entity),
+        saved       => saved,
     );
     render_template(&state, "zigbee_entity_edit.html", ctx)
 }
 
-#[cfg(feature = "zigbee")]
-#[derive(Deserialize)]
-struct ZigbeeEntityEditQuery {
-    saved: Option<bool>,
-}
-
-#[cfg(feature = "zigbee")]
 #[derive(Deserialize)]
 struct ZigbeeEntityEditForm {
     display_name: String,
     area_id: String,
     unit_override: String,
     disabled: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    hidden_by: Option<String>,
 }
 
-/// POST /zigbee/{ieee}/entities/{entity_id}/save
+/// POST /zigbee/{ieee}/entities/{entity_id}/save — persist changes from zigbee_entity_edit.html.
 #[cfg(feature = "zigbee")]
 async fn zigbee_entity_edit_save(
     State(state): State<Arc<AppState>>,
@@ -2871,31 +2871,28 @@ async fn zigbee_entity_edit_save(
 ) -> Response {
     use crate::zigbee_entity_store::ZigbeeEntityMetaUpdate;
     let update = ZigbeeEntityMetaUpdate {
-        name_by_user: Some(if form.display_name.trim().is_empty() {
-            None
-        } else {
-            Some(form.display_name.trim().to_string())
-        }),
-        user_area_id: Some(if form.area_id.is_empty() {
-            None
-        } else {
-            Some(form.area_id.clone())
-        }),
-        unit_of_measurement: Some(if form.unit_override.trim().is_empty() {
-            None
-        } else {
-            Some(form.unit_override.trim().to_string())
-        }),
+        name_by_user: Some(
+            if form.display_name.trim().is_empty() { None }
+            else { Some(form.display_name.trim().to_string()) }
+        ),
+        user_area_id: Some(
+            if form.area_id.is_empty() { None } else { Some(form.area_id.clone()) }
+        ),
         disabled: Some(form.disabled.as_deref() == Some("true")),
+        unit_of_measurement: Some(
+            if form.unit_override.trim().is_empty() { None }
+            else { Some(form.unit_override.trim().to_string()) }
+        ),
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+        icon: Some(form.icon.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)),
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+        hidden_by: Some(form.hidden_by.as_deref().filter(|s| !s.is_empty()).map(str::to_string)),
     };
     match state.zigbee_entities.update_meta(&entity_id, update).await {
         Ok(_) => {
             let location = format!("/zigbee/{ieee}/entities/{entity_id}?saved=true");
             let mut headers = HeaderMap::new();
-            headers.insert(
-                header::LOCATION,
-                HeaderValue::try_from(location).unwrap(),
-            );
+            headers.insert(header::LOCATION, HeaderValue::try_from(location).unwrap());
             (StatusCode::SEE_OTHER, headers).into_response()
         }
         Err(err) => page_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("{err:#}")),

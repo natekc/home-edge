@@ -40,6 +40,10 @@ pub struct MobileEntityRecord {
     /// Area/room assigned by the user at deploy time or via the UI.
     #[serde(default)]
     pub user_area_id: Option<String>,
+    /// Reason the entity is hidden from the UI ("user" | "integration" | null).
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+    #[serde(default)]
+    pub hidden_by: Option<String>,
 }
 
 impl MobileEntityRecord {
@@ -55,6 +59,10 @@ pub struct EntityMetaUpdate {
     pub user_area_id: Option<Option<String>>,
     pub unit_of_measurement: Option<Option<String>>,
     pub disabled: Option<bool>,
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+    pub icon: Option<Option<String>>,
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+    pub hidden_by: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -110,6 +118,7 @@ impl MobileEntityStore {
             disabled: registration.disabled,
             name_by_user: None,
             user_area_id: None,
+            hidden_by: None,
         };
 
         if data.entities.get(&key) == Some(&record) {
@@ -176,6 +185,31 @@ impl MobileEntityStore {
         }
         if let Some(disabled) = update.disabled {
             record.disabled = disabled;
+        }
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+        if let Some(icon) = update.icon {
+            record.icon = icon;
+        }
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+        if let Some(hidden_by) = update.hidden_by {
+            record.hidden_by = hidden_by;
+        }
+        save_json_atomic(&self.path(), &data).await?;
+        *self.cache.write().await = Some(data);
+        Ok(true)
+    }
+
+    /// Remove an entity by its stable `entity_id`.
+    ///
+    /// Returns `Ok(true)` if found and removed, `Ok(false)` if not found.
+    /// Source: homeassistant/components/config/entity_registry.py websocket_remove_entity
+    pub async fn remove_by_entity_id(&self, entity_id: &str) -> Result<bool> {
+        let _guard = self.lock.lock().await;
+        let mut data = self.load_locked().await?;
+        let before = data.entities.len();
+        data.entities.retain(|_, r| r.entity_id != entity_id);
+        if data.entities.len() == before {
+            return Ok(false);
         }
         save_json_atomic(&self.path(), &data).await?;
         *self.cache.write().await = Some(data);

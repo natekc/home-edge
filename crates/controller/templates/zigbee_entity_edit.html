@@ -6,12 +6,12 @@
     <span class="breadcrumb-sep">›</span>
     <a href="/zigbee">Zigbee</a>
     <span class="breadcrumb-sep">›</span>
-    <a href="/zigbee/{{ device.ieee_addr }}">{{ device.display_name }}</a>
+    <a href="/zigbee/{{ ieee }}">{{ device_name }}</a>
     <span class="breadcrumb-sep">›</span>
     <span>{{ entity.display_name }}</span>
   </div>
   <h1>Edit Entity</h1>
-  <p style="font-size:.82rem;color:var(--text-secondary);font-family:monospace">{{ entity.entity_id }}</p>
+  <p>{{ entity.entity_id }}</p>
 </div>
 
 <div class="page-body">
@@ -25,7 +25,7 @@
       </div>
       {% endif %}
 
-      <form method="post" action="/zigbee/{{ device.ieee_addr }}/entities/{{ entity.entity_id }}/save">
+      <form method="post" action="/zigbee/{{ ieee }}/entities/{{ entity.entity_id }}/save">
 
         <div class="form-group">
           <label for="display_name">Display Name</label>
@@ -49,15 +49,20 @@
           <input id="unit_override" name="unit_override" class="form-control"
                  value="{{ entity.unit_of_measurement | default('', true) }}"
                  placeholder="e.g. °F, %, ppm — leave blank to keep original">
-          <p class="text-muted" style="font-size:.8rem;margin-top:4px">
-            Override the auto-detected unit of measurement (e.g. convert °C to °F display label).
-          </p>
         </div>
         {% else %}
-        {# Hidden field so POST always includes the key; no unit for binary sensors #}
         <input type="hidden" name="unit_override" value="">
         {% endif %}
 
+        <div class="form-group">
+          <label for="icon">Icon</label>
+          <input id="icon" name="icon" class="form-control"
+                 value="{{ entity.icon | default('', true) }}"
+                 placeholder="e.g. mdi:lightbulb — leave blank for default">
+          <p class="text-muted" style="font-size:.78rem;margin-top:4px">MDI icon name from <a href="https://pictogrammers.com/library/mdi/" target="_blank" rel="noopener">pictogrammers.com</a></p>
+        </div>
+
+        {# Source: homeassistant/helpers/entity_registry.py RegistryEntry.disabled_by #}
         <div class="form-group">
           <label style="display:flex;align-items:center;gap:12px;cursor:pointer;font-weight:normal">
             <label class="toggle" style="margin:0">
@@ -66,23 +71,30 @@
             </label>
             <div>
               <div style="font-weight:600;font-size:.9rem">Disabled</div>
-              <div class="text-muted">Hide this entity from the dashboard and stop publishing its state</div>
+              <div class="text-muted">Stop publishing state updates for this entity</div>
+            </div>
+          </label>
+        </div>
+
+        {# Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by #}
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer;font-weight:normal">
+            <label class="toggle" style="margin:0">
+              <input type="checkbox" name="hidden_by" value="user" {% if entity.hidden_by %}checked{% endif %}>
+              <span class="toggle-slider"></span>
+            </label>
+            <div>
+              <div style="font-weight:600;font-size:.9rem">Hidden</div>
+              <div class="text-muted">Hide from the companion app (entity is still active)</div>
             </div>
           </label>
         </div>
 
         <div style="display:flex;gap:10px;margin-top:8px">
           <button type="submit" class="btn btn-primary">Save Changes</button>
-          <a href="/zigbee/{{ device.ieee_addr }}" class="btn btn-secondary">Cancel</a>
+          <a href="/zigbee/{{ ieee }}" class="btn btn-secondary">Cancel</a>
         </div>
       </form>
-
-      {% if sparkline %}
-      <hr>
-      <h3 style="font-size:.95rem;margin:0 0 10px">Recent History</h3>
-      <div class="sparkline">{{ sparkline | safe }}</div>
-      <p class="text-muted" style="margin-top:4px">Last {{ history_count }} readings</p>
-      {% endif %}
 
     </div>
   </div>

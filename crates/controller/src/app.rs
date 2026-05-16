@@ -430,6 +430,8 @@ async fn seed_demo(state: &AppState) -> Result<()> {
             user_area_id:        Some(Some(living_room.area_id.clone())),
             unit_of_measurement: None,
             disabled:            None,
+            hidden_by:           None,
+            icon:                None,
         }).await;
     }
 
@@ -494,6 +496,8 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 name_by_user:         None,
                 user_area_id:         Some(bedroom.area_id.clone()),
                 disabled:             false,
+                icon:                 None,
+                hidden_by:            None,
             },
             ZigbeeEntityRecord {
                 entity_id:           "sensor.snzb_02_bedroom_humidity".into(),
@@ -505,6 +509,8 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 name_by_user:         None,
                 user_area_id:         Some(bedroom.area_id.clone()),
                 disabled:             false,
+                icon:                 None,
+                hidden_by:            None,
             },
             ZigbeeEntityRecord {
                 entity_id:           "sensor.snzb_02_bedroom_battery".into(),
@@ -516,6 +522,8 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 name_by_user:         None,
                 user_area_id:         None,
                 disabled:             false,
+                icon:                 None,
+                hidden_by:            None,
             },
         ];
         state.zigbee_entities.register_bulk(snzb_entities).await?;
@@ -532,6 +540,8 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 name_by_user:         Some("Living Room Bulb".into()),
                 user_area_id:         Some(living_room.area_id.clone()),
                 disabled:             false,
+                icon:                 None,
+                hidden_by:            None,
             },
         ];
         state.zigbee_entities.register_bulk(bulb_entities).await?;
@@ -548,6 +558,8 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 name_by_user:         None,
                 user_area_id:         Some(office.area_id.clone()),
                 disabled:             false,
+                icon:                 None,
+                hidden_by:            None,
             },
             ZigbeeEntityRecord {
                 entity_id:           "sensor.snzb_03_office_battery".into(),
@@ -559,6 +571,8 @@ async fn seed_demo(state: &AppState) -> Result<()> {
                 name_by_user:         None,
                 user_area_id:         None,
                 disabled:             false,
+                icon:                 None,
+                hidden_by:            None,
             },
         ];
         state.zigbee_entities.register_bulk(pir_entities).await?;

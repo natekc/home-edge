@@ -49,6 +49,14 @@ pub struct ZigbeeEntityRecord {
     /// When true, the entity is hidden from the dashboard and state is not published.
     #[serde(default)]
     pub disabled: bool,
+    /// User-supplied MDI icon override (e.g. `"mdi:lightbulb"`).
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Reason the entity is hidden from the UI ("user" | "integration" | null).
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+    #[serde(default)]
+    pub hidden_by: Option<String>,
 }
 
 impl ZigbeeEntityRecord {
@@ -102,7 +110,11 @@ pub struct ZigbeeEntityMetaUpdate {
     pub disabled: Option<bool>,
     /// User-supplied unit override (e.g. °F instead of °C).
     /// None = leave unchanged; Some(None) = clear; Some(Some(s)) = set.
-    pub unit_of_measurement: Option<Option<String>>,
+        pub unit_of_measurement: Option<Option<String>>,
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+    pub icon: Option<Option<String>>,
+    /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+    pub hidden_by: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -276,6 +288,14 @@ impl ZigbeeEntityStore {
         }
         if let Some(v) = update.unit_of_measurement {
             ent.unit_of_measurement = v;
+        }
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.icon
+        if let Some(v) = update.icon {
+            ent.icon = v;
+        }
+        // Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
+        if let Some(v) = update.hidden_by {
+            ent.hidden_by = v;
         }
         self.save(data).await?;
         Ok(true)
