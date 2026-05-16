@@ -204,7 +204,7 @@ impl AppState {
 }
 
 #[cfg(feature = "transport_wifi")]
-pub async fn run(config: AppConfig, reset: bool) -> Result<()> {
+pub async fn run(config: AppConfig, reset: bool, demo: bool) -> Result<()> {
     let listen_addr = config.listen_addr();
 
     if reset {
@@ -221,6 +221,10 @@ pub async fn run(config: AppConfig, reset: bool) -> Result<()> {
 
     let storage = Storage::new(config.storage.data_dir.clone()).await?;
     let state = Arc::new(AppState::new_initialized(config, storage).await?);
+
+    if demo {
+        seed_demo(&state).await?;
+    }
 
     // Spawn logbook listener: subscribes to StateStore broadcast and records entries.
     // state.clone() increments the Arc reference count — the spawned task needs its
@@ -285,9 +289,336 @@ pub async fn run(config: AppConfig, reset: bool) -> Result<()> {
 }
 
 #[cfg(feature = "transport_ble")]
-pub async fn run(_config: AppConfig, _reset: bool) -> Result<()> {
+pub async fn run(_config: AppConfig, _reset: bool, _demo: bool) -> Result<()> {
     let _core = AppCore::new();
     bail!("BLE transport build is not implemented yet")
+}
+
+#[cfg(feature = "transport_ble")]
+pub async fn run(_config: AppConfig, _reset: bool, _demo: bool) -> Result<()> {
+    let _core = AppCore::new();
+    bail!("BLE transport build is not implemented yet")
+}
+
+/// Seed realistic demo data for `--demo` / `cargo xtask screenshot`.
+///
+/// Populates the in-memory stores with two Zigbee devices, a mobile device,
+/// three areas, and synthetic sensor history so every UI page renders with
+/// believable content instead of empty-state placeholders.
+#[cfg(feature = "transport_wifi")]
+async fn seed_demo(state: &AppState) -> Result<()> {
+    use crate::mobile_device_store::MobileDeviceRegistration;
+    use crate::mobile_entity_store::MobileEntityRegistration;
+    use crate::storage::OnboardingState;
+    #[cfg(feature = "zigbee")]
+    use crate::zigbee_device_store::ZigbeeDeviceRecord;
+    #[cfg(feature = "zigbee")]
+    use crate::zigbee_entity_store::ZigbeeEntityRecord;
+
+    tracing::info!("--demo: seeding demo data");
+
+    // ── Onboarding ─────────────────────────────────────────────────────────
+    // Mark onboarding complete so the server goes straight to the dashboard.
+    let onboarding = OnboardingState {
+        onboarded: true,
+        updated_at_unix_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+        done: vec![
+            "user".into(),
+            "core_config".into(),
+            "analytics".into(),
+            "integration".into(),
+        ],
+        user: Some(crate::storage::StoredUser {
+            name:     "Nathan".into(),
+            username: "nathan".into(),
+            password: crate::auth_store::hash_password("demo")
+                .unwrap_or_else(|_| "demo".into()),
+            language: "en".into(),
+        }),
+        location_name: Some("Nathan's Home".into()),
+        latitude:   None,
+        longitude:  None,
+        country:    Some("US".into()),
+        language:   Some("en".into()),
+        time_zone:  Some("America/Los_Angeles".into()),
+        unit_system: Some("metric".into()),
+        radius: 100.0,
+        version: 1,
+    };
+    state.storage.save_onboarding(&onboarding).await?;
+    state.core.set_runtime_mode(crate::core::RuntimeMode::from_persisted_onboarding(true));
+
+    // ── Areas ──────────────────────────────────────────────────────────────
+    let living_room = state.area_registry.create("Living Room".into()).await?;
+    let bedroom     = state.area_registry.create("Bedroom".into()).await?;
+    let office      = state.area_registry.create("Office".into()).await?;
+
+    // ── Mobile device (iPhone) ─────────────────────────────────────────────
+    let phone = state.mobile_devices.register(MobileDeviceRegistration {
+        app_id:              "io.home-assistant.Home-Assistant".into(),
+        app_name:            "Home Assistant".into(),
+        app_version:         "2025.1.0".into(),
+        device_name:         "Nathan's iPhone".into(),
+        manufacturer:        "Apple".into(),
+        model:               "iPhone 16 Pro".into(),
+        os_name:             "iOS".into(),
+        os_version:          Some("18.2".into()),
+        device_id:           Some("demo-iphone-001".into()),
+        supports_encryption: false,
+        owner_username:      Some("nathan".into()),
+    }).await?;
+    let wid = phone.webhook_id.clone();
+
+    // Mobile entities: battery, step counter, temperature, WiFi signal
+    for (name, etype, dc, unit, uid) in [
+        ("Battery Level",  "sensor",        Some("battery"),     Some("%"),  "battery"),
+        ("Steps",          "sensor",        None,                None,       "steps"),
+        ("CPU Temperature","sensor",        Some("temperature"), Some("°C"), "cpu_temp"),
+        ("Storage",        "sensor",        Some("data_size"),   Some("GB"), "storage"),
+    ] {
+        let reg = MobileEntityRegistration {
+            webhook_id:         wid.clone(),
+            entity_type:        etype.into(),
+            sensor_unique_id:   format!("demo-iphone-{uid}"),
+            sensor_name:        name.into(),
+            device_class:       dc.map(|s| s.into()),
+            unit_of_measurement: unit.map(|s| s.into()),
+            icon:               None,
+            entity_category:    None,
+            state_class:        Some("measurement".into()),
+            disabled:           false,
+        };
+        state.mobile_entities.register(reg).await?;
+    }
+
+    // Seed entity states for mobile entities
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let ts_iso = crate::state_store::now_iso8601();
+
+    let mobile_states: &[(&str, &str)] = &[
+        (&format!("sensor.nathans_iphone_battery_level"), "82"),
+        (&format!("sensor.nathans_iphone_steps"), "4231"),
+        (&format!("sensor.nathans_iphone_cpu_temperature"), "38"),
+        (&format!("sensor.nathans_iphone_storage"), "47.3"),
+    ];
+    for (entity_id, value) in mobile_states {
+        let _ = state.states.set(ha_types::entity::State {
+            entity_id: entity_id.to_string(),
+            state:     value.to_string(),
+            attributes: Default::default(),
+            last_changed: ts_iso.clone(),
+            last_updated: ts_iso.clone(),
+            last_reported: ts_iso.clone(),
+            context: ha_types::context::Context::new(uuid::Uuid::new_v4().to_string()),
+        });
+        if let Ok(v) = value.parse::<f64>() {
+            state.history.record_and_aggregate(entity_id, v, now_ts).await;
+        }
+    }
+
+    // Assign mobile entities to areas
+    let all_mobile = state.mobile_entities.all().await?;
+    for ent in &all_mobile {
+        let _ = state.mobile_entities.update_meta(&ent.entity_id, crate::mobile_entity_store::EntityMetaUpdate {
+            name_by_user:        None,
+            user_area_id:        Some(Some(living_room.area_id.clone())),
+            unit_of_measurement: None,
+            disabled:            None,
+        }).await;
+    }
+
+    // ── Zigbee: SNZB-02 temperature/humidity sensor ────────────────────────
+    #[cfg(feature = "zigbee")]
+    {
+        let snzb_ieee  = "0xec1bbdfffecafe01".to_string();
+        let bulb_ieee  = "0xec1bbdfffecafe02".to_string();
+        let pir_ieee   = "0xec1bbdfffecafe03".to_string();
+
+        // Device 1: SONOFF SNZB-02 (temp + humidity sensor)
+        state.zigbee_devices.upsert(ZigbeeDeviceRecord {
+            ieee_addr:         snzb_ieee.clone(),
+            friendly_name:     "snzb_02_bedroom".into(),
+            manufacturer:      Some("SONOFF".into()),
+            model:             Some("SNZB-02".into()),
+            power_source:      Some("Battery".into()),
+            sw_build_id:       Some("1.0.4".into()),
+            interview_complete: true,
+            last_seen:         Some("2026-05-15T08:32:11Z".into()),
+            name_by_user:      Some("Bedroom Sensor".into()),
+            user_area_id:      Some(bedroom.area_id.clone()),
+        }).await?;
+
+        // Device 2: IKEA Tradfri bulb
+        state.zigbee_devices.upsert(ZigbeeDeviceRecord {
+            ieee_addr:         bulb_ieee.clone(),
+            friendly_name:     "tradfri_living_room".into(),
+            manufacturer:      Some("IKEA of Sweden".into()),
+            model:             Some("LED1624G9".into()),
+            power_source:      Some("Mains (single phase)".into()),
+            sw_build_id:       Some("2.3.087".into()),
+            interview_complete: true,
+            last_seen:         Some("2026-05-15T08:45:00Z".into()),
+            name_by_user:      Some("Living Room Bulb".into()),
+            user_area_id:      Some(living_room.area_id.clone()),
+        }).await?;
+
+        // Device 3: SONOFF SNZB-03 PIR motion sensor
+        state.zigbee_devices.upsert(ZigbeeDeviceRecord {
+            ieee_addr:         pir_ieee.clone(),
+            friendly_name:     "snzb_03_office".into(),
+            manufacturer:      Some("SONOFF".into()),
+            model:             Some("SNZB-03".into()),
+            power_source:      Some("Battery".into()),
+            sw_build_id:       Some("1.0.2".into()),
+            interview_complete: true,
+            last_seen:         Some("2026-05-15T08:40:00Z".into()),
+            name_by_user:      Some("Office Motion".into()),
+            user_area_id:      Some(office.area_id.clone()),
+        }).await?;
+
+        // Entities for SNZB-02
+        let snzb_entities = vec![
+            ZigbeeEntityRecord {
+                entity_id:           "sensor.snzb_02_bedroom_temperature".into(),
+                ieee_addr:            snzb_ieee.clone(),
+                domain:               "sensor".into(),
+                attribute_key:        Some("temperature".into()),
+                device_class:         Some("temperature".into()),
+                unit_of_measurement:  Some("°C".into()),
+                name_by_user:         None,
+                user_area_id:         Some(bedroom.area_id.clone()),
+                disabled:             false,
+            },
+            ZigbeeEntityRecord {
+                entity_id:           "sensor.snzb_02_bedroom_humidity".into(),
+                ieee_addr:            snzb_ieee.clone(),
+                domain:               "sensor".into(),
+                attribute_key:        Some("humidity".into()),
+                device_class:         Some("humidity".into()),
+                unit_of_measurement:  Some("%".into()),
+                name_by_user:         None,
+                user_area_id:         Some(bedroom.area_id.clone()),
+                disabled:             false,
+            },
+            ZigbeeEntityRecord {
+                entity_id:           "sensor.snzb_02_bedroom_battery".into(),
+                ieee_addr:            snzb_ieee.clone(),
+                domain:               "sensor".into(),
+                attribute_key:        Some("battery".into()),
+                device_class:         Some("battery".into()),
+                unit_of_measurement:  Some("%".into()),
+                name_by_user:         None,
+                user_area_id:         None,
+                disabled:             false,
+            },
+        ];
+        state.zigbee_entities.register_bulk(snzb_entities).await?;
+
+        // Entities for IKEA bulb
+        let bulb_entities = vec![
+            ZigbeeEntityRecord {
+                entity_id:           "light.tradfri_living_room".into(),
+                ieee_addr:            bulb_ieee.clone(),
+                domain:               "light".into(),
+                attribute_key:        None,
+                device_class:         None,
+                unit_of_measurement:  None,
+                name_by_user:         Some("Living Room Bulb".into()),
+                user_area_id:         Some(living_room.area_id.clone()),
+                disabled:             false,
+            },
+        ];
+        state.zigbee_entities.register_bulk(bulb_entities).await?;
+
+        // Entities for SNZB-03 PIR
+        let pir_entities = vec![
+            ZigbeeEntityRecord {
+                entity_id:           "binary_sensor.snzb_03_office_occupancy".into(),
+                ieee_addr:            pir_ieee.clone(),
+                domain:               "binary_sensor".into(),
+                attribute_key:        Some("occupancy".into()),
+                device_class:         Some("occupancy".into()),
+                unit_of_measurement:  None,
+                name_by_user:         None,
+                user_area_id:         Some(office.area_id.clone()),
+                disabled:             false,
+            },
+            ZigbeeEntityRecord {
+                entity_id:           "sensor.snzb_03_office_battery".into(),
+                ieee_addr:            pir_ieee.clone(),
+                domain:               "sensor".into(),
+                attribute_key:        Some("battery".into()),
+                device_class:         Some("battery".into()),
+                unit_of_measurement:  Some("%".into()),
+                name_by_user:         None,
+                user_area_id:         None,
+                disabled:             false,
+            },
+        ];
+        state.zigbee_entities.register_bulk(pir_entities).await?;
+
+        // Push Zigbee entity states
+        let zigbee_states: &[(&str, &str)] = &[
+            ("sensor.snzb_02_bedroom_temperature",    "21.4"),
+            ("sensor.snzb_02_bedroom_humidity",       "58"),
+            ("sensor.snzb_02_bedroom_battery",        "82"),
+            ("light.tradfri_living_room",             "on"),
+            ("binary_sensor.snzb_03_office_occupancy","on"),
+            ("sensor.snzb_03_office_battery",         "64"),
+        ];
+        for (entity_id, value) in zigbee_states {
+            let _ = state.states.set(ha_types::entity::State {
+                entity_id:    entity_id.to_string(),
+                state:        value.to_string(),
+                attributes:   Default::default(),
+                last_changed: ts_iso.clone(),
+                last_updated: ts_iso.clone(),
+                last_reported: ts_iso.clone(),
+                context: ha_types::context::Context::new(uuid::Uuid::new_v4().to_string()),
+            });
+        }
+
+        // Seed 24h of synthetic temperature history (sine wave-ish)
+        let period_secs: u64 = 86_400;
+        let base_ts = now_ts.saturating_sub(period_secs);
+        for i in 0u64..=48 {
+            let t = base_ts + i * (period_secs / 48);
+            let v = 20.0 + 3.0 * (std::f64::consts::TAU * i as f64 / 48.0).sin();
+            state.history.record_and_aggregate("sensor.snzb_02_bedroom_temperature", v, t).await;
+        }
+        for i in 0u64..=48 {
+            let t = base_ts + i * (period_secs / 48);
+            let v = 55.0 + 8.0 * (std::f64::consts::TAU * i as f64 / 48.0 + 1.0).cos();
+            state.history.record_and_aggregate("sensor.snzb_02_bedroom_humidity", v, t).await;
+        }
+        // Binary sensor history (alternating motion events)
+        for i in 0u64..=24 {
+            let t = base_ts + i * (period_secs / 24);
+            let v = if i % 3 == 0 { 1.0 } else { 0.0 };
+            state.history.record_and_aggregate("binary_sensor.snzb_03_office_occupancy", v, t).await;
+        }
+    }
+
+    // ── Notifications ──────────────────────────────────────────────────────
+    state.notifications.create(
+        "Motion detected in Office at 08:40".into(),
+        Some("Motion Alert".into()),
+        None,
+    ).await;
+    state.notifications.create(
+        "Battery low on Bedroom Sensor (12%)".into(),
+        Some("Low Battery".into()),
+        None,
+    ).await;
+
+    tracing::info!("--demo: seeding complete");
+    Ok(())
 }
 
 #[cfg(feature = "transport_wifi")]

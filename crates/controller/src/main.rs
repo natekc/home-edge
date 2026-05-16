@@ -13,6 +13,11 @@ struct Args {
     /// first-run mode and require going through onboarding again.
     #[arg(long)]
     reset: bool,
+
+    /// Seed the server with realistic demo data and skip onboarding.
+    /// Useful for UI screenshots and layout review without a real device.
+    #[arg(long)]
+    demo: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -21,5 +26,5 @@ async fn main() -> Result<()> {
     logging::init_logging();
 
     let config = config::AppConfig::load(&args.config).await?;
-    app::run(config, args.reset).await
+    app::run(config, args.reset, args.demo).await
 }
