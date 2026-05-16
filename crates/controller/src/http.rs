@@ -700,15 +700,22 @@ async fn notifications_page(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn system_page(State(state): State<Arc<AppState>>) -> Response {
-    let mode = format!("{:?}", state.core.runtime_mode());
+    // Source: homeassistant/components/system_health/__init__.py  SystemHealthInfo
+    use crate::core::RuntimeMode;
+    let mode_label = match state.core.runtime_mode() {
+        RuntimeMode::WifiOperational   => "Wi-Fi (operational)",
+        RuntimeMode::UnprovisionedWifi => "Wi-Fi (setup required)",
+        RuntimeMode::BleOperational    => "BLE (operational)",
+        RuntimeMode::UnprovisionedBle  => "BLE (setup required)",
+        RuntimeMode::Maintenance       => "Maintenance",
+        RuntimeMode::Disabled          => "Disabled",
+    };
     let location_name = load_location_name(&state).await;
     let areas = load_areas(&state).await;
-    // Source: homeassistant/components/system_health/__init__.py  SystemHealthInfo
     let uptime_secs = state.start_time.elapsed().as_secs();
     let ctx = app_ctx!(state, "system", location_name.as_str(), &areas,
         version          => env!("CARGO_PKG_VERSION"),
-        he_version       => env!("CARGO_PKG_VERSION"),
-        runtime_mode     => mode.as_str(),
+        runtime_mode     => mode_label,
         uptime_formatted => format_uptime(uptime_secs).as_str(),
     );
     render_template(&state, "system.html", ctx)
@@ -2327,14 +2334,17 @@ async fn build_area_cards(state: &AppState, all_views: &[EntityView]) -> Vec<Are
         .into_iter()
         .map(|(area_name, entities)| {
             // Source: homeassistant/helpers/area_registry.py AreaEntry.temperature_entity_id
+            // Source: homeassistant/helpers/area_registry.py AreaEntry.temperature_entity_id
+            // Only show badge when a reading is actually available — suppress if
+            // entity is unavailable/unknown (mirrors HA area card behaviour).
             let area_temp = entities
                 .iter()
-                .find(|e| e.entity_type == "sensor" && e.device_class == "temperature")
+                .find(|e| e.entity_type == "sensor" && e.device_class == "temperature" && !e.is_unavailable)
                 .map(|e| if e.unit.is_empty() { e.value.clone() } else { format!("{} {}", e.value, e.unit) });
             // Source: homeassistant/helpers/area_registry.py AreaEntry.humidity_entity_id
             let area_humidity = entities
                 .iter()
-                .find(|e| e.entity_type == "sensor" && e.device_class == "humidity")
+                .find(|e| e.entity_type == "sensor" && e.device_class == "humidity" && !e.is_unavailable)
                 .map(|e| if e.unit.is_empty() { e.value.clone() } else { format!("{} {}", e.value, e.unit) });
             // Source: homeassistant/components/frontend/ area card domain count badges
             let lights_on = entities.iter()
