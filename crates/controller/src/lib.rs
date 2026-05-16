@@ -20,6 +20,8 @@ pub mod templates;
 #[cfg(feature = "transport_wifi")]
 pub mod area_registry_store;
 #[cfg(feature = "transport_wifi")]
+pub mod label_registry_store;
+#[cfg(feature = "transport_wifi")]
 pub mod zone_store;
 #[cfg(feature = "transport_wifi")]
 pub mod person_store;

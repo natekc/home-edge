@@ -23,6 +23,10 @@ pub struct StoredArea {
     pub floor_id: Option<String>,
     pub icon: Option<String>,
     pub picture: Option<String>,
+    /// Labels assigned to this area.
+    /// Source: homeassistant/helpers/area_registry.py AreaEntry.labels
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -83,6 +87,7 @@ impl AreaRegistryStore {
                 floor_id: None,
                 icon: None,
                 picture: None,
+                labels: vec![],
             })
             .collect();
         self.save(&data).await
@@ -110,6 +115,7 @@ impl AreaRegistryStore {
             floor_id: None,
             icon: None,
             picture: None,
+            labels: vec![],
         };
         data.areas.push(area.clone());
         self.save(&data).await?;
@@ -129,6 +135,7 @@ impl AreaRegistryStore {
         floor_id: Option<Option<String>>,
         icon: Option<Option<String>>,
         picture: Option<Option<String>>,
+        labels: Option<Vec<String>>,
     ) -> Result<Option<StoredArea>> {
         let _guard = self.lock.lock().await;
         let mut data = self.load_locked().await?;
@@ -150,6 +157,9 @@ impl AreaRegistryStore {
         }
         if let Some(p) = picture {
             area.picture = p;
+        }
+        if let Some(l) = labels {
+            area.labels = l;
         }
         let updated = area.clone();
         self.save(&data).await?;
@@ -294,7 +304,7 @@ mod tests {
         let s = store();
         let area = s.create("Old Name".into()).await.unwrap();
         let updated = s
-            .update(&area.area_id, Some("New Name".into()), None, None, None, None)
+            .update(&area.area_id, Some("New Name".into()), None, None, None, None, None)
             .await
             .unwrap();
         assert_eq!(updated.unwrap().name, "New Name");
@@ -304,7 +314,7 @@ mod tests {
     async fn update_unknown_returns_none() {
         let s = store();
         let result = s
-            .update("no_such_id", Some("X".into()), None, None, None, None)
+            .update("no_such_id", Some("X".into()), None, None, None, None, None)
             .await
             .unwrap();
         assert!(result.is_none());

@@ -57,6 +57,10 @@ pub struct ZigbeeEntityRecord {
     /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
     #[serde(default)]
     pub hidden_by: Option<String>,
+    /// Labels assigned to this entity.
+    /// Source: homeassistant/helpers/label_registry.py LabelEntry
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 impl ZigbeeEntityRecord {
@@ -115,6 +119,8 @@ pub struct ZigbeeEntityMetaUpdate {
     pub icon: Option<Option<String>>,
     /// Source: homeassistant/helpers/entity_registry.py RegistryEntry.hidden_by
     pub hidden_by: Option<Option<String>>,
+    /// Source: homeassistant/helpers/label_registry.py LabelEntry
+    pub labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -297,6 +303,10 @@ impl ZigbeeEntityStore {
         if let Some(v) = update.hidden_by {
             ent.hidden_by = v;
         }
+        // Source: homeassistant/helpers/label_registry.py LabelEntry
+        if let Some(v) = update.labels {
+            ent.labels = v;
+        }
         self.save(data).await?;
         Ok(true)
     }
@@ -314,5 +324,25 @@ impl ZigbeeEntityStore {
             self.save(data).await?;
         }
         Ok(removed)
+    }
+
+    /// Remove a label from all entity records (cascade on label delete).
+    pub async fn remove_label(&self, label_id: &str) -> Result<()> {
+        let _guard = self.lock.lock().await;
+        self.ensure_loaded().await?;
+        let mut cache = self.cache.write().await;
+        let data = cache.as_mut().expect("cache populated above");
+        let mut changed = false;
+        for ent in data.entities.values_mut() {
+            let before = ent.labels.len();
+            ent.labels.retain(|l| l != label_id);
+            if ent.labels.len() != before {
+                changed = true;
+            }
+        }
+        if changed {
+            self.save(data).await?;
+        }
+        Ok(())
     }
 }

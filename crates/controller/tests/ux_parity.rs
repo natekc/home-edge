@@ -107,9 +107,10 @@ fn fixture_ctx(template: &str) -> Value {
             "runtime_mode": "Active",
         })),
         "areas.html" => base_ctx("areas", json!({
-            "zones":     [],
-            "back_url":  "/settings",
-            "nav_title": "Areas, labels & zones",
+            "zones":      [],
+            "all_labels": [],
+            "back_url":   "/settings",
+            "nav_title":  "Areas, labels & zones",
         })),
         "devices.html" => base_ctx("settings", json!({
             "devices": [],
